@@ -21,6 +21,7 @@ export const EXECUTOR_INTERNAL_SOCKET = `${EXECUTOR_INTERNAL_ROOT}/provider.sock
 
 const BROKER_ENTRYPOINT = "/usr/local/lib/agentops/openclaw-broker-entrypoint.mjs";
 const EXECUTOR_ENTRYPOINT = "/usr/local/lib/agentops/openclaw-provider-entrypoint.mjs";
+const ROOT_EXECUTOR_ENTRYPOINT = "/usr/local/lib/agentops/openclaw-executor-service.mjs";
 const PUBLIC_SOCKET = "/run/agentops-openclaw-public/broker.sock";
 const PRIVATE_SOCKET = "/run/agentops-openclaw-private/executor.sock";
 const MAX_HEALTH_BYTES = 8 * 1024;
@@ -37,6 +38,13 @@ const BROKER_BACKEND_ENVIRONMENT = new Set([
   "AGENTOPS_OPENCLAW_BROKER_PRIVATE_SOCKET_UID",
   "AGENTOPS_OPENCLAW_BROKER_REQUEST_TIMEOUT_MS",
   "AGENTOPS_OPENCLAW_BROKER_BODY_TIMEOUT_MS",
+  "AGENTOPS_OPENCLAW_BROKER_RUNTIME_MANIFEST_SHA256",
+  "AGENTOPS_OPENCLAW_BROKER_ISOLATION_POLICY_SHA256",
+  "AGENTOPS_OPENCLAW_BROKER_SECCOMP_PROFILE_SHA256",
+  "AGENTOPS_OPENCLAW_BROKER_EXECUTOR_IMAGE_REFERENCE",
+  "AGENTOPS_OPENCLAW_BROKER_RUNTIME_IMAGE_DIGEST",
+  "AGENTOPS_OPENCLAW_BROKER_RECEIPT_KEY_ID",
+  "AGENTOPS_OPENCLAW_RECEIPT_TRUST_ROOT_PATH",
 ]);
 const EXECUTOR_BACKEND_ENVIRONMENT = new Set([
   "OPENCLAW_BIN",
@@ -51,6 +59,30 @@ const EXECUTOR_BACKEND_ENVIRONMENT = new Set([
   "OPENCLAW_HOME",
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
+]);
+const ROOT_EXECUTOR_BACKEND_ENVIRONMENT = new Set([
+  "OPENCLAW_CGROUP_POLICY_PATH",
+  "OPENCLAW_CGROUP_ROOT",
+  "OPENCLAW_EXECUTOR_IMAGE_REFERENCE",
+  "OPENCLAW_EXECUTOR_JOURNAL_ROOT",
+  "OPENCLAW_EXECUTOR_LAUNCHER",
+  "OPENCLAW_EXECUTOR_SOCKET_GID",
+  "OPENCLAW_EXTERNAL_PROVIDER_EGRESS_ATTESTED",
+  "OPENCLAW_CONFIG_PATH",
+  "OPENCLAW_RECEIPT_KEY_ID",
+  "OPENCLAW_RECEIPT_SIGNING_KEY_PATH",
+  "OPENCLAW_RUNTIME_GID",
+  "OPENCLAW_RUNTIME_MANIFEST_ISSUER",
+  "OPENCLAW_RUNTIME_MANIFEST_KEY_ID",
+  "OPENCLAW_RUNTIME_MANIFEST_PATH",
+  "OPENCLAW_RUNTIME_MANIFEST_TRUST_ROOT_PATH",
+  "OPENCLAW_RUNTIME_IMAGE_DIGEST",
+  "OPENCLAW_RUNTIME_IMAGE_NAME",
+  "OPENCLAW_RUNTIME_ROOT",
+  "OPENCLAW_RUNTIME_UID",
+  "OPENCLAW_SECCOMP_PROFILE_PATH",
+  "OPENCLAW_STATE_DIR",
+  "OPENCLAW_WORKSPACE",
 ]);
 
 function fail(code) {
@@ -116,6 +148,18 @@ function roleContract(role, testRoot) {
       listenGid: 2200,
       internalRoot: paths.executorInternalRoot,
       internalSocket: join(paths.executorInternalRoot, "provider.sock"),
+      privateSocket: paths.privateSocket,
+    };
+  }
+  if (role === "root-executor") {
+    return {
+      backendEntrypoint: ROOT_EXECUTOR_ENTRYPOINT,
+      backendSchema: "agentops_openclaw_executor_health_v1",
+      externalSocket: paths.privateSocket,
+      expectedUid: 1100,
+      listenGid: 2200,
+      internalRoot: paths.executorInternalRoot,
+      internalSocket: join(paths.executorInternalRoot, "executor-backend.sock"),
       privateSocket: paths.privateSocket,
     };
   }
@@ -230,6 +274,14 @@ export function backendEnvironment(configuration, environment = process.env) {
       AGENTOPS_OPENCLAW_BROKER_PRIVATE_SOCKET_PATH: configuration.privateSocket,
       AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_GID: String(process.getgid?.()),
       AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_DIRECTORY_MODE: String(0o700),
+    };
+  }
+  if (configuration.role === "root-executor") {
+    return {
+      ...base,
+      ...copyAllowed(environment, ROOT_EXECUTOR_BACKEND_ENVIRONMENT),
+      OPENCLAW_EXECUTOR_SOCKET: configuration.internalSocket,
+      OPENCLAW_EXECUTOR_SOCKET_GID: String(process.getgid?.()),
     };
   }
   return {

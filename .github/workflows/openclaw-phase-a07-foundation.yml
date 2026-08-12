@@ -1,0 +1,96 @@
+name: OpenClaw Phase A07 Foundation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/openclaw-phase-a07-foundation.yml"
+      - "deploy/byoc/Dockerfile"
+      - "deploy/byoc/compose.openclaw-phase-a07.yaml"
+      - "deploy/byoc/openclaw-boundary-supervisor*.mjs"
+      - "deploy/byoc/openclaw-broker-*.mjs"
+      - "deploy/byoc/openclaw-cgroup-v2*.mjs"
+      - "deploy/byoc/openclaw-executor-*.mjs"
+      - "deploy/byoc/openclaw-runtime-launcher*"
+      - "deploy/byoc/openclaw-runtime-manifest*.mjs"
+      - "deploy/byoc/worker-entrypoint.mjs"
+      - "ui/next-app/scripts/commercial-worker*.ts"
+      - "ui/next-app/src/worker/**"
+  push:
+    branches:
+      - main
+      - codex/commercial-root-executor-a07
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentops-openclaw-a07-foundation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-foundation:
+    name: Linux root Executor foundation
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact candidate source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify source and TypeScript contracts
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          node deploy/byoc/openclaw-executor-request-contract.mjs
+          node deploy/byoc/openclaw-runtime-manifest-contract.mjs
+          node deploy/byoc/openclaw-cgroup-v2-contract.mjs
+          node deploy/byoc/openclaw-executor-protocol-contract.mjs
+          node deploy/byoc/openclaw-executor-receipt-contract.mjs
+          node deploy/byoc/openclaw-executor-service-contract.mjs
+          node deploy/byoc/openclaw-boundary-supervisor-contract.mjs
+          node deploy/byoc/openclaw-broker-contract.mjs
+          node deploy/byoc/openclaw-phase-a07-image-contract.mjs
+          docker compose -f deploy/byoc/compose.openclaw-phase-a07.yaml config --no-interpolate --quiet
+          npm --prefix ui/next-app ci --ignore-scripts
+          npm --prefix ui/next-app run typecheck
+          npm --prefix ui/next-app run test:commercial-worker-contract
+
+      - name: Run Linux launcher foundation contract
+        run: |
+          set -euo pipefail
+          image="agentops-a07-launcher-test:${GITHUB_SHA}"
+          docker build --pull --target runtime-launcher-build \
+            --file deploy/byoc/Dockerfile --tag "${image}" .
+          receipt="${RUNNER_TEMP}/a07-launcher-foundation.json"
+          AGENTOPS_REQUIRE_REAL_LINUX=1 \
+          AGENTOPS_LAUNCHER_TEST_IMAGE="${image}" \
+            node deploy/byoc/openclaw-runtime-launcher-contract.mjs > "${receipt}"
+          jq -e '
+            .ok == true
+            and .linux_native_hardened_compile_verified == true
+            and .forged_non_cgroup2_procs_fd_rejected == true
+            and .root_identity_transition_probe_passed == false
+            and .real_cgroup_v2_membership_verified == false
+            and .runtime_receipt_verified == false
+            and .hostile_runtime_isolation_verified == false
+          ' "${receipt}" >/dev/null
+
+      - name: Build exact candidate image
+        run: |
+          set -euo pipefail
+          image="agentops-a07:${GITHUB_SHA}"
+          timeout 25m docker build --pull --platform linux/amd64 \
+            --file deploy/byoc/Dockerfile \
+            --build-arg "AGENTOPS_BUILD_IDENTITY=openclaw-a07-foundation-${GITHUB_SHA}" \
+            --build-arg "AGENTOPS_SOURCE_REVISION=${GITHUB_SHA}" \
+            --tag "${image}" .
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image}")" = "${GITHUB_SHA}"
+          docker run --rm --entrypoint /bin/sh "${image}" -c '
+            test -x /usr/local/bin/agentops-openclaw-runtime-launcher
+            test -r /usr/local/lib/agentops/openclaw-executor-receipt.mjs
+            ! command -v cc
+            ! command -v gcc
+          '

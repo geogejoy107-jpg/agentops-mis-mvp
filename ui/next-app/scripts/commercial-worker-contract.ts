@@ -723,16 +723,28 @@ async function openClawProviderSocketContract() {
       assert.equal(request.method, "POST");
       assert.equal(request.url, "/v1/execute");
       const body = await requestBody(request);
-      assert.deepEqual(Object.keys(body).sort(), [
-        "agent_name",
-        "prompt",
-        "prompt_hash",
-        "schema",
-        "timeout_seconds",
-      ]);
-      assert.equal(body.schema, "agentops_openclaw_provider_request_v1");
+      if (body.schema === "agentops_openclaw_executor_public_request_v2") {
+        assert.deepEqual(Object.keys(body).sort(), [
+          "agent_name", "nonce", "prompt", "prompt_sha256", "request_id",
+          "run_id", "schema", "timeout_seconds", "workspace_id_hash",
+        ]);
+        assert.equal(body.request_id, "req_contract_v2");
+        assert.equal(body.run_id, "run_gw_contract_v2");
+        assert.equal(body.nonce, "nonce_contract_v2");
+        assert.equal(body.workspace_id_hash, stableHash("ws_contract_v2"));
+        assert.equal(body.prompt_sha256, stableHash(body.prompt));
+      } else {
+        assert.deepEqual(Object.keys(body).sort(), [
+          "agent_name",
+          "prompt",
+          "prompt_hash",
+          "schema",
+          "timeout_seconds",
+        ]);
+        assert.equal(body.schema, "agentops_openclaw_provider_request_v1");
+        assert.equal(body.prompt_hash, stableHash(body.prompt));
+      }
       assert.equal(body.agent_name, "contract-openclaw");
-      assert.equal(body.prompt_hash, stableHash(body.prompt));
       assert.equal(JSON.stringify(body).includes(TOKEN), false);
       requests += 1;
       if (requests === 3) {
@@ -823,6 +835,46 @@ async function openClawProviderSocketContract() {
     assert.equal(cancelled.retryable, false);
     assert.ok(Date.now() - cancellationStarted < 1_000);
     assert.equal(requests, 3);
+    const v2Adapter = new OpenClawAdapter({
+      providerSocketPath: socketPath,
+      agentName: "contract-openclaw",
+      timeoutSeconds: 5,
+      protocolVersion: "v2",
+    });
+    const missingContext = await v2Adapter.execute({
+      prompt,
+      promptHash: stableHash(prompt),
+      profile: {
+        profileId: "openclaw-executor-v2-missing-context",
+        version: "worker_prompt_profiles_v1",
+        profileHash: stableHash("openclaw-executor-v2-missing-context"),
+        objective: "Reject unbound Executor v2 requests.",
+        outputContract: ["fail_closed"],
+      },
+    });
+    assert.equal(missingContext.ok, false);
+    assert.equal(missingContext.providerCallPerformed, false);
+    assert.equal(requests, 3);
+    const v2 = await v2Adapter.execute({
+      prompt,
+      promptHash: stableHash(prompt),
+      profile: {
+        profileId: "openclaw-executor-v2-contract",
+        version: "worker_prompt_profiles_v1",
+        profileHash: stableHash("openclaw-executor-v2-contract"),
+        objective: "Bind governed execution identity to Executor v2.",
+        outputContract: ["bounded_metadata_only"],
+      },
+      executionContext: {
+        requestId: "req_contract_v2",
+        runId: "run_gw_contract_v2",
+        nonce: "nonce_contract_v2",
+        workspaceIdHash: stableHash("ws_contract_v2"),
+      },
+    });
+    assert.equal(v2.ok, true);
+    assert.equal(v2.providerCallPerformed, true);
+    assert.equal(requests, 4);
     return {
       unix_socket_transport: true,
       direct_binary_not_required: true,
@@ -830,6 +882,8 @@ async function openClawProviderSocketContract() {
       extra_response_fields_rejected: true,
       cancellation_propagated: true,
       provider_call_performed: true,
+      executor_v2_governance_bindings_verified: true,
+      executor_v2_missing_context_dispatch_omitted: true,
       raw_prompt_omitted: true,
       raw_response_omitted: true,
     };

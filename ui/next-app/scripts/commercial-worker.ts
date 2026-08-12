@@ -32,6 +32,7 @@ type CliOptions = {
   openClawProviderSocket?: string;
   openClawAgent: string;
   openClawTimeoutSeconds: number;
+  openClawProtocolVersion: "v1" | "v2";
 };
 
 function envBoolean(name: string, fallback = false) {
@@ -102,6 +103,7 @@ function cliOptions(argv: string[]): CliOptions {
     "--openclaw-provider-socket",
     "--openclaw-agent",
     "--openclaw-timeout-seconds",
+    "--openclaw-protocol-version",
   ]);
   for (const name of [...values.keys(), ...flags]) {
     if (!known.has(name)) throw new Error(`unsupported_argument:${name}`);
@@ -194,6 +196,15 @@ function cliOptions(argv: string[]): CliOptions {
       1,
       600,
     ),
+    openClawProtocolVersion: (() => {
+      const value = values.get("--openclaw-protocol-version")
+        || process.env.OPENCLAW_PROVIDER_PROTOCOL
+        || "v1";
+      if (value !== "v1" && value !== "v2") {
+        throw new Error("openclaw_provider_protocol_invalid");
+      }
+      return value;
+    })(),
   };
 }
 
@@ -243,6 +254,7 @@ async function main() {
       providerSocketPath: options.openClawProviderSocket as string,
       agentName: options.openClawAgent,
       timeoutSeconds: options.openClawTimeoutSeconds,
+      protocolVersion: options.openClawProtocolVersion,
     });
   const shutdown = new AbortController();
   let stopping = false;

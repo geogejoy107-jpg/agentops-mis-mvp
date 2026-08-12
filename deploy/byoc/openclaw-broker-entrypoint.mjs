@@ -3,7 +3,12 @@
 import {
   chmodSync,
   chownSync,
+  closeSync,
+  constants,
+  fstatSync,
   lstatSync,
+  openSync,
+  readFileSync,
   unlinkSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
@@ -11,6 +16,22 @@ import { createServer, request as httpRequest } from "node:http";
 import { createConnection } from "node:net";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  buildExecutorDispatch,
+  canonicalExecutorProtocolBytes,
+  EXECUTOR_PUBLIC_REQUEST_SCHEMA,
+  EXECUTOR_PRIVATE_RESPONSE_SCHEMA,
+  readLinuxBootClock,
+  validateExecutorPublicRequest,
+} from "./openclaw-executor-protocol.mjs";
+import {
+  parseCanonicalExecutorReceiptEnvelope,
+  verifyExecutorReceipt,
+} from "./openclaw-executor-receipt.mjs";
+import {
+  RESPONSE_FIELDS as PROVIDER_RESPONSE_FIELDS,
+  RESPONSE_SCHEMA as PROVIDER_RESPONSE_SCHEMA,
+} from "./openclaw-provider-entrypoint.mjs";
 
 export const MAX_REQUEST_BYTES = 1024 * 1024;
 export const MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -33,6 +54,10 @@ const REQUEST_FIELDS = Object.freeze([
 ]);
 const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
+const IMAGE_DIGEST = /^sha256:[a-f0-9]{64}$/;
+const IMAGE_REFERENCE = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*){1,7}@(sha256:[a-f0-9]{64})$/;
+const EXECUTOR_PRIVATE_RESPONSE_FIELDS = Object.freeze(["provider_response", "receipt", "schema"].sort());
+const RECEIPT_TRUST_ROOT_SCHEMA = "agentops_openclaw_executor_receipt_trust_roots_v1";
 
 const FORBIDDEN_ENVIRONMENT_NAMES = /(?:^|_)(?:TOKEN|PASSWORD|SECRET|API_KEY|DSN|COOKIE|CREDENTIALS?)(?:$|_)/i;
 const FORBIDDEN_ENVIRONMENT_PREFIXES = [
@@ -65,6 +90,13 @@ const ALLOWED_BROKER_ENVIRONMENT = new Set([
   "AGENTOPS_OPENCLAW_BROKER_PRIVATE_SOCKET_UID",
   "AGENTOPS_OPENCLAW_BROKER_REQUEST_TIMEOUT_MS",
   "AGENTOPS_OPENCLAW_BROKER_BODY_TIMEOUT_MS",
+  "AGENTOPS_OPENCLAW_BROKER_RUNTIME_MANIFEST_SHA256",
+  "AGENTOPS_OPENCLAW_BROKER_ISOLATION_POLICY_SHA256",
+  "AGENTOPS_OPENCLAW_BROKER_SECCOMP_PROFILE_SHA256",
+  "AGENTOPS_OPENCLAW_BROKER_EXECUTOR_IMAGE_REFERENCE",
+  "AGENTOPS_OPENCLAW_BROKER_RUNTIME_IMAGE_DIGEST",
+  "AGENTOPS_OPENCLAW_BROKER_RECEIPT_KEY_ID",
+  "AGENTOPS_OPENCLAW_RECEIPT_TRUST_ROOT_PATH",
 ]);
 
 function fail(message) {
@@ -87,6 +119,36 @@ function integerValue(value, fallback, minimum, maximum, label) {
     fail(`${label}_invalid`);
   }
   return candidate;
+}
+
+function optionalDigest(value, label) {
+  const candidate = String(value || "").trim().toLowerCase();
+  if (candidate && !SHA256_HEX.test(candidate)) fail(`${label}_invalid`);
+  return candidate || null;
+}
+
+function optionalAbsolutePath(value, label) {
+  const candidate = String(value || "").trim();
+  return candidate ? requiredAbsolutePath(candidate, "", label) : null;
+}
+
+function optionalToken(value, label) {
+  const candidate = String(value || "").trim();
+  if (candidate && !SAFE_IDENTIFIER.test(candidate)) fail(`${label}_invalid`);
+  return candidate || null;
+}
+
+function optionalImageDigest(value, label) {
+  const candidate = String(value || "").trim();
+  if (candidate && !IMAGE_DIGEST.test(candidate)) fail(`${label}_invalid`);
+  return candidate || null;
+}
+
+function optionalImageReference(value, label) {
+  const candidate = String(value || "").trim();
+  const match = candidate ? IMAGE_REFERENCE.exec(candidate) : null;
+  if (candidate && !match) fail(`${label}_invalid`);
+  return candidate ? { reference: candidate, digest: match[1] } : null;
 }
 
 function assertCredentialFreeEnvironment(environment) {
@@ -131,6 +193,10 @@ export function loadConfiguration(environment = process.env) {
   if (![0o700, 0o750].includes(publicSocketDirectoryMode)) {
     fail("broker_public_socket_directory_mode_invalid");
   }
+  const executorImage = optionalImageReference(
+    environment.AGENTOPS_OPENCLAW_BROKER_EXECUTOR_IMAGE_REFERENCE,
+    "broker_executor_image_reference",
+  );
   return {
     publicSocketPath,
     privateSocketPath,
@@ -170,7 +236,94 @@ export function loadConfiguration(environment = process.env) {
       30_000,
       "broker_body_timeout_ms",
     ),
+    runtimeManifestSha256: optionalDigest(
+      environment.AGENTOPS_OPENCLAW_BROKER_RUNTIME_MANIFEST_SHA256,
+      "broker_runtime_manifest_sha256",
+    ),
+    isolationPolicySha256: optionalDigest(
+      environment.AGENTOPS_OPENCLAW_BROKER_ISOLATION_POLICY_SHA256,
+      "broker_isolation_policy_sha256",
+    ),
+    seccompProfileSha256: optionalDigest(
+      environment.AGENTOPS_OPENCLAW_BROKER_SECCOMP_PROFILE_SHA256,
+      "broker_seccomp_profile_sha256",
+    ),
+    executorImageReference: executorImage?.reference || null,
+    executorImageDigest: executorImage?.digest || null,
+    runtimeImageDigest: optionalImageDigest(
+      environment.AGENTOPS_OPENCLAW_BROKER_RUNTIME_IMAGE_DIGEST,
+      "broker_runtime_image_digest",
+    ),
+    receiptKeyId: optionalToken(
+      environment.AGENTOPS_OPENCLAW_BROKER_RECEIPT_KEY_ID,
+      "broker_receipt_key_id",
+    ),
+    receiptTrustRootPath: optionalAbsolutePath(
+      environment.AGENTOPS_OPENCLAW_RECEIPT_TRUST_ROOT_PATH,
+      "broker_receipt_trust_root",
+    ),
   };
+}
+
+function exactFields(value, expected, code) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) fail(code);
+  const actual = Object.keys(value).sort();
+  const fields = [...expected].sort();
+  if (actual.length !== fields.length || actual.some((name, index) => name !== fields[index])) fail(code);
+  return value;
+}
+
+export function loadExecutorReceiptTrustRoots(path, { expectedUid = 0 } = {}) {
+  const before = lstatSync(path);
+  if (
+    !before.isFile()
+    || before.isSymbolicLink()
+    || before.nlink !== 1
+    || before.uid !== expectedUid
+    || (before.mode & 0o022) !== 0
+    || before.size < 2
+    || before.size > 64 * 1024
+  ) fail("broker_receipt_trust_root_metadata_invalid");
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_CLOEXEC);
+  let bytes;
+  try {
+    const opened = fstatSync(descriptor);
+    if (opened.dev !== before.dev || opened.ino !== before.ino) fail("broker_receipt_trust_root_identity_changed");
+    bytes = readFileSync(descriptor);
+    const afterDescriptor = fstatSync(descriptor);
+    const afterPath = lstatSync(path);
+    if (
+      afterDescriptor.dev !== opened.dev
+      || afterDescriptor.ino !== opened.ino
+      || afterDescriptor.size !== opened.size
+      || afterDescriptor.mtimeMs !== opened.mtimeMs
+      || afterDescriptor.ctimeMs !== opened.ctimeMs
+      || afterPath.dev !== opened.dev
+      || afterPath.ino !== opened.ino
+      || afterPath.size !== opened.size
+    ) fail("broker_receipt_trust_root_identity_changed");
+  } finally {
+    closeSync(descriptor);
+  }
+  let value;
+  try {
+    value = JSON.parse(new TextDecoder("utf8", { fatal: true }).decode(bytes));
+  } catch {
+    fail("broker_receipt_trust_root_json_invalid");
+  }
+  exactFields(value, ["keys", "schema"], "broker_receipt_trust_root_fields_invalid");
+  if (value.schema !== RECEIPT_TRUST_ROOT_SCHEMA) fail("broker_receipt_trust_root_schema_invalid");
+  const keys = value.keys;
+  if (!keys || typeof keys !== "object" || Array.isArray(keys)) fail("broker_receipt_trust_root_keys_invalid");
+  const entries = Object.entries(keys);
+  if (entries.length < 1 || entries.length > 8) fail("broker_receipt_trust_root_count_invalid");
+  for (const [keyId, publicKey] of entries) {
+    if (!SAFE_IDENTIFIER.test(keyId) || typeof publicKey !== "string" || publicKey.length > 4096) {
+      fail("broker_receipt_trust_root_key_invalid");
+    }
+  }
+  if (!bytes.equals(canonicalExecutorProtocolBytes(value))) fail("broker_receipt_trust_root_encoding_noncanonical");
+  return new Map(entries);
 }
 
 function fileIdentity(metadata) {
@@ -193,6 +346,14 @@ function sameIdentity(left, right) {
 
 function validatePublicRequest(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  if (value.schema === EXECUTOR_PUBLIC_REQUEST_SCHEMA) {
+    try {
+      validateExecutorPublicRequest(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   const keys = Object.keys(value).sort();
   if (
     keys.length !== REQUEST_FIELDS.length
@@ -214,6 +375,124 @@ function validatePublicRequest(value) {
     return false;
   }
   return true;
+}
+
+export function privateRequestBytes(configuration, publicBytes, bootClock = null) {
+  let value;
+  try {
+    value = JSON.parse(Buffer.from(publicBytes).toString("utf8"));
+  } catch {
+    fail("broker_public_request_json_invalid");
+  }
+  if (value?.schema !== EXECUTOR_PUBLIC_REQUEST_SCHEMA) return Buffer.from(publicBytes);
+  if (!configuration.runtimeManifestSha256 || !configuration.isolationPolicySha256) {
+    fail("broker_executor_v2_bindings_unavailable");
+  }
+  const dispatch = buildExecutorDispatch(value, {
+    bootClock: bootClock || readLinuxBootClock(),
+    isolationPolicySha256: configuration.isolationPolicySha256,
+    runtimeManifestSha256: configuration.runtimeManifestSha256,
+  });
+  return canonicalExecutorProtocolBytes(dispatch);
+}
+
+function sha256Bytes(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function validateProviderResponse(value) {
+  const response = exactFields(value, PROVIDER_RESPONSE_FIELDS, "broker_provider_response_fields_invalid");
+  if (
+    response.schema !== PROVIDER_RESPONSE_SCHEMA
+    || typeof response.ok !== "boolean"
+    || typeof response.provider_call_performed !== "boolean"
+    || response.dry_run !== false
+    || typeof response.output_present !== "boolean"
+    || typeof response.retryable !== "boolean"
+    || response.raw_prompt_omitted !== true
+    || response.raw_response_omitted !== true
+    || typeof response.raw_payload_hash !== "string"
+    || !SHA256_HEX.test(response.raw_payload_hash)
+  ) fail("broker_provider_response_invalid");
+  return response;
+}
+
+function requireV2ReceiptConfiguration(configuration) {
+  for (const [name, value] of [
+    ["runtime_manifest_sha256", configuration.runtimeManifestSha256],
+    ["isolation_policy_sha256", configuration.isolationPolicySha256],
+    ["seccomp_profile_sha256", configuration.seccompProfileSha256],
+    ["executor_image_digest", configuration.executorImageDigest],
+    ["runtime_image_digest", configuration.runtimeImageDigest],
+    ["receipt_key_id", configuration.receiptKeyId],
+    ["receipt_trust_root_path", configuration.receiptTrustRootPath],
+  ]) if (!value) fail(`broker_executor_v2_${name}_unavailable`);
+}
+
+export function verifyExecutorPrivateResponse(
+  configuration,
+  publicBytes,
+  privateDispatchBytes,
+  privateResponseBytes,
+  trustRoots,
+  replayCache,
+  verificationClock = null,
+) {
+  requireV2ReceiptConfiguration(configuration);
+  let publicRequest;
+  let dispatch;
+  let privateResponse;
+  try {
+    publicRequest = validateExecutorPublicRequest(JSON.parse(Buffer.from(publicBytes).toString("utf8")));
+    dispatch = JSON.parse(Buffer.from(privateDispatchBytes).toString("utf8"));
+    privateResponse = JSON.parse(Buffer.from(privateResponseBytes).toString("utf8"));
+  } catch (error) {
+    if (typeof error?.code === "string" && error.code.startsWith("executor_")) throw error;
+    fail("broker_executor_v2_response_json_invalid");
+  }
+  exactFields(privateResponse, EXECUTOR_PRIVATE_RESPONSE_FIELDS, "broker_executor_v2_response_fields_invalid");
+  if (privateResponse.schema !== EXECUTOR_PRIVATE_RESPONSE_SCHEMA) fail("broker_executor_v2_response_schema_invalid");
+  if (!Buffer.from(privateResponseBytes).equals(canonicalExecutorProtocolBytes(privateResponse))) {
+    fail("broker_executor_v2_response_encoding_noncanonical");
+  }
+  const providerResponse = validateProviderResponse(privateResponse.provider_response);
+  const receiptBytes = canonicalExecutorProtocolBytes(privateResponse.receipt);
+  const receipt = parseCanonicalExecutorReceiptEnvelope(receiptBytes);
+  const clock = verificationClock || readLinuxBootClock();
+  if (clock.boot_id !== dispatch.request?.boot_id) fail("broker_executor_v2_boot_id_changed");
+  const providerRequestBytes = canonicalExecutorProtocolBytes(dispatch.provider_request);
+  const expected = {
+    agent_name: publicRequest.agent_name,
+    boot_id: dispatch.request.boot_id,
+    cgroup: receipt.body.cgroup,
+    deadline_boottime_ns: dispatch.request.deadline_boottime_ns,
+    executor_image_digest: configuration.executorImageDigest,
+    executor_key_id: configuration.receiptKeyId,
+    isolation_policy_sha256: configuration.isolationPolicySha256,
+    launcher: receipt.body.launcher,
+    nonce: publicRequest.nonce,
+    private_dispatch_schema: dispatch.schema,
+    private_dispatch_sha256: sha256Bytes(canonicalExecutorProtocolBytes(dispatch)),
+    prompt_sha256: publicRequest.prompt_sha256,
+    provider_request_sha256: sha256Bytes(providerRequestBytes),
+    public_request_schema: publicRequest.schema,
+    public_request_sha256: sha256Bytes(canonicalExecutorProtocolBytes(publicRequest)),
+    request_id: publicRequest.request_id,
+    run_id: publicRequest.run_id,
+    runtime_image_digest: configuration.runtimeImageDigest,
+    runtime_manifest_sha256: configuration.runtimeManifestSha256,
+    seccomp_profile_sha256: configuration.seccompProfileSha256,
+    verification_boottime_ns: clock.now_boottime_ns,
+    workspace_id_hash: publicRequest.workspace_id_hash,
+  };
+  const verified = verifyExecutorReceipt(receipt, trustRoots, expected, replayCache);
+  const providerResponseSha256 = sha256Bytes(canonicalExecutorProtocolBytes(providerResponse));
+  if (
+    verified.provider.response_complete !== true
+    || verified.provider.response_sha256 !== providerResponseSha256
+    || verified.provider.call_observed !== providerResponse.provider_call_performed
+  ) fail("broker_executor_v2_provider_response_binding_invalid");
+  return canonicalExecutorProtocolBytes(providerResponse);
 }
 
 function inspectDirectory(path, expectedUid, expectedGid, expectedMode, label) {
@@ -492,6 +771,10 @@ function writePrivateResponse(publicResponse, forwarded) {
 export async function startBrokerService(configuration = loadConfiguration()) {
   await preparePublicSocket(configuration);
   const privateIdentity = inspectPrivateSocket(configuration);
+  const receiptTrustRoots = configuration.receiptTrustRootPath
+    ? loadExecutorReceiptTrustRoots(configuration.receiptTrustRootPath)
+    : null;
+  const receiptReplayCache = new Set();
   const state = {
     activeRequest: null,
     executeRequestsReceived: 0,
@@ -518,6 +801,8 @@ export async function startBrokerService(configuration = loadConfiguration()) {
         a03_mount_path_separation_only: true,
         public_private_socket_paths_distinct: true,
         private_socket_identity_verified: privateSocketIdentityVerified,
+        executor_receipt_verification_configured: receiptTrustRoots !== null,
+        runtime_receipt_verified: false,
         so_peercred_verified: false,
         full_hostile_runtime_isolation_verified: false,
       });
@@ -551,8 +836,21 @@ export async function startBrokerService(configuration = loadConfiguration()) {
       }
       if (body === null || response.headersSent || response.destroyed) return;
       try {
-        slot.forward = forwardToPrivate(configuration, privateIdentity, body, response);
+        const privateBody = privateRequestBytes(configuration, body);
+        slot.forward = forwardToPrivate(configuration, privateIdentity, privateBody, response);
         const forwarded = await slot.forward.result;
+        const publicRequest = JSON.parse(body.toString("utf8"));
+        if (publicRequest.schema === EXECUTOR_PUBLIC_REQUEST_SCHEMA) {
+          if (!receiptTrustRoots) fail("broker_executor_v2_receipt_trust_roots_unavailable");
+          forwarded.body = verifyExecutorPrivateResponse(
+            configuration,
+            body,
+            privateBody,
+            forwarded.body,
+            receiptTrustRoots,
+            receiptReplayCache,
+          );
+        }
         writePrivateResponse(response, forwarded);
       } catch {
         if (!response.headersSent && !response.destroyed) boundaryError(response, 502, "PrivateExecutorUnavailable");

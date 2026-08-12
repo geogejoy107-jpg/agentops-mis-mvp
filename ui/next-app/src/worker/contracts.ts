@@ -46,6 +46,12 @@ export type PromptBundle = {
   prompt: string;
   promptHash: string;
   profile: PromptProfile;
+  executionContext?: {
+    requestId: string;
+    runId: string;
+    nonce: string;
+    workspaceIdHash: string;
+  };
 };
 
 export type RuntimeAdapterResult = {

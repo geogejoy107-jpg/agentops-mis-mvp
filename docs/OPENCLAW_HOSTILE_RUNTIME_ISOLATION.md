@@ -18,6 +18,36 @@ descriptor sampling with monotonic `/v1/execute` request counters. This keeps
 the wrong-uid gate fail-closed while preventing the operational healthcheck's
 legitimate backend connection from being misclassified as an attack bypass.
 
+## A07 Foundation Status (2026-08-12)
+
+The commercial runtime remains Next.js/TypeScript/PostgreSQL; Python remains
+outside this commercial execution path. At exact source commit
+`608eb422c2552eaec979c8a9052c6477a6e78875`, the dual real Hermes/OpenClaw A06
+receipt is operator attestation, not cryptographic proof from the remote model
+Provider.
+
+The A07 candidate now has source-level foundations for request-v2 governance
+binding, an append-only replay journal, a signed exact-tree runtime manifest
+with an immutable-directory policy, a native launcher contract that requires a
+real cgroup v2 file descriptor before uid/gid drop, root-Executor
+Supervisor/service preflight, a canonical Ed25519 Executor receipt primitive
+plus Broker-side signature/request/response/replay verification that is not yet
+fed by a real Executor execution, and the separate
+`deploy/byoc/compose.openclaw-phase-a07.yaml` topology. The execute route remains
+fail-closed and incomplete, so Executor health is `503` with `ready=false`.
+The egress flag is an operator attestation only; code does not report network
+enforcement as verified. Docker image execution, real Linux cgroup and
+launcher behavior, A01-A19 acceptance, and real OpenClaw execution have not yet
+been verified for A07. The default release therefore remains A01/A02, and the
+A07 candidate must continue to report:
+
+```text
+real_runtime_process_spawned=false
+runtime_receipt_verified=false
+hostile_runtime_isolation_verified=false
+provider_call_verified=false
+```
+
 ## 1. Security Claims At The Current Baseline
 
 The current two-service topology must not claim hostile-runtime isolation.

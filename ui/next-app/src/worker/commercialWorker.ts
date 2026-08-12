@@ -11,6 +11,7 @@ import type {
 import { WORKER_METHOD_STEPS } from "./contracts";
 import { GatewayHttpError } from "./gatewayClient";
 import { buildWorkerPrompt, taskRequestsExternalWrite } from "./prompt";
+import { randomBytes } from "node:crypto";
 import {
   boundedInteger,
   redactText,
@@ -590,7 +591,15 @@ export class CommercialWorker {
       );
     }
 
-    const prompt = buildWorkerPrompt(task, this.#config.runtime, knowledge);
+    const prompt = {
+      ...buildWorkerPrompt(task, this.#config.runtime, knowledge),
+      executionContext: {
+        requestId: `req_${stableHash({ run_id: runId, task_id: task.task_id }).slice(0, 40)}`,
+        runId,
+        nonce: `nonce_${randomBytes(24).toString("hex")}`,
+        workspaceIdHash: stableHash(this.#config.workspaceId),
+      },
+    };
     const result = await this.#executeWithRetries(prompt);
     let evidenceFailureStage = "runtime_event";
     try {

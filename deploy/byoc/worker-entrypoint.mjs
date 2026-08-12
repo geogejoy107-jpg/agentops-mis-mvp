@@ -239,6 +239,9 @@ function workerCommand(runtime) {
       "--openclaw-timeout-seconds",
       String(boundedInteger("OPENCLAW_TIMEOUT_SECONDS", 180, 1, 600)),
     );
+    const protocol = String(process.env.OPENCLAW_PROVIDER_PROTOCOL || "v1");
+    if (!new Set(["v1", "v2"]).has(protocol)) fail("openclaw_provider_protocol_invalid");
+    command.push("--openclaw-protocol-version", protocol);
   }
   return command;
 }
