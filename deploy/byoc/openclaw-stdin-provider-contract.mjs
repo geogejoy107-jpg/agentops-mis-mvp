@@ -122,6 +122,20 @@ try {
   assert.equal(failure.error_type, "OpenClawExecutionFailed");
   assert.equal(failure.error_message, "Provider error detail omitted; OpenClaw execution failed.");
 
+  const errorPayloadFailure = parseResponse(await executeCanonicalProviderRequest(canonicalBytes(request()), {
+    agentCommand: async () => ({
+      payloads: [{ isError: true, text: rawResponse }],
+      meta: { agentMeta: { model: "contract-model", provider: "contract-provider" } },
+    }),
+    now: () => 2500,
+    stateRoot: stateBase,
+    workspaceDir: workspace,
+  }));
+  assert.equal(errorPayloadFailure.ok, false);
+  assert.equal(errorPayloadFailure.output_present, false);
+  assert.equal(errorPayloadFailure.provider_call_performed, false);
+  assert.equal(errorPayloadFailure.error_type, "OpenClawExecutionFailed");
+
   const cleanupFailure = parseResponse(await executeCanonicalProviderRequest(canonicalBytes(request()), {
     agentCommand: async (options) => {
       const sessions = join(stateBase, "agents", options.agentId, "sessions");
@@ -187,6 +201,7 @@ try {
     model_run_no_tools_policy_requested: true,
     external_delivery_disabled: true,
     fixed_error_redaction_verified: true,
+    error_payload_fail_closed_verified: true,
     one_shot_transcript_and_trajectory_cleanup_verified: true,
     isolated_ephemeral_state_tree_removed_before_stdout: true,
     real_openclaw_agent_command_executed: false,

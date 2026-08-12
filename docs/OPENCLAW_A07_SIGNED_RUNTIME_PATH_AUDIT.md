@@ -1,6 +1,8 @@
 # OpenClaw A07 Signed Runtime Path Audit
 
-Status: blocking design audit for the A07 root Executor candidate.
+Status: blocking design audit for the A07 root Executor candidate. Updated for
+the reproducible guest-root input and runtime manifest v2 foundation; launcher
+handoff and claim-bearing execution remain open.
 
 This document audits the A07 foundation and integrated Executor runner source as
 of 2026-08-12. The runner's contracts use injected execution dependencies; they
@@ -15,7 +17,7 @@ are not real-runtime or hostile-runtime acceptance evidence.
 | PATH-03 | P1 | `execveat(..., AT_EMPTY_PATH)` binds only the Node executable inode. The projected `argv[1]`, absolute imports, subprocess paths, and later module loads are not fd-bound. | The Node binary can be measured while executable content loaded after startup comes from a replaced tree or the Executor root. |
 | PATH-04 | P2 | The verifier uses absolute path joins plus `lstat`, `realpath`, and final-component `O_NOFOLLOW`; it is not descriptor-relative despite the architecture text. | Parent-component changes are checked but not atomically prevented. `openat2` root confinement is absent. |
 | PATH-05 | P2 | A dynamically linked Node opened by fd still obtains its ELF interpreter and shared libraries from the Executor container root. | Those files are bound only by the immutable Executor image digest, not by the runtime manifest. This is acceptable only as an explicit two-root trust model. |
-| PATH-06 | P1 | The repository has no claim-bearing build step that creates the real A07 runtime root and its manifest, and no Linux test invokes the runner's default path/open/spawn dependencies. | The green manifest test uses a synthetic tree, while the green runner test replaces all path and process operations. Neither proves that a real OpenClaw artifact has the declared `/usr/bin/node` and `/app/stdin-provider.mjs` shape. |
+| PATH-06 | P1 | The repository now has a digest-pinned guest-root build input and Linux CI image/import smoke, but no published OCI digest, generated rootfs Merkle inventory, release signature, or Linux test through the runner's default path/open/spawn dependencies. | CI proves the pinned input can build and import OpenClaw 2026.5.4 on amd64. It does not prove launcher fd handoff, request-time identity, or claim-bearing execution. |
 
 These are design blockers, not evidence of a successful hostile execution. The
 working-tree service calls the runner, but the runner contract injects file-open,
@@ -36,19 +38,22 @@ the runner and launcher do not consume them yet. PATH-01 through PATH-04
 therefore remain open until the resolved executable/entrypoint identity is
 carried without pathname reopening into the actual launch sequence.
 
-The source-only stdin adapter removes the prompt-argv blocker without weakening
-the runner gate. It calls OpenClaw's public `agentCommand` export and passed an
-operator-local non-claim probe, but no repository artifact or release claim is
-derived from that probe. It is not yet part of a claim-bearing runtime artifact
-or Linux launcher acceptance. The official OpenClaw 2026.5.4 tarball
-contains 9,692 files; a full production dependency install measured roughly
-44,670 files and 441 MiB, exceeding the current 20,000-file manifest bound.
-Increasing that bound and copying an operator's global install is rejected as a
-closure. The build must produce a version- and integrity-pinned OCI artifact or
-a verified smaller adapter bundle whose dynamic resources are explicit. The
-preferred closure is a complete platform-specific guest root: launcher-side
-`openat2`, `fchdir`/`chroot`, and `execveat` then keep Node, ESM imports, native
-addons, the ELF interpreter, and shared libraries inside one immutable root.
+The stdin adapter removes the prompt-argv blocker without weakening the runner
+gate. It calls OpenClaw's public `agentCommand` export and passed an
+operator-local non-claim probe. The repository now has a single-source
+guest-root build input that locks OpenClaw 2026.5.4, its npm integrity, Node
+22.23.2, and separate Linux amd64/arm64 OCI child digests. Linux CI builds the
+amd64 input and imports the official runtime as uid/gid 1200 under a read-only
+root filesystem. This is not a published, rootfs-measured, signed, or
+launcher-consumed artifact, so no release claim is derived from it.
+
+Runtime manifest v2 provides the intended guest-root path model, OCI/platform
+bindings, rootfs Merkle identity, typed argv, immutable roots, mutable mount
+policy, uid/gid, policy hashes, and canonical Ed25519 envelope. Its claims are
+deliberately all false and it is not yet wired into the Executor. The preferred
+closure remains launcher-side `openat2`, `fchdir`/`chroot`, and `execveat`, which
+keep Node, ESM imports, native addons, the ELF interpreter, and shared libraries
+inside one immutable root.
 
 ## 2. Current Path Trace
 
@@ -108,12 +113,19 @@ libraries for the fd-executed Node binary also resolve there.
 
 ### 2.1 Artifact and test gap
 
-The only repository caller of `generateRuntimeManifest` is
-`openclaw-runtime-manifest-contract.mjs`. That contract creates a synthetic tree
-with `usr/bin/node` and `app/*.mjs`. The A07 Compose file instead accepts an
-operator path through `AGENTOPS_A07_RUNTIME_PATH`; it does not build or unpack a
-digest-bound runtime artifact. Earlier OpenClaw topologies document a different
-runtime shape with `bin/openclaw`.
+The active Executor still consumes manifest v1. Its only repository caller of
+`generateRuntimeManifest` is `openclaw-runtime-manifest-contract.mjs`, which
+creates a synthetic tree with `usr/bin/node` and `app/*.mjs`. The A07 Compose
+file still accepts an operator path through `AGENTOPS_A07_RUNTIME_PATH`; it does
+not pull the new build input by OCI digest or consume manifest v2. Earlier
+OpenClaw topologies document a different runtime shape with `bin/openclaw`.
+
+The new artifact Dockerfile produces the intended guest layout at
+`/usr/local/bin/node`, `/opt/openclaw`, and
+`/opt/agentops/openclaw-adapter/openclaw-stdin-provider.mjs`. Its CI smoke proves
+buildability and official runtime import only. No release job yet records the
+resulting OCI digest, constructs the rootfs Merkle inventory, signs manifest v2,
+or supplies a retained root fd to the launcher.
 
 The runner contract injects `openExecutionFiles`, `spawnLauncher`, cgroup
 operations, and child results. It verifies governance and receipt behavior, but
@@ -244,10 +256,11 @@ namespace escape tests; chroot alone is not the whole isolation proof.
 
 Minimum path closure:
 
-- `deploy/byoc/openclaw-runtime-manifest.mjs`: schema revision, signed path model,
-  one exported root-anchored resolver, and mount/source identity bindings.
-- `deploy/byoc/openclaw-runtime-manifest-contract.mjs`: path projection,
-  `openat2` rejection, immutable mount, decoy path, and swap tests.
+- `deploy/byoc/openclaw-runtime-manifest-v2.mjs`: integrate the completed signed
+  guest-root schema with a release-side rootfs inventory builder and Executor
+  trust roots.
+- `deploy/byoc/openclaw-runtime-manifest-v2-contract.mjs`: retain its current
+  signature/path tamper coverage and add generated OCI/rootfs parity fixtures.
 - `deploy/byoc/openclaw-executor-service.mjs`: retain the verified root fd and
   mount identity; make request-time verification mandatory.
 - `deploy/byoc/openclaw-executor-runner.mjs`: consume only resolver-produced fds
@@ -260,7 +273,7 @@ Minimum path closure:
   sources for claim-bearing mode.
 - `.github/workflows/openclaw-phase-a07-foundation.yml`: run the real Linux path
   execution and adversarial swap contract.
-- a new release-side manifest builder/contract: construct the exact OpenClaw
+- a new release-side manifest builder/contract: publish the exact OpenClaw
   runtime artifact, generate its signed manifest, and fail unless regenerating
   from the same OCI digest produces byte-identical metadata and file digests.
 

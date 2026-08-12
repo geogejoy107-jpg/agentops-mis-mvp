@@ -1,0 +1,45 @@
+{
+  "schema": "agentops_openclaw_guest_root_artifact_input_v1",
+  "artifact_version": "2026.5.4-a07.1",
+  "guest_root_layout": "guest_root_absolute_v1",
+  "openclaw": {
+    "package": "openclaw",
+    "version": "2026.5.4",
+    "license": "MIT",
+    "npm_integrity": "sha512-nbLukSwhBr/wqFLKwLKMDCXJ0lIQYpKKJ4Zzp6ZoN6erLjRUkU5MyU5wbY5oChl6yM7TinBYZ3lRw9V6K07DSQ==",
+    "guest_package_path": "/opt/openclaw/node_modules/openclaw"
+  },
+  "node": {
+    "version": "22.23.2",
+    "image": "node:22.23.2-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436",
+    "index_digest": "sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436",
+    "guest_executable_path": "/usr/local/bin/node"
+  },
+  "platforms": {
+    "linux/amd64": {
+      "base_image": "node:22.23.2-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066",
+      "manifest_digest": "sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066"
+    },
+    "linux/arm64/v8": {
+      "base_image": "node:22.23.2-bookworm-slim@sha256:253da19867dd03e2f817f433d7782adefd2a2bac8729fcd4ebc6770665167a24",
+      "manifest_digest": "sha256:253da19867dd03e2f817f433d7782adefd2a2bac8729fcd4ebc6770665167a24"
+    }
+  },
+  "adapter": {
+    "source": "deploy/byoc/openclaw-stdin-provider.mjs",
+    "guest_path": "/opt/agentops/openclaw-adapter/openclaw-stdin-provider.mjs",
+    "stdin_protocol": "canonical_provider_request_stdin_v1"
+  },
+  "claims": {
+    "artifact_built": false,
+    "artifact_published": false,
+    "exact_platform_image_verified": false,
+    "guest_root_manifest_signed": false,
+    "resolved_fd_handoff_verified": false,
+    "runtime_path_toctou_closed": false,
+    "real_runtime_process_spawned": false,
+    "provider_call_verified": false,
+    "runtime_receipt_verified": false,
+    "hostile_runtime_isolation_verified": false
+  }
+}

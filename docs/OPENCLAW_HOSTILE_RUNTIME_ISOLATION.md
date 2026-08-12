@@ -70,20 +70,33 @@ tools, workspace/chat prompt policy, and external delivery. It gives each
 one-shot run an isolated 0700 state subtree below a dedicated initially empty
 state root and removes every entry below that root before writing stdout; this
 also catches a same-uid runtime renaming the request subtree. Cleanup failure
-makes the process fail closed. The
-adapter has not yet been assembled into a reproducible digest-pinned Linux
-runtime artifact, so this real local probe does not change A07 release claims.
+makes the process fail closed, and an OpenClaw `isError` payload is never
+reported as a successful Provider call. Adapter cleanup alone does not defeat a
+still-running same-uid descendant that writes after the final check; the root
+Executor must first quiesce the execution cgroup and then clean and verify the
+state root before it can earn the hostile-runtime claim.
+
+The adapter is now the sole source copied by a reproducible guest-root build
+input under `deploy/byoc/openclaw-runtime-artifact/`. That input locks
+OpenClaw 2026.5.4, Node 22.23.2, npm integrity, and separate Linux amd64 and
+arm64/v8 OCI child digests. Runtime manifest v2 binds the platform, OCI digest,
+rootfs Merkle identity, typed guest argv, immutable code roots, read-only
+workspace/config mounts, writable state mount, uid/gid 1200, and policy hashes
+inside a canonical Ed25519 envelope. The exact-head Linux workflow builds and
+imports an ephemeral amd64 image under a read-only root filesystem, but this is
+CI input validation rather than a published or signed release artifact. All
+artifact, handoff, receipt, Provider, and hostile-runtime claims remain false.
 
 The exact A07 foundation image and native launcher contract have passed Linux
 CI, but the signed runtime path audit in
 `docs/OPENCLAW_A07_SIGNED_RUNTIME_PATH_AUDIT.md` identifies unresolved
 request-time path binding and host-bind TOCTOU gaps. The CLI
 `--message <prompt>` path remains forbidden. The checked-in stdin adapter is not
-yet packaged in the signed Linux runtime root, so the claim-bearing A07 topology
-still has no accepted production runtime to dispatch. The egress flag remains
-operator attestation only, and A01-A19 have not passed for the A07 topology. The
-default release therefore remains A01/A02, and the A07 candidate must continue
-to report:
+yet published in a signed Linux runtime root or handed to the launcher through
+an opened guest-root fd, so the claim-bearing A07 topology still has no accepted
+production runtime to dispatch. The egress flag remains operator attestation
+only, and A01-A19 have not passed for the A07 topology. The default release
+therefore remains A01/A02, and the A07 candidate must continue to report:
 
 ```text
 real_runtime_process_spawned=false

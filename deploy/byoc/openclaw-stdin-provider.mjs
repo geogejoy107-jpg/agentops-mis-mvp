@@ -108,7 +108,13 @@ function responseFromResult(request, result, started, now) {
   const wire = Buffer.from(JSON.stringify(result), "utf8");
   const outputPresent = Array.isArray(result?.payloads)
     && result.payloads.some((payload) => typeof payload?.text === "string" && payload.text.length > 0);
-  const failed = result?.meta?.aborted === true || result?.meta?.error || result?.meta?.failureSignal;
+  const errorPayloadPresent = Array.isArray(result?.payloads)
+    && result.payloads.some((payload) => payload?.isError === true);
+  const failed = result?.isError === true
+    || errorPayloadPresent
+    || result?.meta?.aborted === true
+    || result?.meta?.error
+    || result?.meta?.failureSignal;
   return {
     dry_run: false,
     duration_ms: elapsed(started, now),

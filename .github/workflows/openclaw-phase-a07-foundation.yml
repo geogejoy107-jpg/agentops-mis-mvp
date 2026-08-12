@@ -12,6 +12,7 @@ on:
       - "deploy/byoc/openclaw-cgroup-v2*.mjs"
       - "deploy/byoc/openclaw-executor-*.mjs"
       - "deploy/byoc/openclaw-runtime-launcher*"
+      - "deploy/byoc/openclaw-runtime-artifact/**"
       - "deploy/byoc/openclaw-runtime-manifest*.mjs"
       - "deploy/byoc/openclaw-stdin-provider*.mjs"
       - "deploy/byoc/worker-entrypoint.mjs"
@@ -33,7 +34,7 @@ jobs:
   linux-foundation:
     name: Linux root Executor foundation
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
     steps:
       - name: Checkout exact candidate source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -47,6 +48,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
           node deploy/byoc/openclaw-executor-request-contract.mjs
           node deploy/byoc/openclaw-runtime-manifest-contract.mjs
+          node deploy/byoc/openclaw-runtime-manifest-v2-contract.mjs
+          node deploy/byoc/openclaw-runtime-artifact/contract.mjs
           node deploy/byoc/openclaw-cgroup-v2-contract.mjs
           node deploy/byoc/openclaw-executor-protocol-contract.mjs
           node deploy/byoc/openclaw-executor-receipt-contract.mjs
@@ -61,6 +64,37 @@ jobs:
           npm --prefix ui/next-app ci --ignore-scripts
           npm --prefix ui/next-app run typecheck
           npm --prefix ui/next-app run test:commercial-worker-contract
+
+      - name: Build exact Linux OpenClaw guest-root input
+        run: |
+          set -euo pipefail
+          image="agentops-openclaw-guest-root-input:${GITHUB_SHA}"
+          node_image="node:22.23.2-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066"
+          timeout 20m docker build --pull --platform linux/amd64 \
+            --file deploy/byoc/openclaw-runtime-artifact/Dockerfile \
+            --build-arg "NODE_IMAGE=${node_image}" \
+            --tag "${image}" .
+          test "$(docker image inspect --format '{{.Architecture}}' "${image}")" = "amd64"
+          docker run --rm --read-only --network none \
+            --workdir /opt/openclaw \
+            --entrypoint /usr/local/bin/node \
+            "${image}" --input-type=module -e '
+              import { readFile } from "node:fs/promises";
+              const packageJson = JSON.parse(await readFile("./node_modules/openclaw/package.json", "utf8"));
+              if (packageJson.version !== "2026.5.4") process.exit(1);
+              const runtime = await import("openclaw/plugin-sdk/agent-runtime");
+              if (typeof runtime.agentCommand !== "function") process.exit(1);
+            '
+          docker run --rm --read-only --network none \
+            --entrypoint /bin/sh \
+            "${image}" -ec '
+              test "$(id -u)" = "1200"
+              test "$(id -g)" = "1200"
+              test "$(stat -c %a /opt/openclaw/node_modules/openclaw/package.json)" = "444"
+              test "$(stat -c %a /opt/agentops/openclaw-adapter/openclaw-stdin-provider.mjs)" = "555"
+              test -r /opt/openclaw/node_modules/openclaw/LICENSE
+              test -r /opt/agentops/openclaw-runtime-artifact.json
+            '
 
       - name: Run Linux launcher foundation contract
         run: |
