@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -20,8 +21,30 @@ const root = mkdtempSync(join(tmpdir(), "agentops-worker-container-acceptance-")
 const suffix = `${process.pid}-${randomBytes(5).toString("hex")}`;
 const stubName = `agentops-worker-stub-${suffix}`;
 const workerName = `agentops-worker-under-test-${suffix}`;
+const openClawProviderName = `agentops-openclaw-provider-${suffix}`;
+const openClawWorkerName = `agentops-openclaw-worker-${suffix}`;
+const openClawSocketVolume = `agentops-openclaw-socket-${suffix}`;
 const token = `acceptance-agent-token-${randomBytes(32).toString("hex")}`;
 const tokenSha256 = createHash("sha256").update(token).digest("hex");
+const providerSentinel = `provider-only-${randomBytes(32).toString("hex")}`;
+const mockPrompt = "Source-free OpenClaw sidecar isolation acceptance mock execution.";
+const mockPromptSha256 = createHash("sha256").update(mockPrompt).digest("hex");
+const OPENCLAW_PROVIDER_RESPONSE_KEYS = [
+  "dry_run",
+  "duration_ms",
+  "error_message",
+  "error_type",
+  "model_name",
+  "ok",
+  "output_present",
+  "output_tokens",
+  "provider_call_performed",
+  "raw_payload_hash",
+  "raw_prompt_omitted",
+  "raw_response_omitted",
+  "retryable",
+  "schema",
+];
 
 function fail(code) {
   const error = new Error(code);
@@ -126,6 +149,98 @@ net.createServer((socket) => {
 }).listen(18766, "127.0.0.1");
 `;
 
+const fakeOpenClawProgram = String.raw`#!/usr/bin/env node
+const fs = require("node:fs");
+function stop(code) {
+  process.stderr.write(code + "\n");
+  process.exit(1);
+}
+const args = process.argv.slice(2);
+const flag = (name) => {
+  const index = args.indexOf(name);
+  return index >= 0 ? args[index + 1] : undefined;
+};
+if (args[0] !== "agent" || flag("--agent") !== "acceptance-mock-agent") {
+  stop("fake_openclaw_arguments_invalid");
+}
+if (!flag("--message") || flag("--json") !== undefined || !args.includes("--json")) {
+  stop("fake_openclaw_message_invalid");
+}
+if (typeof process.getuid === "function" && process.getuid() !== 1001) {
+  stop("fake_openclaw_uid_invalid");
+}
+if (
+  process.env.AGENTOPS_AGENT_TOKEN
+  || process.env.AGENTOPS_API_KEY
+  || process.env.AGENTOPS_AGENT_TOKEN_SOURCE_FILE
+  || fs.existsSync("/run/secrets/agent_token")
+) {
+  stop("fake_openclaw_agent_token_boundary_invalid");
+}
+const config = fs.readFileSync(process.env.OPENCLAW_CONFIG_PATH, "utf8").trim();
+const runtimeSentinel = fs.readFileSync(
+  "/opt/agentops-provider/openclaw/provider-sentinel",
+  "utf8",
+).trim();
+const workspaceSentinel = fs.readFileSync(
+  "/opt/agentops-worker/workspace/provider-sentinel",
+  "utf8",
+).trim();
+if (
+  !config.includes("acceptance_mock_config")
+  || runtimeSentinel !== ${JSON.stringify(providerSentinel)}
+  || workspaceSentinel !== ${JSON.stringify(providerSentinel)}
+) {
+  stop("fake_openclaw_provider_mount_invalid");
+}
+process.stdout.write(JSON.stringify({
+  result: {
+    meta: {
+      durationMs: 7,
+      finalAssistantVisibleText: "mock sidecar isolation response",
+    },
+    payloads: [{ text: "mock sidecar isolation response" }],
+  },
+}));
+`;
+
+const openClawSocketProbe = String.raw`
+const crypto = require("node:crypto");
+const http = require("node:http");
+const prompt = process.env.ACCEPTANCE_MOCK_PROMPT;
+const body = JSON.stringify({
+  schema: "agentops_openclaw_provider_request_v1",
+  agent_name: "acceptance-mock-agent",
+  prompt,
+  prompt_hash: crypto.createHash("sha256").update(prompt).digest("hex"),
+  timeout_seconds: 10,
+});
+const request = http.request({
+  socketPath: "/run/agentops-openclaw/provider.sock",
+  path: "/v1/execute",
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    "content-length": Buffer.byteLength(body),
+  },
+}, (response) => {
+  const chunks = [];
+  let size = 0;
+  response.on("data", (chunk) => {
+    size += chunk.length;
+    if (size > 1048576) request.destroy(new Error("response_too_large"));
+    else chunks.push(chunk);
+  });
+  response.on("end", () => {
+    if (response.statusCode !== 200) process.exit(2);
+    process.stdout.write(Buffer.concat(chunks));
+  });
+});
+request.setTimeout(20000, () => request.destroy(new Error("socket_timeout")));
+request.on("error", () => process.exit(3));
+request.end(body);
+`;
+
 let receipt;
 let activeCheck = "initialization";
 try {
@@ -164,6 +279,37 @@ try {
   const tokenPath = join(root, "agent-token");
   writeFileSync(tokenPath, `${token}\n`, { encoding: "utf8", mode: 0o400, flag: "wx" });
   chmodSync(tokenPath, 0o444);
+  const openClawRuntime = join(root, "openclaw-runtime");
+  const openClawBinDirectory = join(openClawRuntime, "bin");
+  const openClawBinary = join(openClawBinDirectory, "openclaw");
+  const openClawConfig = join(root, "openclaw-config.json");
+  const openClawWorkspace = join(root, "openclaw-workspace");
+  mkdirSync(openClawBinDirectory, { recursive: true, mode: 0o755 });
+  mkdirSync(openClawWorkspace, { recursive: true, mode: 0o755 });
+  writeFileSync(openClawBinary, fakeOpenClawProgram, {
+    encoding: "utf8",
+    mode: 0o555,
+    flag: "wx",
+  });
+  writeFileSync(join(openClawRuntime, "provider-sentinel"), `${providerSentinel}\n`, {
+    encoding: "utf8",
+    mode: 0o444,
+    flag: "wx",
+  });
+  writeFileSync(join(openClawWorkspace, "provider-sentinel"), `${providerSentinel}\n`, {
+    encoding: "utf8",
+    mode: 0o444,
+    flag: "wx",
+  });
+  writeFileSync(openClawConfig, '{"contract":"acceptance_mock_config"}\n', {
+    encoding: "utf8",
+    mode: 0o444,
+    flag: "wx",
+  });
+  chmodSync(root, 0o755);
+  chmodSync(openClawRuntime, 0o755);
+  chmodSync(openClawBinDirectory, 0o755);
+  chmodSync(openClawWorkspace, 0o755);
 
   activeCheck = "stub_start";
   docker([
@@ -327,6 +473,293 @@ try {
   );
   if (stoppedLogs.includes(token)) fail("agent_token_exposed_after_worker_stop");
 
+  activeCheck = "openclaw_socket_volume";
+  const createdVolume = docker([
+    "volume", "create",
+    "--driver", "local",
+    "--opt", "type=tmpfs",
+    "--opt", "device=tmpfs",
+    "--opt", "o=uid=1001,gid=1000,mode=0770,nosuid,nodev,noexec,size=1m",
+    openClawSocketVolume,
+  ], [0], "acceptance_openclaw_socket_volume_create_failed").trim();
+  if (createdVolume !== openClawSocketVolume) {
+    fail("acceptance_openclaw_socket_volume_identity_invalid");
+  }
+
+  activeCheck = "openclaw_provider_start";
+  docker([
+    "run", "--detach", "--name", openClawProviderName,
+    "--platform", "linux/amd64",
+    "--init",
+    "--network", "none",
+    "--user", "1001:1000", "--read-only", "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges:true",
+    "--tmpfs", "/run/openclaw-state:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=1001,gid=1000",
+    "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=1001,gid=1000",
+    "--mount", `type=volume,src=${openClawSocketVolume},dst=/run/agentops-openclaw`,
+    "--mount", `type=bind,src=${openClawRuntime},dst=/opt/agentops-provider/openclaw,readonly`,
+    "--mount", `type=bind,src=${openClawConfig},dst=/run/secrets/openclaw_config,readonly`,
+    "--mount", `type=bind,src=${openClawWorkspace},dst=/opt/agentops-worker/workspace,readonly`,
+    "--env", "NODE_ENV=production",
+    "--env", "AGENTOPS_DEPLOYMENT_MODE=production",
+    "--env", "OPENCLAW_PROVIDER_SOCKET=/run/agentops-openclaw/provider.sock",
+    "--env", "OPENCLAW_BIN=/opt/agentops-provider/openclaw/bin/openclaw",
+    "--env", "OPENCLAW_CONFIG_PATH=/run/secrets/openclaw_config",
+    "--env", "OPENCLAW_STATE_DIR=/run/openclaw-state",
+    "--env", "AGENTOPS_WORKER_CWD=/opt/agentops-worker/workspace",
+    "--entrypoint", "node", image,
+    "/usr/local/lib/agentops/openclaw-provider-entrypoint.mjs",
+  ], [0], "acceptance_openclaw_provider_start_failed");
+  waitFor(openClawProviderName, () => {
+    docker([
+      "exec", openClawProviderName,
+      "node", "/usr/local/lib/agentops/openclaw-provider-healthcheck.mjs",
+    ], [0], "acceptance_openclaw_provider_health_pending");
+    return true;
+  }, 30_000);
+
+  activeCheck = "openclaw_worker_start";
+  docker([
+    "run", "--detach", "--name", openClawWorkerName,
+    "--platform", "linux/amd64",
+    "--init",
+    "--network", `container:${stubName}`,
+    "--user", "1000:1000", "--read-only", "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges:true",
+    "--tmpfs", "/run/agentops-worker:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=1000,gid=1000",
+    "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=1000,gid=1000",
+    "--mount", `type=volume,src=${openClawSocketVolume},dst=/run/agentops-openclaw`,
+    "--mount", `type=bind,src=${tokenPath},dst=/run/secrets/agent_token,readonly`,
+    "--env", "NODE_ENV=production",
+    "--env", "AGENTOPS_WORKER_ADAPTER=openclaw",
+    "--env", "AGENTOPS_AGENT_TOKEN_SOURCE_FILE=/run/secrets/agent_token",
+    "--env", "AGENTOPS_BASE_URL=http://127.0.0.1:18765",
+    "--env", "AGENTOPS_WORKSPACE_ID=ws_openclaw_isolation_acceptance",
+    "--env", "AGENTOPS_AGENT_ID=agt_openclaw_isolation_acceptance",
+    "--env", "AGENTOPS_RUN_ESTIMATED_COST_USD=1.000000",
+    "--env", "AGENTOPS_POLL_INTERVAL_MS=1000",
+    "--env", "AGENTOPS_ADAPTER_MAX_ATTEMPTS=1",
+    "--env", "AGENTOPS_WORKER_HEALTH_LEASE_SECONDS=30",
+    "--env", "AGENTOPS_ALLOW_INSECURE_LOOPBACK=true",
+    "--env", "AGENTOPS_ALLOW_HIGH_RISK=false",
+    "--env", "OPENCLAW_PROVIDER_SOCKET=/run/agentops-openclaw/provider.sock",
+    "--env", "OPENCLAW_AGENT=acceptance-mock-agent",
+    "--env", "OPENCLAW_TIMEOUT_SECONDS=10",
+    "--entrypoint", "node", image,
+    "/usr/local/lib/agentops/worker-entrypoint.mjs",
+  ], [0], "acceptance_openclaw_worker_start_failed");
+
+  activeCheck = "openclaw_worker_receipt";
+  const openClawWorkerReceipt = waitFor(openClawWorkerName, () => jsonLines(docker(
+    ["logs", openClawWorkerName],
+    [0],
+    "acceptance_openclaw_worker_logs_failed",
+  )).find((item) =>
+    item.contract === "agentops_byoc_typescript_worker_receipt_v1"
+    && item.ok === true
+    && item.processed === false
+    && item.reason === "no_task"
+  ), 60_000);
+  if (openClawWorkerReceipt.provider_call_performed !== false) {
+    fail("acceptance_openclaw_worker_unexpected_provider_call");
+  }
+  if (openClawWorkerReceipt.dry_run !== false) {
+    fail("acceptance_openclaw_worker_dry_run_invalid");
+  }
+  if (openClawWorkerReceipt.token_omitted !== true) {
+    fail("acceptance_openclaw_worker_receipt_token_boundary_invalid");
+  }
+
+  activeCheck = "openclaw_container_isolation";
+  const providerInspection = JSON.parse(docker(
+    ["inspect", openClawProviderName],
+    [0],
+    "acceptance_openclaw_provider_inspect_failed",
+  ))[0];
+  const openClawWorkerInspection = JSON.parse(docker(
+    ["inspect", openClawWorkerName],
+    [0],
+    "acceptance_openclaw_worker_inspect_failed",
+  ))[0];
+  if (providerInspection.Config?.User !== "1001:1000") {
+    fail("acceptance_openclaw_provider_uid_invalid");
+  }
+  if (openClawWorkerInspection.Config?.User !== "1000:1000") {
+    fail("acceptance_openclaw_worker_uid_invalid");
+  }
+  if (
+    providerInspection.Image !== imageInspection.Id
+    || openClawWorkerInspection.Image !== imageInspection.Id
+  ) fail("acceptance_openclaw_exact_image_invalid");
+  if (providerInspection.HostConfig?.NetworkMode !== "none") {
+    fail("acceptance_openclaw_provider_network_invalid");
+  }
+  const stubContainerId = docker(
+    ["inspect", "--format", "{{.Id}}", stubName],
+    [0],
+    "acceptance_stub_identity_read_failed",
+  ).trim();
+  if (
+    !/^[0-9a-f]{64}$/.test(stubContainerId)
+    || openClawWorkerInspection.HostConfig?.NetworkMode !== `container:${stubContainerId}`
+  ) {
+    fail("acceptance_openclaw_worker_network_invalid");
+  }
+
+  const providerMounts = providerInspection.Mounts || [];
+  const openClawWorkerMounts = openClawWorkerInspection.Mounts || [];
+  const providerDestinations = new Set(providerMounts.map((mount) => mount.Destination));
+  const openClawWorkerDestinations = new Set(
+    openClawWorkerMounts.map((mount) => mount.Destination),
+  );
+  for (const requiredDestination of [
+    "/run/agentops-openclaw",
+    "/opt/agentops-provider/openclaw",
+    "/run/secrets/openclaw_config",
+    "/opt/agentops-worker/workspace",
+  ]) {
+    if (!providerDestinations.has(requiredDestination)) {
+      fail("acceptance_openclaw_provider_required_mount_missing");
+    }
+  }
+  if (providerDestinations.has("/run/secrets/agent_token")) {
+    fail("acceptance_openclaw_provider_agent_token_mounted");
+  }
+  if (
+    openClawWorkerDestinations.size !== 2
+    || !openClawWorkerDestinations.has("/run/agentops-openclaw")
+    || !openClawWorkerDestinations.has("/run/secrets/agent_token")
+  ) fail("acceptance_openclaw_worker_mount_boundary_invalid");
+  for (const forbiddenDestination of [
+    "/opt/agentops-provider/openclaw",
+    "/run/secrets/openclaw_config",
+    "/run/openclaw-state",
+    "/opt/agentops-worker/workspace",
+  ]) {
+    if (openClawWorkerDestinations.has(forbiddenDestination)) {
+      fail("acceptance_openclaw_worker_provider_mount_detected");
+    }
+  }
+  const providerSocketMount = providerMounts.find(
+    (mount) => mount.Destination === "/run/agentops-openclaw",
+  );
+  const workerSocketMount = openClawWorkerMounts.find(
+    (mount) => mount.Destination === "/run/agentops-openclaw",
+  );
+  if (
+    providerSocketMount?.Type !== "volume"
+    || workerSocketMount?.Type !== "volume"
+    || providerSocketMount.Name !== openClawSocketVolume
+    || workerSocketMount.Name !== openClawSocketVolume
+  ) fail("acceptance_openclaw_shared_socket_volume_invalid");
+  const providerSources = new Set(providerMounts.map((mount) => mount.Source));
+  const sharedMounts = openClawWorkerMounts.filter(
+    (mount) => providerSources.has(mount.Source),
+  );
+  if (
+    sharedMounts.length !== 1
+    || sharedMounts[0].Type !== "volume"
+    || sharedMounts[0].Name !== openClawSocketVolume
+    || sharedMounts[0].Destination !== "/run/agentops-openclaw"
+  ) fail("acceptance_openclaw_cross_container_mount_overlap_invalid");
+
+  const providerEnvironment = providerInspection.Config?.Env || [];
+  const openClawWorkerEnvironment = openClawWorkerInspection.Config?.Env || [];
+  if (providerEnvironment.some((item) =>
+    /^(?:AGENTOPS_AGENT_TOKEN|AGENTOPS_API_KEY|AGENTOPS_AGENT_TOKEN_SOURCE_FILE)=/.test(item)
+    || item.includes(token)
+  )) fail("acceptance_openclaw_provider_agent_token_environment_detected");
+  if (openClawWorkerEnvironment.some((item) =>
+    /^(?:OPENCLAW_BIN|OPENCLAW_CONFIG_PATH|OPENCLAW_STATE_DIR|AGENTOPS_WORKER_CWD)=/.test(item)
+    || item.includes(providerSentinel)
+  )) fail("acceptance_openclaw_worker_provider_environment_detected");
+
+  const workerProviderProbe = JSON.parse(docker([
+    "exec", openClawWorkerName, "node", "-e",
+    "const f=require('node:fs');const paths=['/opt/agentops-provider/openclaw/provider-sentinel','/run/secrets/openclaw_config','/run/openclaw-state','/opt/agentops-worker/workspace/provider-sentinel'];process.stdout.write(JSON.stringify(paths.map(path=>({path,exists:f.existsSync(path),readable:(()=>{try{f.readFileSync(path);return true}catch{return false}})()}))))",
+  ], [0], "acceptance_openclaw_worker_provider_probe_failed"));
+  if (workerProviderProbe.some((item) => item.exists || item.readable)) {
+    fail("acceptance_openclaw_worker_provider_sentinel_readable");
+  }
+  const providerTokenProbe = JSON.parse(docker([
+    "exec", openClawProviderName, "node", "-e",
+    "const f=require('node:fs');const paths=['/run/secrets/agent_token','/run/agentops-worker/agent_token'];const environments=f.readdirSync('/proc').filter(x=>/^\\d+$/.test(x)).flatMap(x=>{try{return [f.readFileSync('/proc/'+x+'/environ').toString('utf8')]}catch{return []}});process.stdout.write(JSON.stringify({paths:paths.map(path=>({path,exists:f.existsSync(path),readable:(()=>{try{f.readFileSync(path);return true}catch{return false}})()})),environments}))",
+  ], [0], "acceptance_openclaw_provider_token_probe_failed"));
+  if (
+    providerTokenProbe.paths.some((item) => item.exists || item.readable)
+    || providerTokenProbe.environments.some((item) =>
+      item.includes(token)
+      || /AGENTOPS_(?:AGENT_TOKEN|API_KEY|AGENT_TOKEN_SOURCE_FILE)=/.test(item)
+    )
+  ) fail("acceptance_openclaw_provider_agent_token_readable");
+
+  activeCheck = "openclaw_socket_protocol";
+  const providerResponseRaw = docker([
+    "exec", "--env", `ACCEPTANCE_MOCK_PROMPT=${mockPrompt}`,
+    openClawWorkerName, "node", "-e", openClawSocketProbe,
+  ], [0], "acceptance_openclaw_socket_protocol_failed").trim();
+  let providerResponse;
+  try {
+    providerResponse = JSON.parse(providerResponseRaw);
+  } catch {
+    fail("acceptance_openclaw_provider_response_json_invalid");
+  }
+  if (
+    !providerResponse
+    || typeof providerResponse !== "object"
+    || Array.isArray(providerResponse)
+  ) fail("acceptance_openclaw_provider_response_object_required");
+  const providerResponseKeys = Object.keys(providerResponse).sort();
+  if (
+    providerResponseKeys.length !== OPENCLAW_PROVIDER_RESPONSE_KEYS.length
+    || providerResponseKeys.some(
+      (key, index) => key !== OPENCLAW_PROVIDER_RESPONSE_KEYS[index],
+    )
+  ) fail("acceptance_openclaw_provider_response_fields_invalid");
+  if (
+    providerResponse.schema !== "agentops_openclaw_provider_response_v1"
+    || providerResponse.ok !== true
+    || providerResponse.provider_call_performed !== true
+    || providerResponse.dry_run !== false
+    || providerResponse.output_present !== true
+    || providerResponse.retryable !== false
+    || providerResponse.raw_prompt_omitted !== true
+    || providerResponse.raw_response_omitted !== true
+    || providerResponse.error_type !== null
+    || providerResponse.error_message !== null
+    || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(providerResponse.model_name)
+    || !/^[0-9a-f]{64}$/.test(providerResponse.raw_payload_hash)
+    || !Number.isSafeInteger(providerResponse.duration_ms)
+    || providerResponse.duration_ms < 0
+    || !Number.isSafeInteger(providerResponse.output_tokens)
+    || providerResponse.output_tokens < 0
+  ) fail("acceptance_openclaw_provider_response_contract_invalid");
+  if (
+    providerResponseRaw.includes(mockPrompt)
+    || providerResponseRaw.includes(providerSentinel)
+    || providerResponseRaw.includes(token)
+    || providerResponse.raw_payload_hash === mockPromptSha256
+  ) fail("acceptance_openclaw_provider_response_payload_exposed");
+
+  const openClawWorkerLogs = docker(
+    ["logs", openClawWorkerName],
+    [0],
+    "acceptance_openclaw_worker_final_logs_failed",
+  );
+  const openClawProviderLogs = docker(
+    ["logs", openClawProviderName],
+    [0],
+    "acceptance_openclaw_provider_final_logs_failed",
+  );
+  for (const exposed of [
+    openClawWorkerLogs,
+    openClawProviderLogs,
+    JSON.stringify(openClawWorkerInspection),
+    JSON.stringify(providerTokenProbe),
+  ]) {
+    if (exposed.includes(token)) fail("acceptance_openclaw_agent_token_exposed");
+  }
+
   process.stdout.write(`${JSON.stringify({
     ok: true,
     contract: "agentops_byoc_typescript_worker_container_v1",
@@ -347,6 +780,28 @@ try {
     token_in_receipt: false,
     token_in_health: false,
     token_omitted: true,
+    openclaw_provider_request_contract: "agentops_openclaw_provider_request_v1",
+    openclaw_provider_response_contract: "agentops_openclaw_provider_response_v1",
+    openclaw_provider_container_started: true,
+    openclaw_worker_container_started: true,
+    openclaw_provider_health_verified: true,
+    openclaw_provider_socket_protocol_verified: true,
+    openclaw_provider_uid_verified: true,
+    openclaw_worker_uid_verified: true,
+    openclaw_exact_image_verified: true,
+    openclaw_shared_socket_only_verified: true,
+    openclaw_worker_provider_mount_isolation_verified: true,
+    openclaw_provider_agent_token_isolation_verified: true,
+    openclaw_worker_provider_sentinel_unreadable: true,
+    openclaw_provider_agent_token_unreadable: true,
+    openclaw_mock_prompt_hash_verified: mockPromptSha256 === createHash("sha256")
+      .update(mockPrompt).digest("hex"),
+    mock_provider_execution_performed: true,
+    isolation_verified: true,
+    real_provider_execution_performed: false,
+    real_provider_execution_evidence_source: "separate_exact_head_harness",
+    openclaw_raw_prompt_omitted: true,
+    openclaw_raw_response_omitted: true,
   })}\n`);
 } catch (error) {
   const code = typeof error?.code === "string" && /^[a-z][a-z0-9_]{2,80}$/.test(error.code)
@@ -355,7 +810,10 @@ try {
   process.stderr.write(`${code}\n`);
   process.exitCode = 1;
 } finally {
+  spawnSync("docker", ["rm", "--force", openClawWorkerName], { stdio: "ignore" });
+  spawnSync("docker", ["rm", "--force", openClawProviderName], { stdio: "ignore" });
   spawnSync("docker", ["rm", "--force", workerName], { stdio: "ignore" });
   spawnSync("docker", ["rm", "--force", stubName], { stdio: "ignore" });
+  spawnSync("docker", ["volume", "rm", "--force", openClawSocketVolume], { stdio: "ignore" });
   rmSync(root, { recursive: true, force: true });
 }

@@ -229,7 +229,7 @@ jobs:
             and .credentials_omitted == true
           ' "${receipt}" >/dev/null
 
-      - name: Exercise source-free TypeScript Worker container without provider execution
+      - name: Exercise source-free Worker and OpenClaw sidecar isolation
         run: |
           set -euo pipefail
           receipt="${RUNNER_TEMP}/customer-worker-container.json"
@@ -256,6 +256,27 @@ jobs:
             and .token_in_receipt == false
             and .token_in_health == false
             and .token_omitted == true
+            and .openclaw_provider_request_contract == "agentops_openclaw_provider_request_v1"
+            and .openclaw_provider_response_contract == "agentops_openclaw_provider_response_v1"
+            and .openclaw_provider_container_started == true
+            and .openclaw_worker_container_started == true
+            and .openclaw_provider_health_verified == true
+            and .openclaw_provider_socket_protocol_verified == true
+            and .openclaw_provider_uid_verified == true
+            and .openclaw_worker_uid_verified == true
+            and .openclaw_exact_image_verified == true
+            and .openclaw_shared_socket_only_verified == true
+            and .openclaw_worker_provider_mount_isolation_verified == true
+            and .openclaw_provider_agent_token_isolation_verified == true
+            and .openclaw_worker_provider_sentinel_unreadable == true
+            and .openclaw_provider_agent_token_unreadable == true
+            and .openclaw_mock_prompt_hash_verified == true
+            and .mock_provider_execution_performed == true
+            and .isolation_verified == true
+            and .real_provider_execution_performed == false
+            and .real_provider_execution_evidence_source == "separate_exact_head_harness"
+            and .openclaw_raw_prompt_omitted == true
+            and .openclaw_raw_response_omitted == true
           ' "${receipt}" >/dev/null
 
       - name: Initialize first Owner through the source-free customer command
