@@ -1,5 +1,5 @@
 schema_version: template-final-pack-input-receipt/v1
-verified_at: "2026-08-12T00:00:00+08:00"
+verified_at: "2026-08-12T12:16:53+08:00"
 source_archive: /Users/wuji/.codex/attachments/f59ddbcc-500b-4111-a79e-4e0d88f4829f/AgentOps_MIS_Final_Production_4_Conversation_Pack_2026-08-09.zip
 source_archive_sha256: f0b39687e21157b01d93c22c9820728c9a8a450d94f8ee22ffbc485decdd813b
 extracted_directory: /Users/wuji/Documents/MIS/.codex-inputs/AgentOps_MIS_Final_Production_4_Conversation_Pack_2026-08-09/AgentOps_MIS_Final_Production_4_Conversation_Pack_2026-08-09
