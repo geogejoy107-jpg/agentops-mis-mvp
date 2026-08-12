@@ -19,6 +19,10 @@ const receiptPath = join(root, "receipt.json");
 const callsPath = join(root, "gh-calls.jsonl");
 const fakeGh = join(root, "gh");
 const script = new URL("./commercial-runtime-status.mjs", import.meta.url);
+const ciWorkflow = readFileSync(
+  new URL("../.github/workflows/ci.yml", import.meta.url),
+  "utf8",
+);
 
 function receipt() {
   const worker = (runtime) => ({
@@ -164,6 +168,16 @@ function run(arguments_, value = receipt(), options = {}) {
 }
 
 try {
+  assert.match(
+    ciWorkflow,
+    /AGENTOPS_REAL_EVIDENCE_SHA: \$\{\{ github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/,
+  );
+  assert.match(ciWorkflow, /test "\$\(git rev-parse HEAD\)" = "\$GITHUB_SHA"/);
+  assert.match(ciWorkflow, /--sha "\$AGENTOPS_REAL_EVIDENCE_SHA"/);
+  assert.doesNotMatch(
+    ciWorkflow,
+    /commercial-runtime-status\.mjs verify[\s\S]{0,220}--sha "\$GITHUB_SHA"/,
+  );
   writeFileSync(fakeGh, `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);

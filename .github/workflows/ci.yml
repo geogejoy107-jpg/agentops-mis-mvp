@@ -755,14 +755,16 @@ jobs:
       - name: Require exact-head real Hermes and OpenClaw evidence
         env:
           GH_TOKEN: ${{ github.token }}
+          AGENTOPS_REAL_EVIDENCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          [[ "$AGENTOPS_REAL_EVIDENCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           python3 scripts/nextjs_postgres_real_worker_dsn_file_contract.py
           node scripts/commercial-runtime-status-contract.mjs
           node scripts/commercial-runtime-status.mjs verify \
             --repo "$GITHUB_REPOSITORY" \
-            --sha "$GITHUB_SHA" \
+            --sha "$AGENTOPS_REAL_EVIDENCE_SHA" \
             --publisher "$GITHUB_REPOSITORY_OWNER"
 
       - name: Require every commercial promotion lane
