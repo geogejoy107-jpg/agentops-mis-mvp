@@ -28,6 +28,14 @@ RUN gcc -std=c11 -O2 -fPIE -fstack-protector-strong \
       -o /agentops-openclaw-runtime-path-resolver openclaw-runtime-path-resolver.c \
     && strip --strip-all /agentops-openclaw-runtime-path-resolver
 
+FROM peercred-build AS mount-bootstrap-build
+COPY deploy/byoc/openclaw-mount-bootstrap.c ./
+RUN gcc -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wformat=2 \
+      -Wconversion -Wshadow -fstack-protector-strong -D_FORTIFY_SOURCE=3 \
+      -fPIE -pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack \
+      -o /agentops-openclaw-mount-bootstrap openclaw-mount-bootstrap.c \
+    && strip --strip-all /agentops-openclaw-mount-bootstrap
+
 FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS dependencies
 WORKDIR /opt/agentops/ui/next-app
 COPY ui/next-app/package.json ui/next-app/package-lock.json ./
@@ -60,6 +68,7 @@ COPY migrations/postgres ./migrations/postgres
 COPY --from=peercred-build --chmod=0555 /agentops-openclaw-peercred-gate /usr/local/bin/agentops-openclaw-peercred-gate
 COPY --from=runtime-launcher-build --chmod=0555 /agentops-openclaw-runtime-launcher /usr/local/bin/agentops-openclaw-runtime-launcher
 COPY --from=runtime-path-resolver-build --chmod=0555 /agentops-openclaw-runtime-path-resolver /usr/local/bin/agentops-openclaw-runtime-path-resolver
+COPY --from=mount-bootstrap-build --chmod=0555 /agentops-openclaw-mount-bootstrap /usr/local/bin/agentops-openclaw-mount-bootstrap
 COPY --chmod=0555 \
     deploy/byoc/node-healthcheck.mjs \
     deploy/byoc/node-secret-entrypoint.mjs \

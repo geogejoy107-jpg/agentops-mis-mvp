@@ -478,14 +478,34 @@ async function runStrictContract() {
 }
 
 if (guestWrapperInvocation()) {
-  await runGuestWrapper();
+  try {
+    await runGuestWrapper();
+  } catch (error) {
+    const guestErrorCode = typeof error?.code === "string"
+      && /^[a-z][a-z0-9_]{0,119}$/u.test(error.code)
+      ? error.code
+      : "real_runner_guest_failed";
+    try { writeGuestEvidence({ guest_error_code: guestErrorCode }); } catch {}
+    process.exitCode = 1;
+  }
 } else if (process.argv.length === 3 && process.argv[2] === REQUIRED_ARGUMENT) {
   try {
     await runStrictContract();
   } catch (error) {
+    let guestErrorCode = null;
+    try {
+      const guestEvidence = JSON.parse(readFileSync(
+        path.join(String(process.env.AGENTOPS_REAL_RUNNER_GUEST_ROOT || ""), GUEST.evidence.slice(1)),
+        "utf8",
+      ));
+      if (/^[a-z][a-z0-9_]{0,119}$/u.test(String(guestEvidence?.guest_error_code || ""))) {
+        guestErrorCode = guestEvidence.guest_error_code;
+      }
+    } catch {}
     process.stderr.write(jsonLine({
       contract: CONTRACT_SCHEMA,
       error: typeof error?.code === "string" ? error.code : "real_runner_contract_failed",
+      guest_error_code: guestErrorCode,
       ok: false,
       raw_prompt_omitted: true,
       raw_response_omitted: true,

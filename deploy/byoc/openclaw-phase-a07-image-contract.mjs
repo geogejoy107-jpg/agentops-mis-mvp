@@ -35,6 +35,12 @@ assert.match(
   dockerfile,
   /COPY --from=runtime-path-resolver-build --chmod=0555 \/agentops-openclaw-runtime-path-resolver \/usr\/local\/bin\/agentops-openclaw-runtime-path-resolver/,
 );
+assert.match(dockerfile, /FROM peercred-build AS mount-bootstrap-build/);
+assert.match(dockerfile, /COPY deploy\/byoc\/openclaw-mount-bootstrap\.c/);
+assert.match(
+  dockerfile,
+  /COPY --from=mount-bootstrap-build --chmod=0555 \/agentops-openclaw-mount-bootstrap \/usr\/local\/bin\/agentops-openclaw-mount-bootstrap/,
+);
 assert.match(dockerfile, /deploy\/byoc\/openclaw-runtime-path-resolver-contract\.mjs/);
 assert.match(dockerfile, /install -d -o 0 -g 2200 -m 0700 \/var\/lib\/agentops-openclaw\/replay/);
 assert.equal(artifact.node.version, "22.23.2");
@@ -122,11 +128,12 @@ assert.equal((broker.match(/create_host_path: false/g) || []).length, 1);
 assert.doesNotMatch(broker, /agentops-provider\/openclaw|openclaw_config|signing_key|provider-egress/);
 
 assert.match(executor, /user: "0:2200"/);
+assert.match(executor, /init: false/);
 assert.match(executor, /cap_drop: \[ALL\]/);
-assert.match(executor, /cap_add:\s*\n\s+- SETUID\s*\n\s+- SETGID\s*\n\s+- SYS_CHROOT\s*\n\s+- KILL/);
+assert.match(executor, /cap_add:\s*\n\s+- SETUID\s*\n\s+- SETGID\s*\n\s+- SYS_CHROOT\s*\n\s+- KILL\s*\n\s+- SYS_ADMIN\s*\n\s+- SETPCAP/);
 assert.match(executor, /no-new-privileges:true/);
 assert.match(executor, /read_only: true/);
-assert.match(executor, /openclaw-boundary-supervisor\.mjs/);
+assert.match(executor, /entrypoint: \[\/usr\/local\/bin\/agentops-openclaw-mount-bootstrap\]/);
 assert.match(executor, /AGENTOPS_OPENCLAW_BOUNDARY_ROLE: root-executor/);
 assert.match(executor, /OPENCLAW_EXECUTOR_IMAGE_REFERENCE: \$\{AGENTOPS_A07_IMAGE:/);
 assert.doesNotMatch(executor, /AGENTOPS_A07_IMAGE_DIGEST/);
@@ -164,8 +171,8 @@ assert.match(compose, /o: uid=1100,gid=2100,mode=0750,nosuid,nodev,noexec,size=1
 assert.match(compose, /o: uid=0,gid=2200,mode=0750,nosuid,nodev,noexec,size=1m/);
 assert.match(compose, /external default-deny\s*\n# firewall or proxy allowlist/);
 assert.match(executor, /OPENCLAW_EXTERNAL_PROVIDER_EGRESS_ATTESTED: \$\{AGENTOPS_A07_EXTERNAL_PROVIDER_EGRESS_ATTESTED:/);
-assert.match(executor, /OPENCLAW_RUNTIME_RECEIPT_VERIFIED: "false"/);
-assert.match(executor, /OPENCLAW_HOSTILE_RUNTIME_ISOLATION_VERIFIED: "false"/);
+assert.doesNotMatch(executor, /OPENCLAW_RUNTIME_RECEIPT_VERIFIED/);
+assert.doesNotMatch(executor, /OPENCLAW_HOSTILE_RUNTIME_ISOLATION_VERIFIED/);
 assert.doesNotMatch(compose, /\/var\/run\/docker\.sock|network_mode:\s*host|pid:\s*host|privileged:\s*true/);
 assert.doesNotMatch(compose, /OPENCLAW_(?:RUNTIME_RECEIPT|HOSTILE_RUNTIME_ISOLATION)_VERIFIED: "true"/);
 
@@ -177,7 +184,9 @@ process.stdout.write(`${JSON.stringify({
   executor_uid: 0,
   executor_gid: 2200,
   runtime_uid: 1200,
-  executor_capabilities: ["SETUID", "SETGID", "SYS_CHROOT", "KILL"],
+  executor_bootstrap_capabilities: ["SETUID", "SETGID", "SYS_CHROOT", "KILL", "SYS_ADMIN", "SETPCAP"],
+  executor_post_bootstrap_capabilities: ["SETUID", "SETGID", "SYS_CHROOT", "KILL"],
+  mount_bootstrap_pid1_configured: true,
   delegated_cgroup_path_exact: true,
   persistent_replay_journal_present: true,
   native_openat2_resolver_foundation_packaged: true,

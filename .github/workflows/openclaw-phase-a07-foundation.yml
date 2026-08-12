@@ -14,6 +14,7 @@ on:
       - "deploy/byoc/openclaw-executor-*.mjs"
       - "deploy/byoc/openclaw-runtime-launcher*"
       - "deploy/byoc/openclaw-runtime-guest-root*.mjs"
+      - "deploy/byoc/openclaw-mount-bootstrap*"
       - "deploy/byoc/openclaw-runtime-real-runner-contract.mjs"
       - "deploy/byoc/openclaw-runtime-artifact/**"
       - "deploy/byoc/openclaw-runtime-manifest*.mjs"
@@ -65,6 +66,7 @@ jobs:
           node deploy/byoc/openclaw-runtime-path-resolver-contract.mjs --source-audit-only
           node deploy/byoc/openclaw-runtime-guest-root-contract.mjs
           node deploy/byoc/openclaw-runtime-real-runner-contract.mjs
+          node deploy/byoc/openclaw-mount-bootstrap-contract.mjs
           node deploy/byoc/openclaw-executor-service-contract.mjs
           node deploy/byoc/openclaw-boundary-supervisor-contract.mjs
           node deploy/byoc/openclaw-broker-contract.mjs
@@ -160,6 +162,31 @@ jobs:
             and .runtime_path_toctou_closed == false
             and .hostile_runtime_isolation_verified == false
           ' "${guest_root_receipt}" >/dev/null
+
+          mount_bootstrap_receipt="${RUNNER_TEMP}/a07-mount-bootstrap.json"
+          docker run --rm --privileged --network none --user 0:2200 \
+            --tmpfs /tmp:rw,exec,nosuid,nodev,size=128m,mode=1777 \
+            --volume "${GITHUB_WORKSPACE}:/workspace:ro" \
+            --workdir /workspace \
+            --entrypoint node \
+            "${image}" \
+            deploy/byoc/openclaw-mount-bootstrap-contract.mjs \
+            > "${mount_bootstrap_receipt}"
+          jq -e '
+            .ok == true
+            and .linux_native_compile_verified == true
+            and .linux_runtime_executed == true
+            and .bind_remount_verified == true
+            and .mountinfo_flags_verified == true
+            and .capability_drop_verified == true
+            and .required_launcher_capabilities_retained == true
+            and .temporary_cap_setpcap_removed == true
+            and .no_new_privs_verified == true
+            and .fixed_execve_verified == true
+            and .environment_allowlist_verified == true
+            and .unknown_prefixed_environment_rejected == true
+            and .production_wiring_verified == true
+          ' "${mount_bootstrap_receipt}" >/dev/null
 
       - name: Run strict default runner against exported OpenClaw guest root
         run: |

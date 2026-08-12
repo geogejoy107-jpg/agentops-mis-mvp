@@ -92,7 +92,7 @@ services:
 
   executor:
     image: ${AGENTOPS_A07_IMAGE:?set AGENTOPS_A07_IMAGE to an immutable name@sha256:digest reference}
-    init: true
+    init: false
     restart: "no"
     user: "0:2200"
     read_only: true
@@ -102,6 +102,8 @@ services:
       - SETGID
       - SYS_CHROOT
       - KILL
+      - SYS_ADMIN
+      - SETPCAP
     security_opt:
       - no-new-privileges:true
     pids_limit: 256
@@ -111,7 +113,7 @@ services:
       - /run/agentops-openclaw-provider-backend:rw,noexec,nosuid,nodev,size=2m,mode=0700,uid=0,gid=2200
       - /opt/agentops-provider/openclaw/run/openclaw-state:rw,noexec,nosuid,nodev,size=32m,mode=0700,uid=1200,gid=1200
       - /opt/agentops-provider/openclaw/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777,uid=1200,gid=1200
-    entrypoint: [node, /usr/local/lib/agentops/openclaw-boundary-supervisor.mjs]
+    entrypoint: [/usr/local/bin/agentops-openclaw-mount-bootstrap]
     environment:
       NODE_ENV: production
       AGENTOPS_OPENCLAW_BOUNDARY_ROLE: root-executor
@@ -136,8 +138,6 @@ services:
       OPENCLAW_RUNTIME_UID: "1200"
       OPENCLAW_RUNTIME_GID: "1200"
       OPENCLAW_EXTERNAL_PROVIDER_EGRESS_ATTESTED: ${AGENTOPS_A07_EXTERNAL_PROVIDER_EGRESS_ATTESTED:?set true only after the operator applies external default-deny enforcement}
-      OPENCLAW_RUNTIME_RECEIPT_VERIFIED: "false"
-      OPENCLAW_HOSTILE_RUNTIME_ISOLATION_VERIFIED: "false"
     volumes:
       - phase_a07_private_socket:/run/agentops-openclaw-private:rw
       - type: bind
