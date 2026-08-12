@@ -226,17 +226,17 @@ function workerCommand(runtime) {
       String(boundedInteger("HERMES_MAX_TOKENS", 512, 64, 4_096)),
     );
   } else {
-    const binary = resolve(required("OPENCLAW_BIN"));
-    if (binary !== required("OPENCLAW_BIN")) fail("openclaw_bin_absolute_required");
+    const providerSocket = resolve(required("OPENCLAW_PROVIDER_SOCKET"));
+    if (providerSocket !== required("OPENCLAW_PROVIDER_SOCKET")) {
+      fail("openclaw_provider_socket_absolute_required");
+    }
     command.push(
-      "--openclaw-bin",
-      binary,
+      "--openclaw-provider-socket",
+      providerSocket,
       "--openclaw-agent",
       required("OPENCLAW_AGENT"),
       "--openclaw-timeout-seconds",
       String(boundedInteger("OPENCLAW_TIMEOUT_SECONDS", 180, 1, 600)),
-      "--working-directory",
-      resolve(required("AGENTOPS_WORKER_CWD")),
     );
   }
   return command;
@@ -245,8 +245,7 @@ function workerCommand(runtime) {
 function childEnvironment(tokenSource) {
   const allowed = [
     "HOME", "HOSTNAME", "LANG", "LC_ALL", "NODE_ENV", "PATH", "PWD", "SHELL",
-    "TMPDIR", "TMP", "TEMP", "TZ", "OPENCLAW_HOME", "OPENCLAW_STATE_DIR",
-    "OPENCLAW_CONFIG_PATH", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+    "TMPDIR", "TMP", "TEMP", "TZ",
   ];
   return {
     ...Object.fromEntries(allowed.filter((name) => process.env[name]).map((name) => [name, process.env[name]])),

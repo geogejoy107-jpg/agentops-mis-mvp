@@ -26,7 +26,7 @@ import {
   containsProtectedMaterial,
   stableHash,
 } from "../src/worker/redaction";
-import { HermesAdapter } from "../src/worker/adapters";
+import { HermesAdapter, OpenClawAdapter } from "../src/worker/adapters";
 import { readCommercialAgentToken } from "../src/worker/agentToken";
 
 const TOKEN = "contract-bearer-fixture-0123456789abcdef";
@@ -546,6 +546,11 @@ async function sourceBoundaryContract() {
   );
   assert.match(orchestrator, /plan-evidence-manifests/);
   assert.match(cliSource, /readCommercialAgentToken/);
+  assert.match(cliSource, /openclaw_provider_socket_required/);
+  assert.match(
+    cliSource,
+    /--allow-direct-openclaw-for-exact-head-acceptance/,
+  );
   assert.match(cliSource, /if \(!receipt\.ok\) process\.exitCode = 1/);
   assert.doesNotMatch(cliSource, /!receipt\.ok && !stopping/);
   assert.doesNotMatch(cliSource, /values\.get\("--(?:api-key|token)/);
@@ -570,6 +575,10 @@ async function sourceBoundaryContract() {
     /next_runtime_mutable_artifact_paths_omitted/,
   );
   assert.match(realAcceptanceSource, /"--estimated-cost-usd"/);
+  assert.match(
+    realAcceptanceSource,
+    /"--allow-direct-openclaw-for-exact-head-acceptance"/,
+  );
   assert.match(realAcceptanceSource, /configure:workspace-entitlement/);
   assert.match(realAcceptanceSource, /"--max-concurrent-runs"/);
   assert.match(
@@ -671,9 +680,136 @@ function bodyFor(pathname: string, requests: RecordedRequest[]) {
   return match.body;
 }
 
+async function openClawProviderSocketContract() {
+  const root = mkdtempSync(path.join(tmpdir(), "agentops-openclaw-provider-contract-"));
+  const socketPath = path.join(root, "provider.sock");
+  let requests = 0;
+  const server = createServer((request, response) => {
+    void (async () => {
+      assert.equal(request.method, "POST");
+      assert.equal(request.url, "/v1/execute");
+      const body = await requestBody(request);
+      assert.deepEqual(Object.keys(body).sort(), [
+        "agent_name",
+        "prompt",
+        "prompt_hash",
+        "schema",
+        "timeout_seconds",
+      ]);
+      assert.equal(body.schema, "agentops_openclaw_provider_request_v1");
+      assert.equal(body.agent_name, "contract-openclaw");
+      assert.equal(body.prompt_hash, stableHash(body.prompt));
+      assert.equal(JSON.stringify(body).includes(TOKEN), false);
+      requests += 1;
+      if (requests === 3) {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+      }
+      const payload: Record<string, unknown> = {
+        schema: "agentops_openclaw_provider_response_v1",
+        ok: true,
+        provider_call_performed: true,
+        dry_run: false,
+        model_name: "contract-openclaw",
+        duration_ms: 7,
+        output_tokens: 0,
+        raw_payload_hash: stableHash({ provider: "openclaw", requests }),
+        output_present: true,
+        retryable: false,
+        error_type: null,
+        error_message: null,
+        raw_prompt_omitted: true,
+        raw_response_omitted: true,
+      };
+      if (requests === 2) payload.raw_response = OUTPUT_CANARY;
+      send(response, 200, payload);
+    })().catch(() => send(response, 500, { error: "contract_failure" }));
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, () => resolve());
+    });
+    const prompt = "Return bounded OpenClaw provider metadata.";
+    const adapter = new OpenClawAdapter({
+      binaryPath: "/openclaw-binary-intentionally-absent",
+      providerSocketPath: socketPath,
+      agentName: "contract-openclaw",
+      timeoutSeconds: 5,
+    });
+    const result = await adapter.execute({
+      prompt,
+      promptHash: stableHash(prompt),
+      profile: {
+        profileId: "openclaw-provider-contract",
+        version: "worker_prompt_profiles_v1",
+        profileHash: stableHash("openclaw-provider-contract"),
+        objective: "Verify the isolated OpenClaw provider socket boundary.",
+        outputContract: ["bounded_metadata_only"],
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.providerCallPerformed, true);
+    assert.equal(result.dryRun, false);
+    assert.equal(result.outputSummary.includes(OUTPUT_CANARY), false);
+    assert.match(result.outputSummary, /Provider response omitted/);
+    assert.equal(requests, 1);
+    const malformed = await adapter.execute({
+      prompt,
+      promptHash: stableHash(prompt),
+      profile: {
+        profileId: "openclaw-provider-malformed-contract",
+        version: "worker_prompt_profiles_v1",
+        profileHash: stableHash("openclaw-provider-malformed-contract"),
+        objective: "Reject provider responses carrying unbounded fields.",
+        outputContract: ["fail_closed"],
+      },
+    });
+    assert.equal(malformed.ok, false);
+    assert.equal(malformed.providerCallPerformed, true);
+    assert.equal(malformed.errorType, "OpenClawProviderUnavailable");
+    assert.equal(JSON.stringify(malformed).includes(OUTPUT_CANARY), false);
+    assert.equal(requests, 2);
+    const cancellation = new AbortController();
+    const cancellationStarted = Date.now();
+    const cancelledPromise = adapter.execute({
+      prompt,
+      promptHash: stableHash(prompt),
+      profile: {
+        profileId: "openclaw-provider-cancellation-contract",
+        version: "worker_prompt_profiles_v1",
+        profileHash: stableHash("openclaw-provider-cancellation-contract"),
+        objective: "Cancel an in-flight isolated provider request.",
+        outputContract: ["controlled_shutdown"],
+      },
+    }, cancellation.signal);
+    setTimeout(() => cancellation.abort(), 50);
+    const cancelled = await cancelledPromise;
+    assert.equal(cancelled.ok, false);
+    assert.equal(cancelled.providerCallPerformed, true);
+    assert.equal(cancelled.errorType, "RuntimeCancelled");
+    assert.equal(cancelled.retryable, false);
+    assert.ok(Date.now() - cancellationStarted < 1_000);
+    assert.equal(requests, 3);
+    return {
+      unix_socket_transport: true,
+      direct_binary_not_required: true,
+      bounded_protocol_verified: true,
+      extra_response_fields_rejected: true,
+      cancellation_propagated: true,
+      provider_call_performed: true,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+    };
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const sourceBoundary = await sourceBoundaryContract();
   const agentTokenBoundary = agentTokenBoundaryContract();
+  const openClawProviderSocket = await openClawProviderSocketContract();
   assert.throws(
     () => validateGatewayBaseUrl("http://example.com"),
     /agent_gateway_https_required/,
@@ -1040,6 +1176,7 @@ async function main() {
       implementation_language: "typescript",
       source_boundary: sourceBoundary,
       agent_token_boundary: agentTokenBoundary,
+      openclaw_provider_socket: openClawProviderSocket,
       controlled_shutdown: {
         provider_abort_propagated: true,
         retry_sleep_interruptible: true,

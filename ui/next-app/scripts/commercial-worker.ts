@@ -30,6 +30,8 @@ type CliOptions = {
   hermesTimeoutMs: number;
   hermesMaxTokens: number;
   openClawBinary: string;
+  openClawProviderSocket?: string;
+  allowDirectOpenClawForExactHeadAcceptance: boolean;
   openClawAgent: string;
   openClawTimeoutSeconds: number;
   workingDirectory: string;
@@ -101,6 +103,8 @@ function cliOptions(argv: string[]): CliOptions {
     "--hermes-timeout-ms",
     "--hermes-max-tokens",
     "--openclaw-bin",
+    "--openclaw-provider-socket",
+    "--allow-direct-openclaw-for-exact-head-acceptance",
     "--openclaw-agent",
     "--openclaw-timeout-seconds",
     "--working-directory",
@@ -186,6 +190,11 @@ function cliOptions(argv: string[]): CliOptions {
     openClawBinary: values.get("--openclaw-bin")
       || process.env.OPENCLAW_BIN
       || "/opt/homebrew/bin/openclaw",
+    openClawProviderSocket: values.get("--openclaw-provider-socket")
+      || process.env.OPENCLAW_PROVIDER_SOCKET
+      || undefined,
+    allowDirectOpenClawForExactHeadAcceptance:
+      flags.has("--allow-direct-openclaw-for-exact-head-acceptance"),
     openClawAgent: values.get("--openclaw-agent")
       || process.env.OPENCLAW_AGENT
       || "main",
@@ -223,6 +232,13 @@ async function main() {
   if (!options.confirmRun) {
     throw new Error("commercial_worker_requires_explicit_confirm_run");
   }
+  if (
+    options.adapter === "openclaw"
+    && !options.openClawProviderSocket
+    && !options.allowDirectOpenClawForExactHeadAcceptance
+  ) {
+    throw new Error("openclaw_provider_socket_required");
+  }
   const token = readCommercialAgentToken();
   const gateway = new HttpGatewayClient({
     baseUrl: options.baseUrl,
@@ -240,6 +256,7 @@ async function main() {
     })
     : new OpenClawAdapter({
       binaryPath: options.openClawBinary,
+      providerSocketPath: options.openClawProviderSocket,
       agentName: options.openClawAgent,
       timeoutSeconds: options.openClawTimeoutSeconds,
       workingDirectory: options.workingDirectory,

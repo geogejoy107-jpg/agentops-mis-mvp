@@ -1017,6 +1017,7 @@ def run_worker(
         command.extend([
             "--openclaw-bin",
             openclaw_bin,
+            "--allow-direct-openclaw-for-exact-head-acceptance",
             "--openclaw-agent",
             "main",
             "--openclaw-timeout-seconds",

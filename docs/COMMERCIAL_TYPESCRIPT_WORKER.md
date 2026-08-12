@@ -104,15 +104,15 @@ npm run worker:commercial -- \
   --confirm-run
 ```
 
-Run OpenClaw:
+Run OpenClaw through the isolated BYOC profile shown above. Normal commercial
+CLI execution requires `--openclaw-provider-socket`; it rejects direct binary
+execution so a provider process cannot inherit the Worker's OS identity and
+read its Agent-token file.
 
-```bash
-export OPENCLAW_BIN="$(command -v openclaw)"
-npm run worker:commercial -- \
-  --adapter openclaw \
-  --estimated-cost-usd "$AGENTOPS_RUN_ESTIMATED_COST_USD" \
-  --confirm-run
-```
+The repository's trusted exact-head acceptance harness has a narrowly named
+`--allow-direct-openclaw-for-exact-head-acceptance` escape hatch for local real
+Agent evidence. It is not a customer or production startup mode; BYOC never
+passes it.
 
 Loopback HTTP is accepted only with an explicit local-development gate:
 

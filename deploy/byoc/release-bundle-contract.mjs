@@ -103,7 +103,7 @@ function assertStaticCustomerBoundary() {
   if (/^\s+build:/m.test(compose) || /context:|dockerfile:|\.\.\/\.\./i.test(compose)) {
     fail("release_compose_build_boundary_invalid");
   }
-  if ((compose.match(/image: "?\$\{AGENTOPS_IMAGE:\?[^}]+\}"?/g) || []).length !== 6) {
+  if ((compose.match(/image: "?\$\{AGENTOPS_IMAGE:\?[^}]+\}"?/g) || []).length !== 7) {
     fail("release_compose_image_binding_invalid");
   }
   const ownerService = compose.match(
@@ -124,6 +124,12 @@ function assertStaticCustomerBoundary() {
     join(moduleDirectory, "worker-container-acceptance.mjs"),
     "utf8",
   );
+  const openClawProvider = compose.match(
+    /  openclaw-provider:\n([\s\S]*?)(?=\n  worker-openclaw:)/,
+  )?.[1] || "";
+  const openClawWorker = compose.match(
+    /  worker-openclaw:\n([\s\S]*?)(?=\nvolumes:)/,
+  )?.[1] || "";
   if (
     !ownerService.includes("profiles: [owner-bootstrap]")
     || !ownerService.includes("--postgres-migrator")
@@ -150,8 +156,8 @@ function assertStaticCustomerBoundary() {
   if (
     !compose.includes("profiles: [worker-hermes]")
     || !compose.includes("profiles: [worker-openclaw]")
-    || (compose.match(/\n\s+init: true/g) || []).length !== 2
-    || (compose.match(/^\s{4}init: true$/gm) || []).length !== 2
+    || (compose.match(/\n\s+init: true/g) || []).length !== 3
+    || (compose.match(/^\s{4}init: true$/gm) || []).length !== 3
     || !compose.includes("AGENTOPS_AGENT_TOKEN_SOURCE_FILE: /run/secrets/agent_token")
     || !compose.includes("/usr/local/lib/agentops/worker-entrypoint.mjs")
     || !compose.includes("/usr/local/lib/agentops/worker-healthcheck.mjs")
@@ -167,6 +173,23 @@ function assertStaticCustomerBoundary() {
     || !workerEntrypoint.includes("worker_receipt_boundary_invalid")
     || !workerHealthcheck.includes("process.kill(payload.pid, 0)")
     || !workerHealthcheck.includes("payload.pid < 1")
+    || !openClawProvider.includes('user: "1001:1000"')
+    || !openClawProvider.includes("openclaw-provider-entrypoint.mjs")
+    || !openClawProvider.includes("openclaw-provider-healthcheck.mjs")
+    || !openClawProvider.includes("OPENCLAW_CONFIG_PATH:")
+    || !openClawProvider.includes("OPENCLAW_BIN:")
+    || !openClawProvider.includes("agentops_openclaw_provider_socket:/run/agentops-openclaw")
+    || openClawProvider.includes("AGENTOPS_AGENT_TOKEN")
+    || openClawProvider.includes("openclaw_agent_token")
+    || !openClawProvider.includes("- openclaw_provider_egress")
+    || openClawProvider.includes("- control_plane")
+    || !openClawWorker.includes('user: "1000:1000"')
+    || !openClawWorker.includes("OPENCLAW_PROVIDER_SOCKET:")
+    || !openClawWorker.includes("openclaw_agent_token")
+    || !openClawWorker.includes("agentops_openclaw_provider_socket:/run/agentops-openclaw")
+    || /OPENCLAW_(?:BIN|CONFIG_PATH|STATE_DIR)|AGENTOPS_WORKER_CWD|openclaw_config/.test(openClawWorker)
+    || !openClawWorker.includes("- control_plane")
+    || openClawWorker.includes("- openclaw_provider_egress")
     || !workerContainerAcceptance.includes("agentops_byoc_typescript_worker_container_v1")
     || !workerContainerAcceptance.includes("provider_connections")
     || !workerContainerAcceptance.includes("agent_token_exposed_by_container")
@@ -179,6 +202,12 @@ function assertStaticCustomerBoundary() {
     || !workerContainerAcceptance.includes('activeCheck = "graceful_stop"')
     || !workerContainerAcceptance.includes("assertion_failed")
     || !workerContainerAcceptance.includes("worker_init_reaper_verified: true")
+    || !workerContainerAcceptance.includes("openclaw_provider_socket_protocol_verified: true")
+    || !workerContainerAcceptance.includes("openclaw_provider_agent_token_isolation_verified: true")
+    || !workerContainerAcceptance.includes("openclaw_worker_provider_mount_isolation_verified: true")
+    || !workerContainerAcceptance.includes("mock_provider_execution_performed: true")
+    || !workerContainerAcceptance.includes("real_provider_execution_performed: false")
+    || !workerContainerAcceptance.includes('real_provider_execution_evidence_source: "separate_exact_head_harness"')
     || !workerContainerAcceptance.includes("org.opencontainers.image.revision")
   ) {
     fail("release_worker_boundary_invalid");

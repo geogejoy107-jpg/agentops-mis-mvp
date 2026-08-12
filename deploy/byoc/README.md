@@ -111,13 +111,13 @@ customer needs no repository checkout. Workers remain disabled unless an
 operator explicitly selects `worker-hermes` or `worker-openclaw` after issuing
 a scoped Agent Gateway enrollment for that Worker.
 
-Each profile mounts only its own Agent token file. Keep the one-time token in
-the file configured by `.env`; never put it in `.env`, argv, or a committed
-file. The supervisor rejects direct token environment values, requires
-production mode and trusted HTTPS AgentOps/provider URLs, validates bounded
-receipts, and never prints token, raw prompt, or raw response. OpenClaw config
-is a separate file secret; its Linux runtime and read-only working directory
-are customer mounts and are not shipped in this repository.
+Each Worker mounts only its own Agent token file. Keep the one-time token in the
+file configured by `.env`; never put it in `.env`, argv, or a committed file.
+The supervisor rejects direct token environment values, requires production
+mode and a trusted HTTPS AgentOps URL, validates bounded receipts, and never
+prints token, raw prompt, or raw response. OpenClaw uses a separate provider
+sidecar. Its config secret, Linux runtime, and read-only working directory are
+mounted only into that sidecar and are not shipped in this repository.
 
 ```bash
 docker compose --env-file deploy/byoc/.env -f deploy/byoc/compose.yaml \
@@ -127,12 +127,15 @@ docker compose --env-file deploy/byoc/.env -f deploy/byoc/compose.yaml \
   --profile worker-openclaw up -d worker-openclaw
 ```
 
-Both services run as UID/GID `1000` with a read-only root filesystem, all
-capabilities dropped, bounded tmpfs state, `restart: unless-stopped`, and a
-renewable process-health lease. The Agent heartbeat, task claim, run heartbeat,
-cost reservation, and approval ledger remain authoritative. Real providers are
-never enabled by the default Compose graph. Keep
-`AGENTOPS_WORKER_ALLOW_HIGH_RISK=false` unless separately approved.
+The Hermes Worker runs as UID/GID `1000`. The OpenClaw profile runs the Worker
+as UID/GID `1000` and its provider sidecar as UID `1001`, GID `1000`; they share
+only a Unix-socket volume. Both use read-only root filesystems, drop all
+capabilities, keep bounded tmpfs state, and have independent health and restart
+supervision. The provider has no host port and is not attached to the control-
+plane network. The Agent heartbeat, task claim, run heartbeat, cost reservation,
+and approval ledger remain authoritative. Real providers are never enabled by
+the default Compose graph. Keep `AGENTOPS_WORKER_ALLOW_HIGH_RISK=false` unless
+separately approved.
 
 4. Keep `AGENTOPS_BIND_ADDRESS=127.0.0.1` unless TLS is terminated by a trusted
    reverse proxy on the same private deployment boundary.
