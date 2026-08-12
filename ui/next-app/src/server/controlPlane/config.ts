@@ -234,7 +234,7 @@ export function proxyBaseUrl() {
   } catch {
     throw new Error("AGENTOPS_API_BASE must be an absolute Free Local loopback URL.");
   }
-  const loopback = new Set(["127.0.0.1", "[::1]", "localhost"]);
+  const loopback = new Set(["127.0.0.1", "[::1]"]);
   if (
     !["http:", "https:"].includes(parsed.protocol)
     || !loopback.has(parsed.hostname.toLowerCase())

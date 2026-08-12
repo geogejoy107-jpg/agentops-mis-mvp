@@ -12,6 +12,7 @@ const PROXY_FILE = "src/server/controlPlane/proxy.ts";
 const CATCH_ALL_FILE = "app/api/mis/[...path]/route.ts";
 
 const EXPECTED_PROXY_CALL_OWNERS = new Set([
+  "app/api/mis/[...path]/route.ts",
   "app/api/mis/agent-gateway/approvals/request/route.ts",
   "app/api/mis/agent-gateway/prepared-actions/route.ts",
   "app/api/mis/approvals/[approvalId]/[decision]/route.ts",
@@ -92,6 +93,41 @@ function callName(node: ts.Node): string | undefined {
   return undefined;
 }
 
+function directCallName(node: ts.Node): string | undefined {
+  return ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+    ? node.expression.text
+    : undefined;
+}
+
+function namedImportBindings(file: ts.SourceFile, moduleNames: ReadonlySet<string>) {
+  const bindings = new Map<string, string>();
+  for (const statement of file.statements) {
+    if (
+      !ts.isImportDeclaration(statement)
+      || !ts.isStringLiteral(statement.moduleSpecifier)
+      || !moduleNames.has(statement.moduleSpecifier.text)
+      || !statement.importClause?.namedBindings
+      || !ts.isNamedImports(statement.importClause.namedBindings)
+    ) continue;
+    for (const element of statement.importClause.namedBindings.elements) {
+      bindings.set(element.name.text, element.propertyName?.text ?? element.name.text);
+    }
+  }
+  return bindings;
+}
+
+function importedLocalName(
+  file: ts.SourceFile,
+  moduleNames: ReadonlySet<string>,
+  exportedName: string,
+) {
+  const matches = [...namedImportBindings(file, moduleNames)].filter(
+    ([, imported]) => imported === exportedName,
+  );
+  assert(matches.length === 1, `${file.fileName}: expected one ${exportedName} import`);
+  return matches[0][0];
+}
+
 function callsNamed(node: ts.Node, name: string) {
   let found = false;
   walk(node, (candidate) => {
@@ -133,8 +169,12 @@ function exitsWithoutFallthrough(node: ts.Statement): boolean {
 function assertExitAnalysisFailsClosed() {
   const source = ts.createSourceFile(
     "exit-analysis.ts",
-    `function probe(value: boolean) {
+    `function thenOnly(value: boolean) {
       if (value) return;
+    }
+    function elseOnly(value: boolean) {
+      if (value) void 0;
+      else return;
     }
     function complete(value: boolean) {
       if (value) return;
@@ -145,15 +185,57 @@ function assertExitAnalysisFailsClosed() {
     ts.ScriptKind.TS,
   );
   const functions = source.statements.filter(ts.isFunctionDeclaration);
-  assert(functions[0]?.body, "exit analysis partial fixture missing");
-  assert(functions[1]?.body, "exit analysis complete fixture missing");
+  assert(functions[0]?.body, "exit analysis then-only fixture missing");
+  assert(functions[1]?.body, "exit analysis else-only fixture missing");
+  assert(functions[2]?.body, "exit analysis complete fixture missing");
   assert(
     exitsWithoutFallthrough(functions[0].body) === false,
-    "partial branch termination must not dominate a proxy call",
+    "then-only termination must not dominate a proxy call",
   );
   assert(
-    exitsWithoutFallthrough(functions[1].body) === true,
+    exitsWithoutFallthrough(functions[1].body) === false,
+    "else-only termination must not dominate a proxy call",
+  );
+  assert(
+    exitsWithoutFallthrough(functions[2].body) === true,
     "complete branch termination must be recognized",
+  );
+}
+
+function assertTrustedGuardBindingFailsClosed() {
+  const propertyCall = ts.createSourceFile(
+    "property-call.ts",
+    `import { legacyPythonProxyAllowed } from "@/server/controlPlane/config";
+    const unrelated = { legacyPythonProxyAllowed: () => true };
+    function probe() {
+      if (!unrelated.legacyPythonProxyAllowed()) return;
+    }`,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const probe = functionNamed(propertyCall, "probe");
+  const guard = probe.body!.statements[0];
+  assert(ts.isIfStatement(guard), "property guard fixture missing");
+  assert(
+    negatedGuardName(guard.expression) === undefined,
+    "property calls must never satisfy a canonical Free Local guard binding",
+  );
+
+  const aliasedImport = ts.createSourceFile(
+    "aliased-import.ts",
+    `import { legacyPythonProxyAllowed as freeLocalAllowed } from "@/server/controlPlane/config";`,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  assert(
+    importedLocalName(
+      aliasedImport,
+      new Set(["@/server/controlPlane/config"]),
+      "legacyPythonProxyAllowed",
+    ) === "freeLocalAllowed",
+    "canonical guard import aliases must retain their module binding",
   );
 }
 
@@ -161,11 +243,25 @@ function negatedGuardName(expression: ts.Expression): string | undefined {
   if (!ts.isPrefixUnaryExpression(expression) || expression.operator !== ts.SyntaxKind.ExclamationToken) {
     return undefined;
   }
-  return callName(expression.operand);
+  return directCallName(expression.operand);
 }
 
 function positiveGuardName(expression: ts.Expression): string | undefined {
-  return callName(expression);
+  return directCallName(expression);
+}
+
+function isTrustedFreeLocalGuard(parsed: ParsedSource, localName: string) {
+  if (localName === "explicitFreeLocalProxyMode") {
+    return parsed.file.statements.some(
+      (statement) => ts.isFunctionDeclaration(statement)
+        && statement.name?.text === localName,
+    );
+  }
+  const imports = namedImportBindings(
+    parsed.file,
+    new Set(["@/server/controlPlane/config", "./config"]),
+  );
+  return imports.get(localName) === "legacyPythonProxyAllowed";
 }
 
 function directChildOfBlock(node: ts.Node, block: ts.Block): ts.Statement | undefined {
@@ -174,13 +270,17 @@ function directChildOfBlock(node: ts.Node, block: ts.Block): ts.Statement | unde
   return ts.isStatement(current) ? current : undefined;
 }
 
-function isFreeLocalGuardDominated(call: ts.CallExpression) {
+function isFreeLocalGuardDominated(parsed: ParsedSource, call: ts.CallExpression) {
   let current: ts.Node | undefined = call;
   while (current?.parent) {
     const parent: ts.Node = current.parent;
     if (ts.isIfStatement(parent) && parent.thenStatement === current) {
       const guard = positiveGuardName(parent.expression);
-      if (guard && FREE_LOCAL_GUARDS.has(guard)) return true;
+      if (
+        guard
+        && FREE_LOCAL_GUARDS.has(guard)
+        && isTrustedFreeLocalGuard(parsed, guard)
+      ) return true;
     }
     if (ts.isBlock(parent)) {
       const child = directChildOfBlock(call, parent);
@@ -192,6 +292,7 @@ function isFreeLocalGuardDominated(call: ts.CallExpression) {
         if (
           guard
           && FREE_LOCAL_GUARDS.has(guard)
+          && isTrustedFreeLocalGuard(parsed, guard)
           && exitsWithoutFallthrough(statement.thenStatement)
         ) {
           return true;
@@ -266,10 +367,18 @@ function assertProxyHelperFailsClosed() {
   const statements = declaration.body!.statements;
   assert(statements.length > 1, `${PROXY_FILE}: proxy helper body is incomplete`);
   const guard = statements[0];
-  assert(ts.isIfStatement(guard), `${PROXY_FILE}: production rejection must be the first operation`);
-  assert(callsNamed(guard.expression, "isProductionDeployment"), `${PROXY_FILE}: first guard must test production`);
-  assert(exitsWithoutFallthrough(guard.thenStatement), `${PROXY_FILE}: production guard must return before I/O`);
-  assert(callsNamed(guard.thenStatement, "json"), `${PROXY_FILE}: production guard must emit a bounded rejection`);
+  assert(ts.isIfStatement(guard), `${PROXY_FILE}: Free Local rejection must be the first operation`);
+  const legacyGuard = importedLocalName(
+    parsed.file,
+    new Set(["./config"]),
+    "legacyPythonProxyAllowed",
+  );
+  assert(
+    negatedGuardName(guard.expression) === legacyGuard,
+    `${PROXY_FILE}: first guard must require the canonical Free Local mode predicate`,
+  );
+  assert(exitsWithoutFallthrough(guard.thenStatement), `${PROXY_FILE}: Free Local guard must return before I/O`);
+  assert(callsNamed(guard.thenStatement, "json"), `${PROXY_FILE}: Free Local guard must emit a bounded rejection`);
   assert(
     stringLiterals(guard.thenStatement).has("typescript_route_owner_required"),
     `${PROXY_FILE}: production rejection code changed`,
@@ -282,21 +391,58 @@ function assertProxyHelperFailsClosed() {
 
 function assertCatchAllFailsClosed() {
   const parsed = parse(CATCH_ALL_FILE);
-  assert(
-    parsed.source.includes("proxyBaseUrl"),
-    `${CATCH_ALL_FILE}: catch-all must use the canonical Free Local proxy URL parser`,
+  const proxyBinding = importedLocalName(
+    parsed.file,
+    new Set(["@/server/controlPlane/proxy"]),
+    "proxyControlPlaneRequest",
   );
-  assert(
-    !parsed.source.includes("process.env.AGENTOPS_API_BASE"),
-    `${CATCH_ALL_FILE}: catch-all cannot bypass the canonical proxy URL parser`,
+  const legacyGuard = importedLocalName(
+    parsed.file,
+    new Set(["@/server/controlPlane/config"]),
+    "legacyPythonProxyAllowed",
   );
+  const allowedModules = new Set([
+    "next/server",
+    "@/server/controlPlane/config",
+    "@/server/controlPlane/proxy",
+  ]);
+  for (const statement of parsed.file.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    assert(
+      allowedModules.has(statement.moduleSpecifier.text),
+      `${CATCH_ALL_FILE}: unreviewed import capability ${statement.moduleSpecifier.text}`,
+    );
+  }
+  let directNetworkCapability = false;
+  let environmentAccess = false;
+  let dynamicCodeOrImport = false;
+  walk(parsed.file, (node) => {
+    if (
+      (ts.isIdentifier(node) && ["fetch", "WebSocket", "XMLHttpRequest"].includes(node.text))
+      || (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "URL")
+    ) directNetworkCapability = true;
+    if (ts.isIdentifier(node) && node.text === "process") environmentAccess = true;
+    if (
+      (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword)
+      || (ts.isIdentifier(node) && ["require", "eval", "Function"].includes(node.text))
+    ) dynamicCodeOrImport = true;
+  });
+  assert(!directNetworkCapability, `${CATCH_ALL_FILE}: catch-all cannot own network globals or URL construction`);
+  assert(!environmentAccess, `${CATCH_ALL_FILE}: catch-all cannot access process state`);
+  assert(!dynamicCodeOrImport, `${CATCH_ALL_FILE}: catch-all cannot dynamically obtain capabilities`);
   const declaration = functionNamed(parsed.file, "proxy");
   const statements = declaration.body!.statements;
-  const transportIndex = statements.findIndex((statement) => callsNamed(statement, "proxyRequest"));
+  const transportIndex = statements.findIndex((statement) => {
+    let found = false;
+    walk(statement, (node) => {
+      if (directCallName(node) === proxyBinding) found = true;
+    });
+    return found;
+  });
   assert(transportIndex > 0, `${CATCH_ALL_FILE}: catch-all transport call missing`);
   const guardIndex = statements.findIndex((statement) => {
     if (!ts.isIfStatement(statement)) return false;
-    return negatedGuardName(statement.expression) === "legacyPythonProxyAllowed"
+    return negatedGuardName(statement.expression) === legacyGuard
       && exitsWithoutFallthrough(statement.thenStatement);
   });
   assert(guardIndex >= 0 && guardIndex < transportIndex, `${CATCH_ALL_FILE}: catch-all transport is not dominated by the Free Local guard`);
@@ -325,9 +471,17 @@ function assertProxyCallOwnership() {
     const path = sourcePath(absolutePath);
     if (path === PROXY_FILE) continue;
     const parsed = parse(path);
+    const proxyImports = namedImportBindings(
+      parsed.file,
+      new Set(["@/server/controlPlane/proxy", "./proxy"]),
+    );
+    const proxyBindings = new Set(
+      [...proxyImports].filter(([, imported]) => imported === "proxyControlPlaneRequest").map(([local]) => local),
+    );
     const calls: ts.CallExpression[] = [];
     walk(parsed.file, (node) => {
-      if (ts.isCallExpression(node) && callName(node) === "proxyControlPlaneRequest") {
+      const name = directCallName(node);
+      if (ts.isCallExpression(node) && name && proxyBindings.has(name)) {
         calls.push(node);
       }
     });
@@ -350,7 +504,7 @@ function assertProxyCallOwnership() {
     }
     for (const call of calls) {
       assert(
-        isFreeLocalGuardDominated(call),
+        isFreeLocalGuardDominated(parsed, call),
         `${path}:${parsed.file.getLineAndCharacterOfPosition(call.getStart()).line + 1}: Python proxy call is not dominated by a Free Local guard`,
       );
       guardedCalls += 1;
@@ -367,6 +521,7 @@ function assertProxyCallOwnership() {
 
 function main() {
   assertExitAnalysisFailsClosed();
+  assertTrustedGuardBindingFailsClosed();
   assertDeploymentModeBoundary();
   assertProxyHelperFailsClosed();
   assertCatchAllFailsClosed();
