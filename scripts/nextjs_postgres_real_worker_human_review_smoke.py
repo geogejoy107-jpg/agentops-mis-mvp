@@ -18,6 +18,7 @@ import shutil
 import socket
 import stat
 import subprocess
+import tempfile
 import time
 import traceback
 import urllib.error
@@ -1023,19 +1024,22 @@ def run_worker(
             "--working-directory",
             str(ROOT),
         ])
-    env = environment_without_privileged_control_plane_credentials()
-    env["AGENTOPS_API_KEY"] = token
-    env["AGENTOPS_AGENT_TOKEN"] = token
-    env["NODE_ENV"] = "production"
-    completed = subprocess.run(
-        command,
-        cwd=NEXT_APP,
-        env=env,
-        text=True,
-        capture_output=True,
-        timeout=240,
-        check=False,
-    )
+    with tempfile.TemporaryDirectory(prefix="agentops-real-worker-token-") as token_root:
+        token_path = Path(token_root) / "agent-token"
+        token_path.write_text(f"{token}\n", encoding="utf-8")
+        token_path.chmod(stat.S_IRUSR)
+        env = environment_without_privileged_control_plane_credentials()
+        env["AGENTOPS_AGENT_TOKEN_SOURCE_FILE"] = str(token_path)
+        env["NODE_ENV"] = "production"
+        completed = subprocess.run(
+            command,
+            cwd=NEXT_APP,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=240,
+            check=False,
+        )
     if token in completed.stdout or token in completed.stderr:
         raise RuntimeError(f"{runtime} Worker output exposed its Agent Gateway credential")
     try:

@@ -26,7 +26,7 @@ try {
   if (
     !["starting", "ready"].includes(payload.status)
     || !Number.isSafeInteger(payload.pid)
-    || payload.pid < 2
+    || payload.pid < 1
     || !Number.isFinite(leaseMs)
     || leaseMs < 30_000
     || leaseMs > 600_000

@@ -250,6 +250,7 @@ jobs:
             and .provider_connections == 0
             and .provider_call_performed == false
             and .token_in_argv == false
+            and .token_in_environment == false
             and .token_in_receipt == false
             and .token_in_health == false
             and .token_omitted == true

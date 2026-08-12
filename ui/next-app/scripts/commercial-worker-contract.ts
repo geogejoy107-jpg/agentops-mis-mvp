@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
+import {
+  chmodSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readdir, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type {
@@ -19,6 +27,7 @@ import {
   stableHash,
 } from "../src/worker/redaction";
 import { HermesAdapter } from "../src/worker/adapters";
+import { readCommercialAgentToken } from "../src/worker/agentToken";
 
 const TOKEN = "contract-bearer-fixture-0123456789abcdef";
 const TASK_CANARY = "credential_canary_abcdefghijklmnop";
@@ -506,11 +515,12 @@ async function sourceBoundaryContract() {
     /output_summary:\s*redactText\(result\.outputSummary/,
   );
   assert.match(orchestrator, /plan-evidence-manifests/);
-  assert.match(cliSource, /gateway_credentials_must_come_from_environment/);
-  assert.match(cliSource, /process\.env\.AGENTOPS_AGENT_TOKEN/);
+  assert.match(cliSource, /readCommercialAgentToken/);
   assert.doesNotMatch(cliSource, /values\.get\("--(?:api-key|token)/);
   assert.match(realAcceptanceSource, /default="typescript"/);
   assert.match(realAcceptanceSource, /commercial-worker\.ts/);
+  assert.match(realAcceptanceSource, /AGENTOPS_AGENT_TOKEN_SOURCE_FILE/);
+  assert.doesNotMatch(realAcceptanceSource, /env\["AGENTOPS_AGENT_TOKEN"\]/);
   assert.doesNotMatch(realAcceptanceSource, /agent_worker\.py/);
   assert.match(
     realAcceptanceSource,
@@ -559,6 +569,62 @@ async function sourceBoundaryContract() {
   return { files: sources.length, python_dependency: false, sqlite_dependency: false };
 }
 
+function agentTokenBoundaryContract() {
+  const root = mkdtempSync(path.join(tmpdir(), "agentops-commercial-token-contract-"));
+  const tokenPath = path.join(root, "agent-token");
+  const linkPath = path.join(root, "agent-token-link");
+  const names = [
+    "NODE_ENV",
+    "AGENTOPS_API_KEY",
+    "AGENTOPS_AGENT_TOKEN",
+    "AGENTOPS_AGENT_TOKEN_SOURCE_FILE",
+  ];
+  const environment = process.env as Record<string, string | undefined>;
+  const original = Object.fromEntries(names.map((name) => [name, environment[name]]));
+  try {
+    writeFileSync(tokenPath, `${TOKEN}\n`, { encoding: "utf8", mode: 0o400 });
+    chmodSync(tokenPath, 0o400);
+    environment.NODE_ENV = "production";
+    delete environment.AGENTOPS_API_KEY;
+    delete environment.AGENTOPS_AGENT_TOKEN;
+    environment.AGENTOPS_AGENT_TOKEN_SOURCE_FILE = tokenPath;
+    assert.equal(readCommercialAgentToken(), TOKEN);
+
+    environment.AGENTOPS_AGENT_TOKEN = TOKEN;
+    assert.throws(() => readCommercialAgentToken(), /agent_token_source_conflict/);
+    delete environment.AGENTOPS_AGENT_TOKEN;
+    delete environment.AGENTOPS_AGENT_TOKEN_SOURCE_FILE;
+    assert.throws(
+      () => readCommercialAgentToken(),
+      /commercial_worker_file_agent_token_required/,
+    );
+
+    environment.AGENTOPS_AGENT_TOKEN_SOURCE_FILE = "relative-agent-token";
+    assert.throws(
+      () => readCommercialAgentToken(),
+      /agent_token_source_absolute_required/,
+    );
+
+    symlinkSync(tokenPath, linkPath);
+    environment.AGENTOPS_AGENT_TOKEN_SOURCE_FILE = linkPath;
+    assert.throws(() => readCommercialAgentToken(), /agent_token_source_not_regular/);
+    return {
+      production_file_secret_required: true,
+      direct_environment_secret_rejected: true,
+      source_conflict_rejected: true,
+      relative_path_rejected: true,
+      symlink_secret_rejected: true,
+    };
+  } finally {
+    for (const name of names) {
+      const value = original[name];
+      if (value === undefined) delete environment[name];
+      else environment[name] = value;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 function bodyFor(pathname: string, requests: RecordedRequest[]) {
   const match = requests.find((item) => item.path === pathname);
   assert.ok(match, `request missing: ${pathname}`);
@@ -567,6 +633,7 @@ function bodyFor(pathname: string, requests: RecordedRequest[]) {
 
 async function main() {
   const sourceBoundary = await sourceBoundaryContract();
+  const agentTokenBoundary = agentTokenBoundaryContract();
   assert.throws(
     () => validateGatewayBaseUrl("http://example.com"),
     /agent_gateway_https_required/,
@@ -887,6 +954,7 @@ async function main() {
       contract: "commercial_typescript_worker_v1",
       implementation_language: "typescript",
       source_boundary: sourceBoundary,
+      agent_token_boundary: agentTokenBoundary,
       happy_path: {
         gateway_request_count: happyRequests.length,
         provider_call_performed: happy.provider_call_performed,

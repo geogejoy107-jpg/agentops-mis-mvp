@@ -242,7 +242,7 @@ function workerCommand(runtime) {
   return command;
 }
 
-function childEnvironment(token) {
+function childEnvironment(tokenSource) {
   const allowed = [
     "HOME", "HOSTNAME", "LANG", "LC_ALL", "NODE_ENV", "PATH", "PWD", "SHELL",
     "TMPDIR", "TMP", "TEMP", "TZ", "OPENCLAW_HOME", "OPENCLAW_STATE_DIR",
@@ -251,7 +251,7 @@ function childEnvironment(token) {
   return {
     ...Object.fromEntries(allowed.filter((name) => process.env[name]).map((name) => [name, process.env[name]])),
     NODE_ENV: "production",
-    AGENTOPS_AGENT_TOKEN: token,
+    AGENTOPS_AGENT_TOKEN_SOURCE_FILE: tokenSource,
   };
 }
 
@@ -275,7 +275,7 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
 
   const child = spawn(command[0], command.slice(1), {
     cwd: "/opt/agentops/ui/next-app",
-    env: childEnvironment(token),
+    env: childEnvironment(tokenSource),
     stdio: ["ignore", "pipe", "pipe"],
   });
   const refresh = setInterval(() => {

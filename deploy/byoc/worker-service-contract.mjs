@@ -82,6 +82,7 @@ try {
   mkdirSync(healthRoot);
   const healthSource = readFileSync(join(moduleDirectory, "worker-healthcheck.mjs"), "utf8")
     .replace('const statePath = "/run/agentops-worker/health.json";', `const statePath = ${JSON.stringify(join(healthRoot, "health.json"))};`);
+  assert.match(healthSource, /payload\.pid < 1/);
   const healthScript = join(root, "worker-healthcheck.mjs");
   writeFileSync(healthScript, healthSource);
   writeFileSync(join(healthRoot, "health.json"), JSON.stringify({
@@ -91,6 +92,15 @@ try {
     updated_at_ms: Date.now(),
   }));
   assert.equal(spawnSync(process.execPath, [healthScript]).status, 0);
+  for (const invalidPid of [0, -1]) {
+    writeFileSync(join(healthRoot, "health.json"), JSON.stringify({
+      status: "ready",
+      pid: invalidPid,
+      lease_seconds: 120,
+      updated_at_ms: Date.now(),
+    }));
+    assert.equal(spawnSync(process.execPath, [healthScript]).status, 1);
+  }
   writeFileSync(join(healthRoot, "health.json"), JSON.stringify({
     status: "ready",
     pid: process.pid,
@@ -108,6 +118,7 @@ try {
     production_https_fail_closed: true,
     restart_policy: "unless-stopped",
     health_lease_verified: true,
+    container_pid_one_supported: true,
     real_provider_execution_performed: false,
     token_omitted: true,
   })}\n`);

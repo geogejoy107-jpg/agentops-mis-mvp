@@ -155,13 +155,17 @@ function assertStaticCustomerBoundary() {
     || !compose.includes("/usr/local/lib/agentops/worker-healthcheck.mjs")
     || /\n\s+(?:AGENTOPS_API_KEY|AGENTOPS_AGENT_TOKEN):/.test(compose)
     || !workerEntrypoint.includes("direct_agent_token_environment_forbidden")
+    || !workerEntrypoint.includes("AGENTOPS_AGENT_TOKEN_SOURCE_FILE: tokenSource")
     || !workerEntrypoint.includes("worker_receipt_boundary_invalid")
     || !workerHealthcheck.includes("process.kill(payload.pid, 0)")
+    || !workerHealthcheck.includes("payload.pid < 1")
     || !workerContainerAcceptance.includes("agentops_byoc_typescript_worker_container_v1")
     || !workerContainerAcceptance.includes("provider_connections")
     || !workerContainerAcceptance.includes("agent_token_exposed_by_container")
     || !workerContainerAcceptance.includes('"--network", "none"')
     || !workerContainerAcceptance.includes("authorization_matches")
+    || !workerContainerAcceptance.includes("token_in_environment: false")
+    || !workerContainerAcceptance.includes("acceptance_worker_environment_probe_failed")
     || !workerContainerAcceptance.includes("org.opencontainers.image.revision")
   ) {
     fail("release_worker_boundary_invalid");
@@ -548,6 +552,7 @@ exit 0
     owner_bootstrap_entitlement_boundary_unchanged: true,
     source_free_typescript_worker_profiles_packaged: true,
     worker_file_secret_and_health_lease_verified: true,
+    worker_container_pid_one_supported: true,
     worker_container_customer_acceptance_required: true,
     real_provider_execution_performed: false,
     failed_health_stack_stopped: true,

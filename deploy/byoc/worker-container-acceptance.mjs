@@ -243,6 +243,13 @@ try {
     "exec", workerName, "node", "-e",
     "const f=require('node:fs');const rows=f.readdirSync('/proc').filter(x=>/^\\d+$/.test(x)).flatMap(x=>{try{return [f.readFileSync('/proc/'+x+'/cmdline').toString('utf8').split('\\0').filter(Boolean)]}catch{return []}});process.stdout.write(JSON.stringify(rows))",
   ], [0], "acceptance_worker_argv_probe_failed"));
+  assert.ok(Number.isSafeInteger(health.pid) && health.pid >= 1);
+  assert.ok(Number.isSafeInteger(health.child_pid) && health.child_pid >= 1);
+  const processEnvironment = JSON.parse(docker([
+    "exec", workerName, "node", "-e",
+    `const f=require('node:fs');const pids=${JSON.stringify([health.pid, health.child_pid])};const rows=pids.map(pid=>({pid,environment:f.readFileSync('/proc/'+pid+'/environ').toString('utf8').split('\\0').filter(Boolean)}));process.stdout.write(JSON.stringify(rows))`,
+  ], [0], "acceptance_worker_environment_probe_failed"));
+  assert.equal(processEnvironment.length, 2);
   const inspection = docker(
     ["inspect", workerName],
     [0],
@@ -253,7 +260,13 @@ try {
     [0],
     "acceptance_worker_logs_failed",
   );
-  for (const exposed of [healthRaw, JSON.stringify(processArgv), inspection, logs]) {
+  for (const exposed of [
+    healthRaw,
+    JSON.stringify(processArgv),
+    JSON.stringify(processEnvironment),
+    inspection,
+    logs,
+  ]) {
     if (exposed.includes(token)) fail("agent_token_exposed_by_container");
   }
 
@@ -287,6 +300,7 @@ try {
     provider_connections: 0,
     provider_call_performed: false,
     token_in_argv: false,
+    token_in_environment: false,
     token_in_receipt: false,
     token_in_health: false,
     token_omitted: true,

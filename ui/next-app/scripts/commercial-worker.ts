@@ -4,6 +4,7 @@ import {
   HermesAdapter,
   OpenClawAdapter,
 } from "../src/worker/adapters";
+import { readCommercialAgentToken } from "../src/worker/agentToken";
 import { CommercialWorker } from "../src/worker/commercialWorker";
 import type { CommercialRuntime } from "../src/worker/contracts";
 import { HttpGatewayClient } from "../src/worker/gatewayClient";
@@ -222,11 +223,7 @@ async function main() {
   if (!options.confirmRun) {
     throw new Error("commercial_worker_requires_explicit_confirm_run");
   }
-  const token = String(
-    process.env.AGENTOPS_API_KEY
-    || process.env.AGENTOPS_AGENT_TOKEN
-    || "",
-  );
+  const token = readCommercialAgentToken();
   const gateway = new HttpGatewayClient({
     baseUrl: options.baseUrl,
     workspaceId: options.workspaceId,
