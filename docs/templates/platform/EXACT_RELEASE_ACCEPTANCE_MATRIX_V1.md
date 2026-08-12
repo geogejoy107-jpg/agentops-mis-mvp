@@ -16,9 +16,9 @@ receipts.
 | Lane | Current exact object | Author tests | Independent decision | Integration admission |
 | --- | --- | --- | --- | --- |
 | C0 Shared Runtime | failed candidate `aa667fcc012a5eed4a6e823741d8867f750417a1`; replacement in progress | Prior candidate: schema-enabled Python 3.11 94/94, Python 3.14 94 with schema dependency unavailable | FAIL: P0=0, P1=1, P2=2 | DENIED; durable-resume/UI/SBOM replacement and fresh review required |
-| C1 Research | failed candidate `343cae665e2634d5a990920e8cffa9595cbac152`; replacement in progress | Prior candidate: Python 3.11/3.14 87/87 | FAIL: P0=0, P1=4, P2=1 | DENIED; exact C0/production composition/signed reconciliation replacement and fresh review required |
+| C1 Research | `a9fa0f02deeab9b3f0f0c90ea4edcd314e644bd0` | Author reports Python 3.11/3.14 90/90, schema 3/3, secret/compile/scope PASS; esbuild host watchdog timed out | replacement fresh review QUEUED | DENIED until exact non-author PASS and frontend build disposition |
 | C2 Career | failed candidate `80b2a2dac8299590baab3aff76e3bf099f009d02`; replacement pending | Prior candidate: Python 3.11/3.14 73/73; shared schema 26/26 | FAIL: caller-forgeable Core boolean callbacks can promote official output | DENIED; concrete C0 cryptographic receipt verification and fresh review required |
-| C3 Quant | `b3828a2e0eb933d5211737a53f4b8cfca3e750d5` | Author reports Python 3.11/3.14 63/63, schema 21/21, secret/compile/scope PASS | fresh non-author review RUNNING | DENIED until exact non-author PASS |
+| C3 Quant | failed candidate `b3828a2e0eb933d5211737a53f4b8cfca3e750d5`; replacement in progress | Exact C0 archive/security gates and Python 3.11/3.14 63/63 independently passed | FAIL: P0=0, P1=1, P2=1 | DENIED; Core trust-envelope/handoff replacement and fresh review required |
 
 No implementation candidate is currently eligible to merge into integration.
 

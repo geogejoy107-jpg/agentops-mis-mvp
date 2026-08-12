@@ -44,15 +44,17 @@ invalidates the previous review and requires a new independent review.
 | C3-006 | P2 | same | A copied RiskDecision with an arbitrary new ID is accepted after the checkpoint points at it. The line's SDK test also uses a conformance double rather than the real C0 class. | Recompute deterministic decision identity and run a subprocess against the real C0 `TemplateSDK`. | Fixed in `3361ed4063208e0044cdf621db45884a017e9e38`; independent review running |
 | C3-007 | P1 | C3 commit `3361ed4063208e0044cdf621db45884a017e9e38` | The claimed exact C0 SDK mount referenced historical contract commit `1bce8f9e...`, which contains no `template_runtime/sdk.py`, while tests imported a mutable sibling worktree. | Export exact C0 implementation commit `aa667fcc...` with `git archive`, prove the historical commit fails, and preserve/validate the known C0 dirty-file allowlist. | Fixed in `b3828a2e0eb933d5211737a53f4b8cfca3e750d5`; fresh independent review running |
 | C3-008 | P2 | same | Handoff branch/fix metadata was stale and not reproducible. | Record the actual branch, parent and runtime-derived exact candidate strategy. | Fixed in `b3828a2e0eb933d5211737a53f4b8cfca3e750d5`; fresh independent review running |
+| C3-009 | P1 | C3 commit `b3828a2e0eb933d5211737a53f4b8cfca3e750d5` | Governance, runtime, evidence, memory and outbox ports return naked mappings whose predictable `verified`, `allow` and `signature_verified` fields are trusted without a C0 cryptographic receipt. Forged ports with no private key complete the workflow and mint a trusted-looking QuantReceipt, Claim Gate, artifacts, evaluations, audit and memory. | Production composition owns exact C0 `TrustedCoreReceiptVerifier`; every Core authority readback is a purpose-separated payload/proof envelope with complete bindings and revocation checks. A forged full-chain port must fail before any trusted receipt or claim is emitted. | Independent review failed; fixing |
+| C3-010 | P2 | same | Handoff records the literal placeholder `runtime_derived_by_git_rev_parse_head` rather than an immutable exact candidate identity or truthful external-stamping strategy. | Candidate handoff remains explicitly unstamped, and a strict external release artifact binds the reviewed 40-hex commit; never claim a runtime placeholder is the frozen SHA. | Independent review failed; fixing |
 
 ## Pending independent decisions
 
 | Lane | Exact candidate | Required reviewer state |
 | --- | --- | --- |
 | C0 Shared Runtime | `aa667fcc012a5eed4a6e823741d8867f750417a1` | Independent exact review FAIL: P0=0, P1=1, P2=2. Corrective implementation running; any new commit requires a fresh non-author review. |
-| C1 Research | `343cae665e2634d5a990920e8cffa9595cbac152` | Independent exact review FAIL: P0=0, P1=4, P2=1. Corrective implementation running; any new commit requires a fresh non-author review. |
+| C1 Research | `a9fa0f02deeab9b3f0f0c90ea4edcd314e644bd0` | Corrective commit submitted; author gates report Python 3.11/3.14 90/90, schema 3/3 and secret/compile/scope PASS. Fresh non-author review queued after C0; esbuild host watchdog timeout remains unresolved. |
 | C2 Career | `80b2a2dac8299590baab3aff76e3bf099f009d02` | Corrective candidate passes its author suites, but independent trust-boundary review reproduces a forged-Core official submission. Exact decision remains FAIL pending C2-007 correction and fresh review. |
-| C3 Quant | `b3828a2e0eb933d5211737a53f4b8cfca3e750d5` | Corrective candidate submitted by the author; fresh independent exact review running. No author self-review is accepted. |
+| C3 Quant | `b3828a2e0eb933d5211737a53f4b8cfca3e750d5` | Fresh exact review FAIL: P0=0, P1=1, P2=1. Core trust-envelope and exact-handoff corrective implementation is running; any new commit requires another non-author review. |
 
 ## External gates (isolated; not internal defect waivers)
 
