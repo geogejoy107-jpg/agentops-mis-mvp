@@ -234,18 +234,20 @@ jobs:
           set -euo pipefail
           set +x
           owner_receipt="${RUNNER_TEMP}/customer-owner-bootstrap.json"
+          owner_stderr="${RUNNER_TEMP}/customer-owner-bootstrap.stderr"
           duplicate_receipt="${RUNNER_TEMP}/customer-owner-duplicate.json"
+          duplicate_stderr="${RUNNER_TEMP}/customer-owner-duplicate.stderr"
           owner_password="$(openssl rand -hex 32)"
           if ! printf '%s\n' "${owner_password}" |
             "${AGENTOPS_CUSTOMER_RELEASE_ROOT}/owner-init.sh" \
               --workspace-id ws_customer_acceptance \
               --username customer-owner \
               --display-name "Customer Owner" \
-              --password-stdin > "${owner_receipt}"; then
+              --password-stdin > "${owner_receipt}" 2> "${owner_stderr}"; then
             owner_password=
             exit 1
           fi
-          ! grep -Fq -- "${owner_password}" "${owner_receipt}"
+          ! grep -Fq -- "${owner_password}" "${owner_receipt}" "${owner_stderr}"
           owner_password=
           jq -e '
             .ok == true
@@ -292,10 +294,11 @@ jobs:
               --workspace-id ws_customer_acceptance \
               --username second-customer-owner \
               --display-name "Second Customer Owner" \
-              --password-stdin > "${duplicate_receipt}" 2>&1
+              --password-stdin > "${duplicate_receipt}" 2> "${duplicate_stderr}"
           duplicate_status=$?
           set -e
-          ! grep -Fq -- "${duplicate_password}" "${duplicate_receipt}"
+          ! grep -Fq -- "${duplicate_password}" \
+            "${duplicate_receipt}" "${duplicate_stderr}"
           duplicate_password=
           test "${duplicate_status}" -ne 0
           jq -e '
@@ -535,6 +538,10 @@ jobs:
             "${RUNNER_TEMP}/customer-download" \
             "${RUNNER_TEMP}/customer-attestation.json" \
             "${RUNNER_TEMP}/customer-install-receipt.json" \
+            "${RUNNER_TEMP}/customer-owner-bootstrap.json" \
+            "${RUNNER_TEMP}/customer-owner-bootstrap.stderr" \
+            "${RUNNER_TEMP}/customer-owner-duplicate.json" \
+            "${RUNNER_TEMP}/customer-owner-duplicate.stderr" \
             "${RUNNER_TEMP}/customer-backup.bundle" \
             "${RUNNER_TEMP}/customer-backup.json" \
             "${RUNNER_TEMP}/customer-restore.json" \
