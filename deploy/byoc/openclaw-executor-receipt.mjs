@@ -492,7 +492,13 @@ function equalBinding(actual, expected) {
   return canonicalExecutorReceiptBytes(actual).equals(canonicalExecutorReceiptBytes(expected));
 }
 
-export function verifyExecutorReceipt(envelopeValue, trustRoots, expectedValue, replayCache) {
+export function verifyExecutorReceipt(
+  envelopeValue,
+  trustRoots,
+  expectedValue,
+  replayCache,
+  { commitReplay = true } = {},
+) {
   const envelope = plainObject(envelopeValue, "executor_receipt_envelope_invalid");
   exactFields(envelope, ENVELOPE_FIELDS, "executor_receipt_envelope_fields_invalid");
   if (envelope.schema !== EXECUTOR_RECEIPT_SCHEMA) fail("executor_receipt_schema_invalid");
@@ -565,8 +571,10 @@ export function verifyExecutorReceipt(envelopeValue, trustRoots, expectedValue, 
     fail("executor_receipt_signature_unverified");
   }
   if (!verified) fail("executor_receipt_signature_unverified");
-  replayCache.add(receiptReplayKey);
-  replayCache.add(nonceReplayKey);
+  if (commitReplay) {
+    replayCache.add(receiptReplayKey);
+    replayCache.add(nonceReplayKey);
+  }
   return Object.freeze({ ...body });
 }
 

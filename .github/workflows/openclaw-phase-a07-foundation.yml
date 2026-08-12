@@ -49,6 +49,7 @@ jobs:
           node deploy/byoc/openclaw-cgroup-v2-contract.mjs
           node deploy/byoc/openclaw-executor-protocol-contract.mjs
           node deploy/byoc/openclaw-executor-receipt-contract.mjs
+          node deploy/byoc/openclaw-executor-runner-contract.mjs
           node deploy/byoc/openclaw-executor-service-contract.mjs
           node deploy/byoc/openclaw-boundary-supervisor-contract.mjs
           node deploy/byoc/openclaw-broker-contract.mjs
@@ -90,6 +91,7 @@ jobs:
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image}")" = "${GITHUB_SHA}"
           docker run --rm --entrypoint /bin/sh "${image}" -c '
             test -x /usr/local/bin/agentops-openclaw-runtime-launcher
+            test -r /usr/local/lib/agentops/openclaw-executor-runner.mjs
             test -r /usr/local/lib/agentops/openclaw-executor-receipt.mjs
             ! command -v cc
             ! command -v gcc

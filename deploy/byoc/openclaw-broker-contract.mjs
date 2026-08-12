@@ -21,7 +21,7 @@ import {
   loadConfiguration,
   loadExecutorReceiptTrustRoots,
   privateRequestBytes,
-  startBrokerService,
+  startBrokerServiceForTest,
   verifyExecutorPrivateResponse,
 } from "./openclaw-broker-entrypoint.mjs";
 import { canonicalExecutorProtocolBytes } from "./openclaw-executor-protocol.mjs";
@@ -720,13 +720,21 @@ try {
     });
     response.end(responseBytes);
   };
-  directBrokerService = await startBrokerService(directBrokerConfiguration, {
+  await assert.rejects(
+    () => startBrokerServiceForTest(directBrokerConfiguration, {}),
+    /broker_test_dependencies_forbidden/,
+  );
+  const previousNodeEnvironment = process.env.NODE_ENV;
+  process.env.NODE_ENV = "test";
+  directBrokerService = await startBrokerServiceForTest(directBrokerConfiguration, {
     receiptTrustRoots: trustRoots,
     readBootClock: () => ({
       boot_id: integrationBootId,
       now_boottime_ns: integrationClockReads++ % 2 === 0 ? "1000000000" : "3500000000",
     }),
   });
+  if (previousNodeEnvironment === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = previousNodeEnvironment;
   const integrationRequest = {
     ...executorV2Request("v2-http-integration"),
     nonce: "nonce_broker_http_v2",

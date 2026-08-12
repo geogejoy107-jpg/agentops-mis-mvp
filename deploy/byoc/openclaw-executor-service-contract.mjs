@@ -1,11 +1,29 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { chmodSync, linkSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { request } from "node:http";
+import { generateKeyPairSync } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { inspectExecutorLauncher, loadExecutorConfiguration } from "./openclaw-executor-service.mjs";
+import {
+  inspectExecutorLauncher,
+  loadExecutorConfiguration,
+  parseRuntimeManifestTrustRoots,
+  startExecutorServiceForTest,
+} from "./openclaw-executor-service.mjs";
 
 const digest = (character) => character.repeat(64);
 const environment = {
@@ -35,6 +53,22 @@ assert.equal(configuration.runtimeUid, 1200);
 assert.equal(configuration.runtimeGid, 1200);
 assert.equal(configuration.providerEgressOperatorAttested, true);
 assert.equal(configuration.executorImageDigest, `sha256:${digest("1")}`);
+const manifestKeyId = "manifest-key-contract";
+const manifestKeys = generateKeyPairSync("ed25519");
+const manifestTrustRootBytes = (pem) => Buffer.from(JSON.stringify({
+  keys: { [manifestKeyId]: pem },
+  schema: "agentops_openclaw_runtime_manifest_trust_roots_v1",
+}), "utf8");
+const parsedManifestRoots = parseRuntimeManifestTrustRoots(manifestTrustRootBytes(
+  manifestKeys.publicKey.export({ type: "spki", format: "pem" }),
+));
+assert.equal(parsedManifestRoots.get(manifestKeyId)?.asymmetricKeyType, "ed25519");
+assert.throws(
+  () => parseRuntimeManifestTrustRoots(manifestTrustRootBytes(
+    manifestKeys.privateKey.export({ type: "pkcs8", format: "pem" }),
+  )),
+  /executor_manifest_trust_root_key_invalid/,
+);
 for (const [name, value] of [
   ["OPENCLAW_RUNTIME_UID", "1001"],
   ["OPENCLAW_EXECUTOR_SOCKET_GID", "0"],
@@ -80,23 +114,143 @@ const source = readFileSync(fileURLToPath(new URL("./openclaw-executor-service.m
 assert.match(source, /verifyCanonicalRuntimeManifestAndTree/);
 assert.match(source, /inspectDelegatedCgroupRoot/);
 assert.match(source, /ExecutorReplayJournal\.open/);
-assert.match(source, /ExecutorLaunchIntegrationIncomplete/);
-assert.match(source, /ready: false/);
-assert.match(source, /writeJson\(response, 503/);
-assert.match(source, /runtime_process_spawned: false/);
+assert.match(source, /runExecutorDispatch/);
+assert.match(source, /const ready = !state\.shuttingDown/);
+assert.match(source, /ExecutorBusy/);
+assert.match(source, /MAX_EXECUTE_BYTES/);
 assert.match(source, /runtime_receipt_verified: false/);
 assert.doesNotMatch(source, /runtime_receipt_verified: true/);
+
+const serviceRoot = mkdtempSync(path.join(os.tmpdir(), "agentops-executor-service-contract-"));
+const socketRoot = path.join(serviceRoot, "socket");
+const socketPath = path.join(socketRoot, "executor.sock");
+const uid = process.getuid();
+const gid = process.getgid();
+mkdirSync(socketRoot, { mode: 0o700 });
+chmodSync(socketRoot, 0o700);
+let mode = "success";
+let runCalls = 0;
+let releaseSlow = null;
+const privateResponseBytes = Buffer.from('{"schema":"agentops_openclaw_executor_private_response_v2"}', "utf8");
+const runDispatch = async () => {
+  runCalls += 1;
+  if (mode === "slow") {
+    await new Promise((resolveSlow) => { releaseSlow = resolveSlow; });
+  }
+  if (mode === "failed") return { provider_response: null };
+  return { private_response_bytes: privateResponseBytes };
+};
+
+function callService({ method = "POST", body = Buffer.from("{}"), headers = {} } = {}) {
+  return new Promise((resolveCall, rejectCall) => {
+    const client = request({
+      socketPath,
+      method,
+      path: method === "GET" ? "/health" : "/v1/execute",
+      headers: method === "POST" ? {
+        "content-type": "application/json",
+        "content-length": body.byteLength,
+        ...headers,
+      } : headers,
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.once("error", rejectCall);
+      response.once("end", () => {
+        const bytes = Buffer.concat(chunks);
+        let parsed = null;
+        try { parsed = JSON.parse(bytes.toString("utf8")); } catch {}
+        resolveCall({ status: response.statusCode, bytes, body: parsed });
+      });
+    });
+    client.once("error", rejectCall);
+    client.end(method === "POST" ? body : undefined);
+  });
+}
+
+let service = null;
+try {
+  await assert.rejects(
+    () => startExecutorServiceForTest(
+      { ...configuration, socketPath, socketGid: gid },
+      Object.freeze({ contract: true }),
+      { runDispatch, socketOwner: { uid, gid } },
+    ),
+    /executor_test_dependencies_forbidden/,
+  );
+  const previousNodeEnvironment = process.env.NODE_ENV;
+  process.env.NODE_ENV = "test";
+  service = await startExecutorServiceForTest(
+    { ...configuration, socketPath, socketGid: gid },
+    Object.freeze({ contract: true }),
+    { runDispatch, socketOwner: { uid, gid } },
+  );
+  if (previousNodeEnvironment === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = previousNodeEnvironment;
+  const socket = lstatSync(socketPath);
+  assert.equal(socket.isSocket(), true);
+  assert.equal(socket.uid, uid);
+  assert.equal(socket.gid, gid);
+  assert.equal(socket.mode & 0o777, 0o660);
+
+  const health = await callService({ method: "GET", body: Buffer.alloc(0) });
+  assert.equal(health.status, 200);
+  assert.equal(health.body.ready, true);
+  assert.equal(health.body.busy, false);
+  assert.equal(health.body.runtime_process_spawned, false);
+  assert.equal(health.body.runtime_receipt_verified, false);
+
+  const success = await callService();
+  assert.equal(success.status, 200);
+  assert.deepEqual(success.bytes, privateResponseBytes);
+  const healthAfterSuccess = await callService({ method: "GET", body: Buffer.alloc(0) });
+  assert.equal(healthAfterSuccess.body.runtime_process_spawned, true);
+
+  mode = "failed";
+  const failed = await callService();
+  assert.equal(failed.status, 502);
+  assert.equal(failed.body.error, "ExecutorRunFailed");
+  assert.equal(failed.body.raw_prompt_omitted, true);
+  assert.equal(failed.body.raw_response_omitted, true);
+
+  mode = "slow";
+  const slow = callService();
+  while (releaseSlow === null) await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+  const busy = await callService();
+  assert.equal(busy.status, 503);
+  assert.equal(busy.body.error, "ExecutorBusy");
+  releaseSlow();
+  await slow;
+  mode = "success";
+
+  const oversized = await callService({
+    body: Buffer.alloc(0),
+    headers: { "content-length": String(1024 * 1024 + 1) },
+  });
+  assert.equal(oversized.status, 413);
+  assert.equal(oversized.body.error, "RequestTooLarge");
+  assert.equal(runCalls, 3);
+} finally {
+  if (service) await service.shutdown();
+  assert.equal(existsSync(socketPath), false);
+  rmSync(serviceRoot, { recursive: true, force: true });
+}
 console.log(JSON.stringify({
-  contract: "agentops_openclaw_root_executor_service_foundation_a07_v1",
+  contract: "agentops_openclaw_root_executor_service_integration_a07_v1",
   strict_configuration_verified: true,
   immutable_executor_image_reference_bound: true,
   root_owned_single_link_launcher_metadata_required: true,
   signed_manifest_and_exact_tree_preflight_present: true,
   cgroup_delegation_preflight_present: true,
   crash_recovery_preflight_present: true,
-  execute_route_fail_closed_until_launch_integration: true,
-  health_ready: false,
-  runtime_process_spawned: false,
+  bounded_execute_body_verified: true,
+  execute_route_runner_integration_verified: true,
+  single_flight_verified: true,
+  failure_response_redacted: true,
+  socket_shutdown_cleanup_verified: true,
+  health_ready: true,
+  injected_runner_success_state_transition_verified: true,
+  real_runtime_process_spawned: false,
   runtime_receipt_verified: false,
   hostile_runtime_isolation_verified: false,
 }));

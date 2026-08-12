@@ -26,20 +26,24 @@ outside this commercial execution path. At exact source commit
 receipt is operator attestation, not cryptographic proof from the remote model
 Provider.
 
-The A07 candidate now has source-level foundations for request-v2 governance
-binding, an append-only replay journal, a signed exact-tree runtime manifest
-with an immutable-directory policy, a native launcher contract that requires a
-real cgroup v2 file descriptor before uid/gid drop, root-Executor
-Supervisor/service preflight, a canonical Ed25519 Executor receipt primitive
-plus Broker-side signature/request/response/replay verification that is not yet
-fed by a real Executor execution, and the separate
-`deploy/byoc/compose.openclaw-phase-a07.yaml` topology. The execute route remains
-fail-closed and incomplete, so Executor health is `503` with `ready=false`.
-The egress flag is an operator attestation only; code does not report network
-enforcement as verified. Docker image execution, real Linux cgroup and
-launcher behavior, A01-A19 acceptance, and real OpenClaw execution have not yet
-been verified for A07. The default release therefore remains A01/A02, and the
-A07 candidate must continue to report:
+The A07 candidate now has request-v2 governance binding, an append-only replay
+journal, a signed exact-tree runtime manifest with an immutable-directory
+policy, a native launcher that requires a real cgroup v2 file descriptor before
+uid/gid drop, root-Executor Supervisor/service preflight, a stdin-only runner,
+and a canonical Ed25519 Executor receipt verified by the Broker across a running
+HTTP-over-UDS integration. The service execute route is wired to the runner with
+bounded input and single-flight execution. Its contracts use injected runtime,
+cgroup, and child-process dependencies, so they do not prove a real OpenClaw
+process or Provider call.
+
+The exact A07 foundation image and native launcher contract have passed Linux
+CI, but the signed runtime path audit in
+`docs/OPENCLAW_A07_SIGNED_RUNTIME_PATH_AUDIT.md` identifies unresolved
+request-time path binding and host-bind TOCTOU gaps. Current OpenClaw still uses
+`--message <prompt>` and therefore fails the runner's stdin protocol gate before
+dispatch. The egress flag remains operator attestation only, and A01-A19 have
+not passed for the A07 topology. The default release therefore remains A01/A02,
+and the A07 candidate must continue to report:
 
 ```text
 real_runtime_process_spawned=false

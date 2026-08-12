@@ -32,6 +32,7 @@ for (const moduleName of [
   "openclaw-executor-request.mjs",
   "openclaw-executor-protocol.mjs",
   "openclaw-executor-receipt.mjs",
+  "openclaw-executor-runner.mjs",
   "openclaw-executor-service.mjs",
   "openclaw-runtime-manifest.mjs",
   "openclaw-runtime-receipt.mjs",

@@ -14,7 +14,7 @@ import {
 const digest = (character) => character.repeat(64);
 const rawPrompt = "contract prompt must never enter the receipt";
 const rawResponse = "contract response must never enter the receipt";
-const secret = "sk-contract-secret-must-never-enter-the-receipt";
+const secret = "credential-contract-canary-must-never-enter-the-receipt";
 const cgroup = {
   cgroup_id: "cg-41-9001",
   device: "41",

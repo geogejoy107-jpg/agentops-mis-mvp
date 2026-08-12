@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash, createPrivateKey } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey } from "node:crypto";
 import {
   chmodSync,
   chownSync,
@@ -18,6 +18,7 @@ import { pathToFileURL } from "node:url";
 import { inspectDelegatedCgroupRoot, validateOpenClawCgroupPolicy } from "./openclaw-cgroup-v2.mjs";
 import { readLinuxBootClock } from "./openclaw-executor-protocol.mjs";
 import { ExecutorReplayJournal } from "./openclaw-executor-request.mjs";
+import { runExecutorDispatch } from "./openclaw-executor-runner.mjs";
 import {
   parseCanonicalRuntimeManifestEnvelope,
   runtimeManifestSha256,
@@ -26,6 +27,8 @@ import {
 
 export const EXECUTOR_HEALTH_SCHEMA = "agentops_openclaw_executor_health_v1";
 const MAX_CONFIG_BYTES = 1024 * 1024;
+const MAX_EXECUTE_BYTES = 1024 * 1024;
+const EXECUTE_BODY_TIMEOUT_MS = 5_000;
 const IMAGE_DIGEST = /^sha256:[a-f0-9]{64}$/;
 const IMAGE_REFERENCE = /^([a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*){1,7})@(sha256:[a-f0-9]{64})$/;
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -162,7 +165,7 @@ function parseCanonicalJson(bytes, code) {
   return value;
 }
 
-function trustRoots(bytes) {
+export function parseRuntimeManifestTrustRoots(bytes) {
   const value = exactObject(
     parseCanonicalJson(bytes, "executor_manifest_trust_roots_invalid"),
     ["keys", "schema"],
@@ -174,11 +177,26 @@ function trustRoots(bytes) {
   const keys = exactObject(value.keys, Object.keys(value.keys || {}), "executor_manifest_trust_roots_invalid");
   const entries = Object.entries(keys);
   if (entries.length < 1 || entries.length > 8) fail("executor_manifest_trust_roots_count_invalid");
-  for (const [keyId, publicKey] of entries) {
+  const parsedEntries = [];
+  for (const [keyId, publicKeyPem] of entries) {
     token(keyId, "executor_manifest_trust_root_key_id");
-    if (typeof publicKey !== "string" || publicKey.length > 4096) fail("executor_manifest_trust_root_key_invalid");
+    if (
+      typeof publicKeyPem !== "string"
+      || publicKeyPem.length > 4096
+      || !/^-----BEGIN PUBLIC KEY-----\n[A-Za-z0-9+/=\n]+-----END PUBLIC KEY-----\n?$/.test(publicKeyPem)
+    ) fail("executor_manifest_trust_root_key_invalid");
+    let publicKey;
+    try {
+      publicKey = createPublicKey(publicKeyPem);
+    } catch {
+      fail("executor_manifest_trust_root_key_invalid");
+    }
+    if (publicKey.type !== "public" || publicKey.asymmetricKeyType !== "ed25519") {
+      fail("executor_manifest_trust_root_key_invalid");
+    }
+    parsedEntries.push([keyId, publicKey]);
   }
-  return new Map(entries);
+  return new Map(parsedEntries);
 }
 
 export async function preflightExecutor(configuration, {
@@ -192,7 +210,7 @@ export async function preflightExecutor(configuration, {
   const seccompBytes = readSecureFile(configuration.seccompProfilePath);
   const seccompSha256 = createHash("sha256").update(seccompBytes).digest("hex");
   const manifestBytes = readSecureFile(configuration.manifestPath);
-  const roots = trustRoots(readSecureFile(configuration.manifestTrustRootPath));
+  const roots = parseRuntimeManifestTrustRoots(readSecureFile(configuration.manifestTrustRootPath));
   const envelope = parseCanonicalRuntimeManifestEnvelope(manifestBytes);
   const manifest = await verifyCanonicalRuntimeManifestAndTree(
     manifestBytes,
@@ -249,9 +267,72 @@ function writeJson(response, status, value) {
   response.end(bytes);
 }
 
-export async function startExecutorService(configuration, preflight) {
+function writeBytes(response, status, bytes) {
+  if (response.destroyed || response.writableEnded) return;
+  response.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "content-length": bytes.byteLength,
+    "cache-control": "no-store",
+    connection: "close",
+  });
+  response.end(bytes);
+}
+
+function readExecuteBody(request, response) {
+  return new Promise((resolveBody) => {
+    const length = String(request.headers["content-length"] || "");
+    if (length && (!/^(?:0|[1-9][0-9]*)$/.test(length) || BigInt(length) > BigInt(MAX_EXECUTE_BYTES))) {
+      request.resume();
+      writeJson(response, 413, { schema: "agentops_openclaw_executor_error_v1", error: "RequestTooLarge" });
+      resolveBody(null);
+      return;
+    }
+    const chunks = [];
+    let size = 0;
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolveBody(value);
+    };
+    const timer = setTimeout(() => {
+      request.destroy();
+      if (!response.headersSent && !response.destroyed) {
+        writeJson(response, 408, { schema: "agentops_openclaw_executor_error_v1", error: "RequestTimeout" });
+      }
+      finish(null);
+    }, EXECUTE_BODY_TIMEOUT_MS);
+    request.on("data", (chunk) => {
+      size += chunk.byteLength;
+      if (size > MAX_EXECUTE_BYTES) {
+        request.resume();
+        writeJson(response, 413, { schema: "agentops_openclaw_executor_error_v1", error: "RequestTooLarge" });
+        finish(null);
+        return;
+      }
+      chunks.push(Buffer.from(chunk));
+    });
+    request.once("aborted", () => finish(null));
+    request.once("error", () => finish(null));
+    request.once("end", () => finish(Buffer.concat(chunks)));
+  });
+}
+
+async function startExecutorServiceWithDependencies(configuration, preflight, dependencies) {
+  const runDispatch = dependencies.runDispatch || runExecutorDispatch;
+  const socketOwner = dependencies.socketOwner || { uid: 0, gid: 2200 };
+  if (typeof runDispatch !== "function") fail("executor_runner_invalid");
+  if (!Number.isSafeInteger(socketOwner.uid) || !Number.isSafeInteger(socketOwner.gid)) {
+    fail("executor_socket_owner_invalid");
+  }
   const parent = lstatSync(dirname(configuration.socketPath));
-  if (!parent.isDirectory() || parent.uid !== 0 || parent.gid !== 2200 || (parent.mode & 0o777) !== 0o700) {
+  if (
+    !parent.isDirectory()
+    || parent.uid !== socketOwner.uid
+    || parent.gid !== socketOwner.gid
+    || (parent.mode & 0o777) !== 0o700
+  ) {
     fail("executor_socket_directory_invalid");
   }
   try {
@@ -259,37 +340,76 @@ export async function startExecutorService(configuration, preflight) {
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
-  const server = createServer((request, response) => {
-    request.resume();
+  const state = {
+    activeRequest: null,
+    executeRequestsReceived: 0,
+    runtimeProcessSpawned: false,
+    shuttingDown: false,
+  };
+  const server = createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
-      writeJson(response, 503, {
+      request.resume();
+      const ready = !state.shuttingDown;
+      writeJson(response, ready ? 200 : 503, {
         schema: EXECUTOR_HEALTH_SCHEMA,
-        ok: true,
-        ready: false,
-        busy: false,
+        ok: ready,
+        ready,
+        busy: state.activeRequest !== null,
+        execute_requests_received: state.executeRequestsReceived,
         manifest_tree_verified_at_startup: true,
         cgroup_delegation_verified_at_startup: true,
         replay_recovery_completed: true,
         provider_egress_operator_attested: configuration.providerEgressOperatorAttested,
-        runtime_process_spawned: false,
+        runtime_process_spawned: state.runtimeProcessSpawned,
         runtime_receipt_verified: false,
         hostile_runtime_isolation_verified: false,
       });
       return;
     }
     if (request.method === "POST" && request.url === "/v1/execute") {
-      writeJson(response, 503, {
-        schema: "agentops_openclaw_executor_error_v1",
-        error: "ExecutorLaunchIntegrationIncomplete",
-        request_reserved: false,
-        runtime_process_spawned: false,
-        runtime_receipt_verified: false,
-        provider_call_verified: false,
-        raw_prompt_omitted: true,
-        raw_response_omitted: true,
-      });
+      state.executeRequestsReceived += 1;
+      if (state.shuttingDown || state.activeRequest !== null) {
+        request.resume();
+        writeJson(response, 503, { schema: "agentops_openclaw_executor_error_v1", error: "ExecutorBusy" });
+        return;
+      }
+      if (!/^application\/json(?:\s*;|$)/i.test(String(request.headers["content-type"] || ""))) {
+        request.resume();
+        writeJson(response, 415, { schema: "agentops_openclaw_executor_error_v1", error: "ContentTypeUnsupported" });
+        return;
+      }
+      const slot = { request, response };
+      state.activeRequest = slot;
+      try {
+        const body = await readExecuteBody(request, response);
+        if (body === null || response.headersSent || response.destroyed) return;
+        try {
+          const result = await runDispatch(body, configuration, preflight);
+          if (!Buffer.isBuffer(result?.private_response_bytes)) {
+            writeJson(response, 502, {
+              schema: "agentops_openclaw_executor_error_v1",
+              error: "ExecutorRunFailed",
+              raw_prompt_omitted: true,
+              raw_response_omitted: true,
+            });
+            return;
+          }
+          state.runtimeProcessSpawned = true;
+          writeBytes(response, 200, result.private_response_bytes);
+        } catch {
+          writeJson(response, 502, {
+            schema: "agentops_openclaw_executor_error_v1",
+            error: "ExecutorRunFailed",
+            raw_prompt_omitted: true,
+            raw_response_omitted: true,
+          });
+        }
+      } finally {
+        if (state.activeRequest === slot) state.activeRequest = null;
+      }
       return;
     }
+    request.resume();
     writeJson(response, 404, { schema: "agentops_openclaw_executor_error_v1", error: "RouteNotFound" });
   });
   await new Promise((resolveListen, rejectListen) => {
@@ -300,8 +420,31 @@ export async function startExecutorService(configuration, preflight) {
     });
   });
   chmodSync(configuration.socketPath, 0o660);
-  chownSync(configuration.socketPath, 0, configuration.socketGid);
-  return { server, preflight };
+  chownSync(configuration.socketPath, socketOwner.uid, socketOwner.gid);
+  let shutdownPromise = null;
+  const shutdown = () => {
+    if (shutdownPromise) return shutdownPromise;
+    state.shuttingDown = true;
+    shutdownPromise = new Promise((resolveShutdown) => {
+      server.close(() => {
+        try { unlinkSync(configuration.socketPath); } catch (error) {
+          if (error?.code !== "ENOENT") throw error;
+        }
+        resolveShutdown(true);
+      });
+    });
+    return shutdownPromise;
+  };
+  return { server, preflight, state, shutdown };
+}
+
+export async function startExecutorService(configuration, preflight) {
+  return startExecutorServiceWithDependencies(configuration, preflight, {});
+}
+
+export async function startExecutorServiceForTest(configuration, preflight, dependencies) {
+  if (process.env.NODE_ENV !== "test") fail("executor_test_dependencies_forbidden");
+  return startExecutorServiceWithDependencies(configuration, preflight, dependencies);
 }
 
 async function main() {
@@ -310,7 +453,7 @@ async function main() {
   const configuration = loadExecutorConfiguration();
   const preflight = await preflightExecutor(configuration);
   const service = await startExecutorService(configuration, preflight);
-  const shutdown = () => service.server.close(() => process.exit(0));
+  const shutdown = () => service.shutdown().then(() => process.exit(0));
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);
   process.once("SIGHUP", shutdown);

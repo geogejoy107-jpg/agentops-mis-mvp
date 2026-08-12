@@ -502,15 +502,21 @@ export function verifyExecutorPrivateResponse(
     verification_boottime_ns: clock.now_boottime_ns,
     workspace_id_hash: publicRequest.workspace_id_hash,
   };
-  const stagedReplayCache = new Set(replayCache);
-  const verified = verifyExecutorReceipt(receipt, trustRoots, expected, stagedReplayCache);
+  const verified = verifyExecutorReceipt(
+    receipt,
+    trustRoots,
+    expected,
+    replayCache,
+    { commitReplay: false },
+  );
   const providerResponseSha256 = sha256Bytes(canonicalExecutorProtocolBytes(providerResponse));
   if (
     verified.provider.response_complete !== true
     || verified.provider.response_sha256 !== providerResponseSha256
     || verified.provider.call_observed !== providerResponse.provider_call_performed
   ) fail("broker_executor_v2_provider_response_binding_invalid");
-  for (const key of stagedReplayCache) replayCache.add(key);
+  replayCache.add(`receipt:${verified.receipt_id}`);
+  replayCache.add(`nonce:${verified.nonce}`);
   return canonicalExecutorProtocolBytes(providerResponse);
 }
 
@@ -787,7 +793,7 @@ function writePrivateResponse(publicResponse, forwarded) {
   publicResponse.end(forwarded.body);
 }
 
-export async function startBrokerService(configuration = loadConfiguration(), dependencies = {}) {
+async function startBrokerServiceWithDependencies(configuration, dependencies) {
   const readBootClock = dependencies.readBootClock || readLinuxBootClock;
   if (typeof readBootClock !== "function") fail("broker_boot_clock_reader_invalid");
   await preparePublicSocket(configuration);
@@ -956,6 +962,15 @@ export async function startBrokerService(configuration = loadConfiguration(), de
   };
 
   return { server, state, shutdown, configuration };
+}
+
+export async function startBrokerService(configuration = loadConfiguration()) {
+  return startBrokerServiceWithDependencies(configuration, {});
+}
+
+export async function startBrokerServiceForTest(configuration, dependencies) {
+  if (process.env.NODE_ENV !== "test") fail("broker_test_dependencies_forbidden");
+  return startBrokerServiceWithDependencies(configuration, dependencies);
 }
 
 async function main() {
