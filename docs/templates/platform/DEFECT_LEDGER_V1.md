@@ -20,6 +20,8 @@ invalidates the previous review and requires a new independent review.
 | C1-001 | P1 | C1 commit `b6fb216661215eb524c1ed3ff1c24453c474f46e` | Real C0 `TemplateSDK` rejects Core references registered as domain repositories, undeclared per-route API registrations and a memory policy without a namespaced ID. | Mount with the real C0 SDK; exact declaration counts; no MIS Core duplication; all entrypoints callable. | Reopened |
 | C1-002 | P1 | same | Domain code holds an HMAC signing secret and can forge an `allow` Core receipt. | C0 public-key-only, revocable, purpose-scoped receipt verifier wired through the production composition root; signing helpers restricted to tests. | Reopened |
 | C1-003 | P1 | same | SSH process launch occurs before a durable launch fence; a crash can relaunch the same attempt. Marker writes also lack file/directory fsync. | Fence-before-launch protocol, authoritative restart reconciliation and crash-injection tests at each persistence boundary. | Reopened |
+| C2-001 | P1 | C2 commit `2eb0d6699aedb83ab8fb67658aebdbaf2ed3b422` | `OfficialCareerSimulatorAdapter` accepts caller-controlled module metadata booleans as proof of an official distribution; no public-key verifier is injected. | Use the C0 public-key-only verifier for the exact distribution/version/bridge contract and receipts; ordinary callers cannot construct an official composition root. | Review confirmed by C0; line review running |
+| C2-002 | P1 | same | The governed service has official report/export methods, but the manifest exporter is the public fail-closed exporter and no official report/export operation is registered in API, CLI or UI. | Exact Core-terminal-bound report and submission operations exposed through authenticated API/CLI/UI, with live handler and UI tests. | Review confirmed by C0; line review running |
 | C3-001 | P1 | C3 commit `8db69ea12293d40590323c26002865eca4ad94e3` | A Risk Officer evaluation can be reused to execute a different portfolio proposal. | Canonical proposal hash bound through RiskDecision, Core Evaluation, checkpoint, protocol, backtest, artifacts, report, audit and final receipt. | Fixing |
 | C3-002 | P1 | same | RiskDecision is not durably stored/read back; database replacement can leave one proposal ID with divergent durable and returned content while restart completes. | Immutable persisted/read-back RiskDecision and approved proposal; body/hash replacement and restart attacks fail closed. | Fixing |
 | C3-003 | P2 | same | The exact-approved-weights test and handoff claimed coverage that did not exercise post-approval replacement. | Correct adversarial tests and truthful handoff. | Fixing |
@@ -31,7 +33,7 @@ invalidates the previous review and requires a new independent review.
 | C0 Shared Runtime | New candidate not frozen yet | A non-author must review the new staged hash after the current fixer finishes. |
 | C1 Research | `b6fb216661215eb524c1ed3ff1c24453c474f46e` is failed/reopened | A new exact commit is required, then review by a non-author. |
 | C2 Career | `2eb0d6699aedb83ab8fb67658aebdbaf2ed3b422` | Independent exact-commit review running. |
-| C3 Quant | `8db69ea12293d40590323c26002865eca4ad94e3` is failed | A new exact commit is required, then review by a non-author. |
+| C3 Quant | Fix candidate `cd77b3ba2355c19fb8bf87e1fdf6ceaf99cc6d10` | New exact review by a non-author is required; the failed parent remains non-integrable. |
 
 ## External gates (isolated; not internal defect waivers)
 
