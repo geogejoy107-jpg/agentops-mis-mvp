@@ -45,7 +45,7 @@ decisions and are merged without conflict into a new exact integration head.
 
 | Lane | Required final acceptance | Current state | Boundary |
 | --- | --- | --- | --- |
-| Research | real openJiuwen flow, real repository/data, governed GPU SSH target, long task, disconnect/preemption, worker restart, checkpoint/resume, metric/artifact transfer and Claim Gate | BLOCKED_EXTERNALLY | No governed GPU/SSH/Slurm target or receipt; openJiuwen dependency is not installed/pinned |
+| Research | real openJiuwen flow, real repository/data, governed GPU SSH target, long task, disconnect/preemption, worker restart, checkpoint/resume, metric/artifact transfer and Claim Gate | BLOCKED_EXTERNALLY | Exact openJiuwen local TeamRuntime smoke passed, but no governed provider/MIS gateway receipt, GPU/SSH/Slurm target or long-run receipt exists |
 | Career | official target simulator, complete 48-month episode, restart, persisted recovery, replay hash, multiseed, future leakage zero and independent score | BLOCKED_EXTERNALLY | Official simulator distribution/version is unavailable |
 | Quant | approved real/competition data, hashed cutoff snapshot, full workflow, risk, real backtest, no-lookahead, out-of-sample/rolling validation and 100% report evidence binding | BLOCKED_EXTERNALLY | Designated licensed data source and entitlement receipt are unavailable |
 
