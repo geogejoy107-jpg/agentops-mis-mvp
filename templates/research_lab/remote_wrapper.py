@@ -134,11 +134,27 @@ class DurableSSHWrapper:
     def _recover_fenced_launch(self, fence: Mapping[str, Any], attempt_dir: Path) -> dict[str, Any]:
         observed = self.launch_reconciler(fence, attempt_dir)
         if observed:
-            if observed.get("authority") != "remote_launch_registry" or observed.get("authoritative") is not True:
-                raise ResearchError("research.remote_reconcile_untrusted", "launch reconciliation lacks remote attempt authority")
-            receipt = self._receipt_from_launch(fence, observed)
-            self._atomic_create(attempt_dir / "receipt.json", receipt)
-            return receipt
+            try:
+                verified = require_core_receipt(
+                    observed,
+                    trust=self.trust,
+                    purpose="research.remote-launch-reconciliation/v1",
+                    bindings={
+                        "attempt_id": fence["attempt_id"],
+                        "operation": fence["operation"],
+                        "request_hash": fence["request_hash"],
+                        "authorization_receipt_hash": fence["authorization_receipt_hash"],
+                        "admission_receipt_hash": fence["admission_receipt_hash"],
+                        "target_snapshot_hash": fence["target_snapshot_hash"],
+                        "state": "running",
+                    },
+                )
+            except ResearchError:
+                verified = {}
+            if verified:
+                receipt = self._receipt_from_launch(fence, verified)
+                self._atomic_create(attempt_dir / "receipt.json", receipt)
+                return receipt
         unknown = {
             "attempt_id": fence["attempt_id"],
             "operation": fence["operation"],

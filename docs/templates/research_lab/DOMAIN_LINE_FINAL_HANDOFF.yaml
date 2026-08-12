@@ -4,6 +4,7 @@ LINE_STATE: IN_PROGRESS
 repository: geogejoy107-jpg/agentops-mis-mvp
 branch: feature/template-research-lab-v1
 base_commit: 1bce8f9e0312df9a29635a6988b62cd297b1ab14
+c0_implementation_dependency: aa667fcc012a5eed4a6e823741d8867f750417a1
 head_commit: pending_commit
 pr: not_created_by_c1
 target_branch: integration/template-platform-v1
@@ -33,7 +34,7 @@ real_integrations:
     receipt: target infrastructure not selected
 tests:
   passed:
-    - 80 Research unit/contract/security/API/AppShell/BDCI/runtime/migration/remote-wrapper tests on Python 3.11 and 3.14 using `python -m unittest discover -s tests/templates/research_lab -t . -p test_*.py`
+    - 90 Research unit/contract/security/API/AppShell/BDCI/runtime/migration/remote-wrapper tests on Python 3.11 and 3.14 using `python -m unittest discover -s tests/templates/research_lab -t . -p test_*.py`
     - Python 3.14 suite passes with warnings promoted to errors
     - ResearchLabExtension.tsx bundles with esbuild (browser E2E remains a C0 mount gate)
     - manifest generated JSON exact readback
@@ -56,6 +57,8 @@ known_product_boundaries:
   - manifest provenance source_commit is all-zero candidate placeholder and must be stamped to the exact reviewed commit by governed packaging before signature/promotion
   - fixtures do not satisfy real integration gates
   - production receipt verification is C0-owned Ed25519 public-key-only verification with purpose allowlists, exact bindings and revocation; the Research domain contains no signing secret and test signing material remains fixture-only
+  - Research builds C0's exported TemplateEntrypointRegistry and real startup mount from fixed handlers; shared server/AppShell/CLI integration remains an OPEN C0 change request
+  - C0 tests use an immutable git archive of the exact implementation dependency and require exact C0 HEAD plus a clean C0 index
 remaining_work:
   - C0 integrate the revised project-scoped atomic Core/admission/export/operations ports and concrete API/AppShell registrations
   - after Human session restores MIS preflight, create governed Plan/Run and record Artifact/Evaluation readback

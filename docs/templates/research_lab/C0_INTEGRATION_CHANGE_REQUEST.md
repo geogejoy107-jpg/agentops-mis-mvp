@@ -2,6 +2,12 @@
 
 Status: OPEN. Owner: C0. This domain branch does not edit C0-owned paths.
 
+Contract base: `1bce8f9e0312df9a29635a6988b62cd297b1ab14`.
+Reviewed C0 implementation dependency: `aa667fcc012a5eed4a6e823741d8867f750417a1`.
+Research now constructs C0's exported `TemplateEntrypointRegistry`, registers
+trusted startup handlers and executes `mount_manifest`, but this does not claim
+that the shared server/AppShell/CLI routes below are integrated.
+
 Required before integration can pass:
 
 1. Mount `ResearchAPI.dispatch` under the shared authenticated server route and construct `CoreRefs` only from the authenticated MIS session or machine identity.
@@ -38,5 +44,10 @@ Required before integration can pass:
    `mis_core_reference` declarations remain reference metadata and must never
    be registered as domain repositories. Register memory policy ID
    `research_lab.memory_policy.default` with candidate-only/shared-deny fields.
+14. Remote launch reconciliation must issue purpose
+    `research.remote-launch-reconciliation.v1` receipts signed by a non-revoked
+    C0 trust-store key and exactly bind attempt ID, operation, request hash,
+    authorization receipt hash, admission receipt hash, target snapshot hash,
+    running state, PID and process-start identity.
 
 Until this change request is merged and verified, API/CLI/UI/runtime/migration declarations in C1 are integration-ready domain adapters, not a claim of mounted product availability.

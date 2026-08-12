@@ -2,61 +2,61 @@
   "agents": [
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:agent_entrypoint",
       "id": "research_lab.agent.research_lead",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:agent_entrypoint",
       "id": "research_lab.agent.literature_researcher",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:agent_entrypoint",
       "id": "research_lab.agent.protocol_planner",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:agent_entrypoint",
       "id": "research_lab.agent.experiment_planner",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:agent_entrypoint",
       "id": "research_lab.agent.training_operator",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:agent_entrypoint",
       "id": "research_lab.agent.failure_diagnoser",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:agent_entrypoint",
       "id": "research_lab.agent.metrics_analyst",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:agent_entrypoint",
       "id": "research_lab.agent.evidence_reviewer",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:agent_entrypoint",
       "id": "research_lab.agent.paper_writer",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:agent_entrypoint",
       "id": "research_lab.agent.memory_curator",
       "version": "1.0.0"
     }
@@ -70,7 +70,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_01",
       "version": "1.0.0"
     },
@@ -82,7 +82,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_02",
       "version": "1.0.0"
     },
@@ -94,7 +94,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_03",
       "version": "1.0.0"
     },
@@ -106,7 +106,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_04",
       "version": "1.0.0"
     },
@@ -118,7 +118,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_05",
       "version": "1.0.0"
     },
@@ -130,7 +130,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_06",
       "version": "1.0.0"
     },
@@ -142,7 +142,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_07",
       "version": "1.0.0"
     },
@@ -154,7 +154,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_08",
       "version": "1.0.0"
     },
@@ -166,7 +166,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_09",
       "version": "1.0.0"
     },
@@ -178,7 +178,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_10",
       "version": "1.0.0"
     },
@@ -190,7 +190,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_11",
       "version": "1.0.0"
     },
@@ -202,7 +202,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_12",
       "version": "1.0.0"
     },
@@ -214,7 +214,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_13",
       "version": "1.0.0"
     },
@@ -226,7 +226,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_14",
       "version": "1.0.0"
     },
@@ -238,7 +238,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_15",
       "version": "1.0.0"
     },
@@ -250,7 +250,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_16",
       "version": "1.0.0"
     },
@@ -262,7 +262,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_17",
       "version": "1.0.0"
     },
@@ -274,7 +274,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_18",
       "version": "1.0.0"
     },
@@ -286,7 +286,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_19",
       "version": "1.0.0"
     },
@@ -298,7 +298,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_20",
       "version": "1.0.0"
     },
@@ -310,7 +310,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_21",
       "version": "1.0.0"
     },
@@ -322,7 +322,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_22",
       "version": "1.0.0"
     },
@@ -334,7 +334,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_23",
       "version": "1.0.0"
     },
@@ -346,7 +346,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_24",
       "version": "1.0.0"
     },
@@ -358,7 +358,7 @@
         "permission": "research_lab.permission.experiment.write"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_25",
       "version": "1.0.0"
     },
@@ -370,7 +370,7 @@
         "permission": "research_lab.permission.experiment.write"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_26",
       "version": "1.0.0"
     },
@@ -382,7 +382,7 @@
         "permission": "research_lab.permission.compute.local"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_27",
       "version": "1.0.0"
     },
@@ -394,7 +394,7 @@
         "permission": "research_lab.permission.compute.remote"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_28",
       "version": "1.0.0"
     },
@@ -406,7 +406,7 @@
         "permission": "research_lab.permission.compute.remote"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_29",
       "version": "1.0.0"
     },
@@ -418,7 +418,7 @@
         "permission": "research_lab.permission.compute.remote"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_30",
       "version": "1.0.0"
     },
@@ -430,7 +430,7 @@
         "permission": "research_lab.permission.claim.review"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_31",
       "version": "1.0.0"
     },
@@ -442,7 +442,7 @@
         "permission": "research_lab.permission.claim.review"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_32",
       "version": "1.0.0"
     },
@@ -454,7 +454,7 @@
         "permission": "research_lab.permission.experiment.write"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_33",
       "version": "1.0.0"
     },
@@ -466,7 +466,7 @@
         "permission": "research_lab.permission.experiment.write"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_34",
       "version": "1.0.0"
     },
@@ -478,7 +478,7 @@
         "permission": "research_lab.permission.experiment.write"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_35",
       "version": "1.0.0"
     },
@@ -490,7 +490,7 @@
         "permission": "research_lab.permission.compute.remote"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_36",
       "version": "1.0.0"
     },
@@ -502,7 +502,7 @@
         "permission": "research_lab.permission.experiment.write"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_37",
       "version": "1.0.0"
     },
@@ -514,7 +514,7 @@
         "permission": "research_lab.permission.read"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_38",
       "version": "1.0.0"
     },
@@ -526,7 +526,7 @@
         "permission": "research_lab.permission.compute.remote"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_39",
       "version": "1.0.0"
     },
@@ -538,7 +538,7 @@
         "permission": "research_lab.permission.compute.remote"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_40",
       "version": "1.0.0"
     },
@@ -550,7 +550,7 @@
         "permission": "research_lab.permission.claim.review"
       },
       "contract_version": "template-platform-api/v1",
-      "entrypoint": "templates.research_lab.api:route_contracts",
+      "entrypoint": "templates.research_lab.startup:api_route_entrypoint",
       "id": "research_lab.api.route_41",
       "version": "1.0.0"
     }
@@ -570,37 +570,37 @@
   "cli_commands": [
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.cli:main",
+      "entrypoint": "templates.research_lab.startup:cli_command_entrypoint",
       "id": "research_lab.cli.validate",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.cli:main",
+      "entrypoint": "templates.research_lab.startup:cli_command_entrypoint",
       "id": "research_lab.cli.migration_dry_run",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.cli:main",
+      "entrypoint": "templates.research_lab.startup:cli_command_entrypoint",
       "id": "research_lab.cli.checkpoint_validate",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.cli:main",
+      "entrypoint": "templates.research_lab.startup:cli_command_entrypoint",
       "id": "research_lab.cli.api_contracts",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.cli:main",
+      "entrypoint": "templates.research_lab.startup:cli_command_entrypoint",
       "id": "research_lab.cli.bdci_build",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.cli:main",
+      "entrypoint": "templates.research_lab.startup:cli_command_entrypoint",
       "id": "research_lab.cli.operation",
       "version": "1.0.0"
     }
@@ -819,19 +819,19 @@
   "evaluators": [
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.evidence:evaluate_claim",
+      "entrypoint": "templates.research_lab.startup:evaluator_entrypoint",
       "id": "research_lab.evaluator.claim_integrity",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.literature:verify_citation_claims",
+      "entrypoint": "templates.research_lab.startup:evaluator_entrypoint",
       "id": "research_lab.evaluator.citation_integrity",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.migrations:verify_migration",
+      "entrypoint": "templates.research_lab.startup:evaluator_entrypoint",
       "id": "research_lab.evaluator.migration_readback",
       "version": "1.0.0"
     }
@@ -839,25 +839,25 @@
   "exports": [
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.exports:reproducibility_bundle",
+      "entrypoint": "templates.research_lab.startup:export_entrypoint",
       "id": "research_lab.export.reproducibility",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.literature:export_bibtex",
+      "entrypoint": "templates.research_lab.startup:export_entrypoint",
       "id": "research_lab.export.bibtex",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.exports:research_receipt",
+      "entrypoint": "templates.research_lab.startup:export_entrypoint",
       "id": "research_lab.export.research_receipt",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.exports:bdci_submission_package",
+      "entrypoint": "templates.research_lab.startup:export_entrypoint",
       "id": "research_lab.export.bdci_submission",
       "version": "1.0.0"
     }
@@ -865,7 +865,7 @@
   "fixtures": [
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.fixtures:reference_workload",
+      "entrypoint": "templates.research_lab.startup:fixture_entrypoint",
       "id": "research_lab.fixture.reference_e2e",
       "version": "1.0.0"
     }
@@ -873,7 +873,7 @@
   "id": "research_lab",
   "integrity": {
     "algorithm": "sha256",
-    "content_sha256": "2c17806e735364e89ca1de37b124b9d5787f6cc3206f89fe56c681677e905364",
+    "content_sha256": "c3a0207a3073251900c03c8f9c394e7d9200e474481d06982b8fbad5261ab801",
     "signature": {
       "status": "unsigned_candidate"
     }
@@ -889,7 +889,7 @@
     {
       "checksum": "20ac254226751668c159e57f03257e6372c0bc5adea33d5bcd044564584ba7d2",
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.migrations:transform_legacy",
+      "entrypoint": "templates.research_lab.startup:migration_entrypoint",
       "from_version": "0.1.0",
       "id": "research_lab.migration.0_1_0_to_1_0_0",
       "reversible": true,
@@ -904,7 +904,7 @@
       "action": "research_lab.permission.read",
       "contract_version": "template-sdk/v1",
       "default": "allow",
-      "entrypoint": "templates.research_lab.api:research_api",
+      "entrypoint": "templates.research_lab.startup:permission_entrypoint",
       "id": "research_lab.permission.read",
       "risk": "low",
       "scope": "template",
@@ -914,7 +914,7 @@
       "action": "research_lab.permission.experiment.write",
       "contract_version": "template-sdk/v1",
       "default": "ask",
-      "entrypoint": "templates.research_lab.api:research_api",
+      "entrypoint": "templates.research_lab.startup:permission_entrypoint",
       "id": "research_lab.permission.experiment_write",
       "risk": "medium",
       "scope": "project",
@@ -924,7 +924,7 @@
       "action": "research_lab.permission.compute.local",
       "contract_version": "template-sdk/v1",
       "default": "deny",
-      "entrypoint": "templates.research_lab.executors:local_process_executor",
+      "entrypoint": "templates.research_lab.startup:permission_entrypoint",
       "id": "research_lab.permission.compute_local",
       "risk": "high",
       "scope": "run",
@@ -934,7 +934,7 @@
       "action": "research_lab.permission.compute.remote",
       "contract_version": "template-sdk/v1",
       "default": "deny",
-      "entrypoint": "templates.research_lab.executors:ssh_executor",
+      "entrypoint": "templates.research_lab.startup:permission_entrypoint",
       "id": "research_lab.permission.compute_remote",
       "risk": "critical",
       "scope": "run",
@@ -944,7 +944,7 @@
       "action": "research_lab.permission.claim.review",
       "contract_version": "template-sdk/v1",
       "default": "ask",
-      "entrypoint": "templates.research_lab.evidence:evaluate_claim",
+      "entrypoint": "templates.research_lab.startup:permission_entrypoint",
       "id": "research_lab.permission.claim_review",
       "risk": "medium",
       "scope": "project",
@@ -954,43 +954,43 @@
   "policies": [
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:policy_entrypoint",
       "id": "research_lab.policy.read_only",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:policy_entrypoint",
       "id": "research_lab.policy.deep_search",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:policy_entrypoint",
       "id": "research_lab.policy.no_external_write",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.budgets:budget_gate",
+      "entrypoint": "templates.research_lab.startup:policy_entrypoint",
       "id": "research_lab.policy.compute",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:policy_entrypoint",
       "id": "research_lab.policy.diagnostics",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:policy_entrypoint",
       "id": "research_lab.policy.memory_candidate",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.evidence:evaluate_claim",
+      "entrypoint": "templates.research_lab.startup:policy_entrypoint",
       "id": "research_lab.policy.claim_gate",
       "version": "1.0.0"
     }
@@ -1004,19 +1004,19 @@
   "reports": [
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.exports:research_receipt",
+      "entrypoint": "templates.research_lab.startup:report_entrypoint",
       "id": "research_lab.report.research_receipt",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.exports:manuscript_section",
+      "entrypoint": "templates.research_lab.startup:report_entrypoint",
       "id": "research_lab.report.iclr",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.exports:manuscript_section",
+      "entrypoint": "templates.research_lab.startup:report_entrypoint",
       "id": "research_lab.report.research_report",
       "version": "1.0.0"
     }
@@ -1051,25 +1051,25 @@
   "skills": [
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.literature:verify_citation_claims",
+      "entrypoint": "templates.research_lab.startup:skill_entrypoint",
       "id": "research_lab.skill.literature_verify",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.service:research_service",
+      "entrypoint": "templates.research_lab.startup:skill_entrypoint",
       "id": "research_lab.skill.protocol_freeze",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.evidence:evaluate_claim",
+      "entrypoint": "templates.research_lab.startup:skill_entrypoint",
       "id": "research_lab.skill.claim_gate",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.exports:reproducibility_bundle",
+      "entrypoint": "templates.research_lab.startup:skill_entrypoint",
       "id": "research_lab.skill.reproducibility_export",
       "version": "1.0.0"
     }
@@ -1077,19 +1077,19 @@
   "testing_hooks": [
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.fixtures:reference_workload",
+      "entrypoint": "templates.research_lab.startup:testing_hook_entrypoint",
       "id": "research_lab.testing.contract",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.fixtures:reference_workload",
+      "entrypoint": "templates.research_lab.startup:testing_hook_entrypoint",
       "id": "research_lab.testing.reference_e2e",
       "version": "1.0.0"
     },
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.observability:external_preflight",
+      "entrypoint": "templates.research_lab.startup:testing_hook_entrypoint",
       "id": "research_lab.testing.external_preflight",
       "version": "1.0.0"
     }
@@ -1098,7 +1098,7 @@
     {
       "approval": "always",
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.literature:normalize_source_url",
+      "entrypoint": "templates.research_lab.startup:tool_entrypoint",
       "id": "research_lab.tool.deep_search",
       "risk": "medium",
       "side_effect": "external_write",
@@ -1107,7 +1107,7 @@
     {
       "approval": "policy",
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.executors:local_process_executor",
+      "entrypoint": "templates.research_lab.startup:tool_entrypoint",
       "id": "research_lab.tool.local_execute",
       "risk": "high",
       "side_effect": "internal_write",
@@ -1116,7 +1116,7 @@
     {
       "approval": "always",
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.executors:ssh_executor",
+      "entrypoint": "templates.research_lab.startup:tool_entrypoint",
       "id": "research_lab.tool.ssh_execute",
       "risk": "critical",
       "side_effect": "external_write",
@@ -1125,7 +1125,7 @@
     {
       "approval": "always",
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.executors:slurm_executor",
+      "entrypoint": "templates.research_lab.startup:tool_entrypoint",
       "id": "research_lab.tool.slurm_execute",
       "risk": "critical",
       "side_effect": "external_write",
@@ -1135,7 +1135,7 @@
   "ui_extensions": [
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.ui:app_shell_extension",
+      "entrypoint": "templates.research_lab.startup:ui_extension_entrypoint",
       "id": "research_lab.ui.product",
       "metadata": {
         "component": "templates/research_lab/ui/ResearchLabExtension.tsx",
@@ -1169,7 +1169,7 @@
   "workflows": [
     {
       "contract_version": "template-sdk/v1",
-      "entrypoint": "templates.research_lab.runtime_team:research_runtime_coordinator",
+      "entrypoint": "templates.research_lab.startup:workflow_entrypoint",
       "id": "research_lab.workflow.production",
       "version": "1.0.0"
     }

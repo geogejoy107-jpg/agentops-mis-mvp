@@ -107,8 +107,8 @@ class RemoteWrapperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             def launch(request, path):
                 launches.append(request)
-                observed = {"authority": "remote_launch_registry", "authoritative": True, "attempt_id": request["attempt_id"], "request_hash": canonical_hash(request), "pid": 4321, "process_start_identity": "start-1"}
-                remote_registry[request["attempt_id"]] = observed
+                observed = {"attempt_id": request["attempt_id"], "operation": request["operation"], "request_hash": canonical_hash(request), "authorization_receipt_hash": request["authorization_receipt_hash"], "admission_receipt_hash": request["admission_receipt_hash"], "target_snapshot_hash": request["target_snapshot_hash"], "state": "running", "pid": 4321, "process_start_identity": "start-1"}
+                remote_registry[request["attempt_id"]] = signed(observed, "research.remote-launch-reconciliation/v1")
                 return observed
 
             wrapper = DurableSSHWrapper(governed_root=Path(raw), trust=TEST_TRUST, process_launcher=launch)
@@ -130,6 +130,61 @@ class RemoteWrapperTests(unittest.TestCase):
             ).handle(operation="submit", stdin_bytes=json.dumps(request).encode())
             self.assertEqual((recovered["state"], recovered["pid"]), ("running", 4321))
             self.assertEqual(len(launches), 1)
+
+    def test_forged_reconciler_booleans_are_remote_unknown_without_resend(self) -> None:
+        launches = []
+        with tempfile.TemporaryDirectory() as raw:
+            request = self.request(remote_root=raw)
+            attempt_dir = Path(raw) / "attempts/att_1"
+            attempt_dir.mkdir(parents=True)
+            fence = {
+                "attempt_id": "att_1", "operation": "submit", "request_hash": canonical_hash(request),
+                "authorization_receipt_hash": request["authorization_receipt_hash"],
+                "admission_receipt_hash": request["admission_receipt_hash"],
+                "target_snapshot_hash": request["target_snapshot_hash"], "state": "launch_fenced",
+            }
+            fence["receipt_hash"] = canonical_hash(fence)
+            DurableSSHWrapper._write_once(attempt_dir / "launch-intent.json", fence)
+            forged = {"authority": "remote_launch_registry", "authoritative": True, "attempt_id": "att_1", "operation": "submit", "request_hash": canonical_hash(request), "pid": 4321, "process_start_identity": "start-1"}
+            wrapper = DurableSSHWrapper(governed_root=Path(raw), trust=TEST_TRUST, process_launcher=lambda *_: launches.append(1) or {}, launch_reconciler=lambda *_: forged)
+            recovered = wrapper.handle(operation="submit", stdin_bytes=json.dumps(request).encode())
+            self.assertEqual(recovered["state"], "remote_unknown")
+            self.assertEqual(launches, [])
+            self.assertFalse((attempt_dir / "receipt.json").exists())
+
+    def test_reconciler_signed_receipt_must_bind_exact_request(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            request = self.request(remote_root=raw)
+            attempt_dir = Path(raw) / "attempts/att_1"
+            attempt_dir.mkdir(parents=True)
+            fence = {"attempt_id": "att_1", "operation": "submit", "request_hash": canonical_hash(request), "authorization_receipt_hash": request["authorization_receipt_hash"], "admission_receipt_hash": request["admission_receipt_hash"], "target_snapshot_hash": request["target_snapshot_hash"], "state": "launch_fenced"}
+            fence["receipt_hash"] = canonical_hash(fence)
+            DurableSSHWrapper._write_once(attempt_dir / "launch-intent.json", fence)
+            mismatched = signed({**fence, "receipt_hash": "not-authority", "request_hash": "f" * 64, "state": "running", "pid": 4321, "process_start_identity": "start-1"}, "research.remote-launch-reconciliation/v1")
+            wrapper = DurableSSHWrapper(governed_root=Path(raw), trust=TEST_TRUST, process_launcher=lambda *_: self.fail("must not resend"), launch_reconciler=lambda *_: mismatched)
+            self.assertEqual(wrapper.handle(operation="submit", stdin_bytes=json.dumps(request).encode())["state"], "remote_unknown")
+
+    def test_reconciler_wrong_purpose_or_revoked_key_is_remote_unknown(self) -> None:
+        class RemoteRevokedTrust:
+            def verify(self, payload, proof, *, purpose, expected_bindings):
+                if purpose == "research.remote-launch-reconciliation.v1":
+                    raise ValueError("remote registry key is revoked")
+                return TEST_TRUST.verify(payload, proof, purpose=purpose, expected_bindings=expected_bindings)
+
+        for label, purpose, trust in (
+            ("wrong-purpose", "research.execution-authorization/v1", TEST_TRUST),
+            ("revoked-key", "research.remote-launch-reconciliation/v1", RemoteRevokedTrust()),
+        ):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as raw:
+                request = self.request(remote_root=raw)
+                attempt_dir = Path(raw) / "attempts/att_1"
+                attempt_dir.mkdir(parents=True)
+                fence = {"attempt_id": "att_1", "operation": "submit", "request_hash": canonical_hash(request), "authorization_receipt_hash": request["authorization_receipt_hash"], "admission_receipt_hash": request["admission_receipt_hash"], "target_snapshot_hash": request["target_snapshot_hash"], "state": "launch_fenced"}
+                fence["receipt_hash"] = canonical_hash(fence)
+                DurableSSHWrapper._write_once(attempt_dir / "launch-intent.json", fence)
+                observed = signed({**fence, "receipt_hash": "not-authority", "state": "running", "pid": 4321, "process_start_identity": "start-1"}, purpose)
+                wrapper = DurableSSHWrapper(governed_root=Path(raw), trust=trust, process_launcher=lambda *_: self.fail("must not resend"), launch_reconciler=lambda *_: observed)
+                self.assertEqual(wrapper.handle(operation="submit", stdin_bytes=json.dumps(request).encode())["state"], "remote_unknown")
 
     def test_crash_during_marker_create_leaves_no_partial_receipt_and_replace_is_atomic(self) -> None:
         launches = []

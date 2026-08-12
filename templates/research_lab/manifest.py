@@ -37,6 +37,11 @@ def _decl(suffix: str, entrypoint: str, **extra: Any) -> dict[str, Any]:
     return {"id": f"research_lab.{suffix}", "version": "1.0.0", "contract_version": "template-sdk/v1", "entrypoint": entrypoint, **extra}
 
 
+def _startup(field: str) -> str:
+    names = {"policies": "policy", "ui_extensions": "ui_extension", "api_routes": "api_route", "cli_commands": "cli_command", "testing_hooks": "testing_hook", "exports": "export"}
+    return f"templates.research_lab.startup:{names.get(field, field.removesuffix('s'))}_entrypoint"
+
+
 def build_manifest() -> dict[str, Any]:
     domain_names = (
         "ResearchProject", "ResearchContract", "ResearchQuestion", "LiteratureEvidence",
@@ -66,8 +71,8 @@ def build_manifest() -> dict[str, Any]:
             "research.claim_gate", "research.manuscript", "research.reproducibility",
         ],
         "domain_objects": [],
-        "workflows": [_decl("workflow.production", "templates.research_lab.runtime_team:research_runtime_coordinator")],
-        "agents": [_decl(f"agent.{role}", "templates.research_lab.runtime_team:research_runtime_coordinator") for role in (
+        "workflows": [_decl("workflow.production", _startup("workflows"))],
+        "agents": [_decl(f"agent.{role}", _startup("agents")) for role in (
             "research_lead", "literature_researcher", "protocol_planner", "experiment_planner", "training_operator", "failure_diagnoser", "metrics_analyst", "evidence_reviewer", "paper_writer", "memory_curator"
         )],
         "skills": [
@@ -145,6 +150,9 @@ def build_manifest() -> dict[str, Any]:
         "provenance": {"source_repository": "geogejoy107-jpg/agentops-mis-mvp", "source_commit": "0000000000000000000000000000000000000000", "built_at": "2026-08-12T00:00:00+08:00"},
         "integrity": {"algorithm": "sha256", "content_sha256": "0" * 64, "signature": {"status": "unsigned_candidate"}},
     }
+    for field in ("skills", "tools", "policies", "evaluators", "ui_extensions", "reports", "fixtures", "migrations", "permissions", "api_routes", "cli_commands", "testing_hooks", "exports"):
+        for declaration in manifest[field]:
+            declaration["entrypoint"] = _startup(field)
     domain_ids = {
         "ResearchProject": "research_project", "ResearchContract": "research_contract", "ResearchQuestion": "research_question", "LiteratureEvidence": "literature_evidence", "Experiment": "experiment", "ProtocolVersion": "protocol", "Trial": "trial", "JobAttempt": "job_attempt", "ComputeTarget": "compute_target", "Checkpoint": "checkpoint", "MetricSnapshot": "metric_snapshot", "ResearchArtifact": "research_artifact", "ResearchClaim": "research_claim", "ClaimEvidence": "claim_evidence", "Manuscript": "manuscript", "ResearchReceipt": "research_receipt",
     }

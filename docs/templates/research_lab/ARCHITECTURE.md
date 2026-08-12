@@ -4,6 +4,12 @@ Status: Candidate (`canonical=false`)
 
 Base contract: `1bce8f9e0312df9a29635a6988b62cd297b1ab14`
 
+C0 implementation dependency used by the production composition and immutable
+test export: `aa667fcc012a5eed4a6e823741d8867f750417a1`. The former is the frozen
+contract base; the latter is the reviewed C0 implementation object. Tests use
+`git archive` of that exact object and reject a non-exact C0 HEAD or dirty C0
+index, so they never import a mutable sibling worktree.
+
 Manifest candidate provenance is the exact frozen contract base. C0 must replace
 it with the eventual independently reviewed domain commit and regenerate
 integrity at integration; `canonical=false` prevents promotion of this staged
@@ -48,9 +54,11 @@ SSH uses strict host keys, a secret resolver, stdin-only request transfer and a
 durable idempotent remote wrapper with hashed Artifact collection. Private SSH
 addresses additionally require an exact, signed target-registration snapshot.
 The wrapper persists and fsyncs `launch-intent.json` before launching. After a
-crash, the exact attempt/request can only be adopted from an authoritative
-remote registry; missing evidence yields `remote_unknown`, never a second
-process.
+crash, the exact attempt/request can only be adopted from a C0 public-key
+verified, purpose-separated registry receipt binding the attempt, operation,
+request, authorization, admission and target snapshot. Caller authority
+booleans, unsigned values and mismatches yield `remote_unknown`, never a
+second process.
 Slurm uses
 Core-approved argv-only `sbatch`/`sacct`/`scancel`, scheduler IDs, arrays,
 resources and receipts.

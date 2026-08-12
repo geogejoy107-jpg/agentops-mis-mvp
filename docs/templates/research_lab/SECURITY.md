@@ -22,6 +22,9 @@
   launches again: it consults an authoritative attempt/request registry and
   otherwise reports `remote_unknown`. Receipt creation uses fsynced temporary
   files and atomic no-clobber links, so crashes cannot publish partial JSON.
+  Reconciliation accepts only a C0 public-key-verified
+  `research.remote-launch-reconciliation.v1` receipt with exact fence bindings;
+  `authority`/`authoritative` booleans never establish remote registry truth.
 - Artifact and checkpoint files are content hashed; symlinks/path traversal are
   forbidden. PyTorch zip validation performs no pickle deserialization.
 - Research records are always workspace scoped. Cross-template access is

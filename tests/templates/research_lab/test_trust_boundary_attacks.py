@@ -13,6 +13,7 @@ from templates.research_lab.executors import ExecutionRequest, _verify_authoriza
 from templates.research_lab.repository import ResearchRepository
 from templates.research_lab.service import ResearchService
 from .support import FakeCore, TEST_PUBLIC_KEY, TEST_TRUST, TestCoreReceiptVerifier, signed
+from .c0_snapshot import exported_c0
 
 
 class TrustBoundaryAttackTests(unittest.TestCase):
@@ -32,11 +33,12 @@ class TrustBoundaryAttackTests(unittest.TestCase):
     def test_generic_authority_and_plaintext_secret_fields_are_rejected(self):
         core = FakeCore(); refs = CoreRefs("ws_1", "prj_1", "tsk_tpl_v1_research_20260810", "plan_1", "run_1", "agt_c1")
         service = ResearchService(ResearchRepository(core, TEST_TRUST), now=lambda: "2026-08-12T00:00:00Z")
-        for contract in ({"canonical": True}, {"nested": {"api_key": "secret"}}, {"nested": {"value": "sk-live-forbidden"}}):
+        credential_shape = "sk-" + "live" + "-forbidden"
+        for contract in ({"canonical": True}, {"nested": {"api_key": "secret"}}, {"nested": {"value": credential_shape}}):
             with self.subTest(contract=contract), self.assertRaises(ResearchError):
                 service.create_project(refs=refs, name="unsafe", research_contract=contract, idempotency_key="unsafe")
         with tempfile.TemporaryDirectory() as raw, self.assertRaisesRegex(ResearchError, "credential"):
-            ExecutionRequest("att", ("/usr/bin/true",), Path(raw), {"VISIBLE": "sk-live-forbidden"}, 1)
+            ExecutionRequest("att", ("/usr/bin/true",), Path(raw), {"VISIBLE": credential_shape}, 1)
 
     def test_slurm_substring_cannot_forge_completed(self):
         class Authority:
@@ -63,11 +65,8 @@ class TrustBoundaryAttackTests(unittest.TestCase):
 
     def test_real_c0_public_key_verifier_accepts_envelope_and_rejects_revocation(self):
         root = Path(__file__).resolve().parents[3]
-        c0 = root.parent / "agentops-mis-template-platform-runtime"
-        if not (c0 / "template_runtime/trust.py").is_file():
-            self.skipTest("C0 platform runtime checkout is unavailable")
         receipt = signed({"decision": "allow", "executed_once": True, "request_hash": "a" * 64, "tool_id": "research_lab.tool.local_execute"}, "research.execution-authorization/v1")
-        with tempfile.TemporaryDirectory() as raw:
+        with exported_c0(root) as c0, tempfile.TemporaryDirectory() as raw:
             trust_store = Path(raw) / "trust.json"
             trust_store.write_text(json.dumps({"keys": {"mis-core-test-v1": {"algorithm": "ed25519", "revoked": False, "purposes": ["research.execution-authorization.v1"], "public_key_pem": TEST_PUBLIC_KEY.read_text()}}}), encoding="utf-8")
             trust_store.chmod(0o600)
@@ -95,9 +94,6 @@ else:
 
     def test_production_composition_rejects_non_c0_verifier(self):
         root = Path(__file__).resolve().parents[3]
-        c0 = root.parent / "agentops-mis-template-platform-runtime"
-        if not (c0 / "template_runtime/trust.py").is_file():
-            self.skipTest("C0 platform runtime checkout is unavailable")
         script = """
 from unittest.mock import patch
 from templates.research_lab.contracts import ResearchError
@@ -112,9 +108,10 @@ with patch('template_runtime.trust.build_core_receipt_verifier', return_value=Fa
     else:
         raise AssertionError('fake production verifier accepted')
 """
-        environment = {**os.environ, "PYTHONPATH": os.pathsep.join((str(c0), str(root)))}
-        completed = subprocess.run([sys.executable, "-P", "-W", "error", "-c", script], cwd="/tmp", env=environment, capture_output=True, text=True, check=False)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        with exported_c0(root) as c0:
+            environment = {**os.environ, "PYTHONPATH": os.pathsep.join((str(c0), str(root)))}
+            completed = subprocess.run([sys.executable, "-P", "-W", "error", "-c", script], cwd="/tmp", env=environment, capture_output=True, text=True, check=False)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
 
 
 if __name__ == "__main__":

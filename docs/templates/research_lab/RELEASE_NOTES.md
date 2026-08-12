@@ -20,6 +20,13 @@ registers exactly the 41 manifest-declared routes. SSH execution fsyncs a
 launch fence before launch and cannot start a second process after the
 fence/launch/receipt crash windows.
 
+The Research production composition now builds C0's exported
+`TrustedCoreReceiptVerifier`, constructs the exported
+`TemplateEntrypointRegistry`, registers fixed process-startup handlers and
+executes the real C0 manifest mount. C0 tests consume immutable `git archive`
+source from implementation commit `aa667fcc012a5eed4a6e823741d8867f750417a1`;
+the distinct contract base remains `1bce8f9e0312df9a29635a6988b62cd297b1ab14`.
+
 This build is Candidate and `canonical=false`. Release-level real openJiuwen,
 SSH GPU, restart/disconnect, checkpoint/resume, transfer and Claim receipts are
 not available in this environment. Slurm remains required if the selected

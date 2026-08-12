@@ -5,11 +5,13 @@ import importlib
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 from template_runtime.contracts import ContractViolation, validate_product_profile, validate_template_manifest
 from templates.research_lab.manifest import build_manifest
+from .c0_snapshot import exported_c0
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -49,23 +51,27 @@ class ContractManifestProfileTests(unittest.TestCase):
         self.assertTrue(any(item["id"] == "research_lab.permission.compute_remote" and item["default"] == "deny" for item in manifest["permissions"]))
 
     def test_real_c0_sdk_mounts_exact_manifest_without_core_duplication(self) -> None:
-        c0 = ROOT.parent / "agentops-mis-template-platform-runtime"
-        if not (c0 / "template_runtime/sdk.py").is_file():
-            self.skipTest("C0 platform runtime checkout is unavailable")
         script = """
-from template_runtime.sdk import TemplateSDK
-from templates.research_lab.manifest import build_manifest, register_with_sdk
-sdk = TemplateSDK(build_manifest())
-register_with_sdk(sdk)
-snapshot = sdk.snapshot()
-assert len(snapshot['registrations']['api_route']) == 41
-assert len(snapshot['registrations']['domain_repository']) == 16
-assert snapshot['registrations']['memory_policy'] == ['research_lab.memory_policy.default']
-assert snapshot['mis_core_authority_duplicated'] is False
+import json, os
+from pathlib import Path
+from templates.research_lab.production import build_research_production_composition
+from tests.templates.research_lab.support import TEST_PUBLIC_KEY
+store = Path(os.environ['AGENTOPS_CORE_RECEIPT_TRUST_STORE'])
+composition = build_research_production_composition()
+assert len(composition.mount['registrations']['api_route']) == 41
+assert len(composition.mount['registrations']['domain_repository']) == 16
+assert composition.mount['registrations']['memory_policy'] == ['research_lab.memory_policy.default']
+assert composition.mount['mis_core_authority_duplicated'] is False
+assert len(composition.mount['mounted']) > 0
 """
-        environment = {**os.environ, "PYTHONPATH": os.pathsep.join((str(c0), str(ROOT)))}
-        completed = subprocess.run([sys.executable, "-P", "-W", "error", "-c", script], cwd="/tmp", env=environment, capture_output=True, text=True, check=False)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        with exported_c0(ROOT) as c0, tempfile.TemporaryDirectory() as raw:
+            trust_store = Path(raw) / "trust.json"
+            from .support import TEST_PUBLIC_KEY
+            trust_store.write_text(json.dumps({"keys": {"mis-core-test-v1": {"algorithm": "ed25519", "revoked": False, "purposes": ["research.execution-authorization.v1"], "public_key_pem": TEST_PUBLIC_KEY.read_text()}}}), encoding="utf-8")
+            trust_store.chmod(0o600)
+            environment = {**os.environ, "AGENTOPS_CORE_RECEIPT_TRUST_STORE": str(trust_store), "PYTHONPATH": os.pathsep.join((str(c0), str(ROOT)))}
+            completed = subprocess.run([sys.executable, "-P", "-W", "error", "-c", script], cwd="/tmp", env=environment, capture_output=True, text=True, check=False)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_every_declared_entrypoint_resolves_to_a_callable(self) -> None:
         manifest = build_manifest()

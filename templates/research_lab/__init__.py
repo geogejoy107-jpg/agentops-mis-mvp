@@ -17,6 +17,7 @@ from .contracts import (
 from .repository import ResearchRepository
 from .service import ResearchService
 from .trust import build_production_core_receipt_verifier
+from .production import build_research_production_composition
 
 __all__ = [
     "ClaimStatus",
@@ -28,6 +29,7 @@ __all__ = [
     "ResearchService",
     "TrialState",
     "build_production_core_receipt_verifier",
+    "build_research_production_composition",
 ]
 
 __version__ = "1.0.0"
