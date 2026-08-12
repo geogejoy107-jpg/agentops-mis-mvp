@@ -14,6 +14,13 @@ import { ControlPlaneHttpError } from "./http";
 import { appendAudit, appendRuntimeEvent, stableHash } from "./ledger";
 import { preparedActionHash } from "./preparedActions";
 import { settleExistingTerminalRunCost } from "./terminalRunCost";
+import {
+  assertActiveApprovalReadEntitlement,
+  assertApprovalReadRole,
+  assertBoundedApprovalReceipt,
+  strictApprovalReadIdentifier,
+  strictApprovalReadQuery,
+} from "./approvalReadBoundary";
 
 type ApprovalDecision = "approved" | "rejected";
 
@@ -1241,15 +1248,20 @@ export async function readWorkspaceApprovalReceipt(
   request: Request,
   rawApprovalId: unknown,
 ) {
-  const approvalId = identifier(rawApprovalId, "approval_id");
+  const approvalId = strictApprovalReadIdentifier(rawApprovalId, "approval_id");
   rejectMachineCredentials(request.headers);
-  const requestedWorkspace = new URL(request.url).searchParams.get("workspace_id");
+  const requestedWorkspace = strictApprovalReadQuery(
+    request,
+    ["workspace_id"],
+  ).workspace_id;
   return withPostgresTransaction(async (client) => {
     const identity = await authenticateHumanMember(
       client,
       request.headers,
       requestedWorkspace,
     );
+    const role = assertApprovalReadRole(identity);
+    await assertActiveApprovalReadEntitlement(client, identity.workspaceId);
     const graph = await lockCustomerDeliveryGraph(
       client,
       identity.workspaceId,
@@ -1271,22 +1283,47 @@ export async function readWorkspaceApprovalReceipt(
         ],
       )).rows[0]
       : undefined;
+    const body = assertBoundedApprovalReceipt({
+      ...response(graph, evidence, "unchanged").body,
+      operation: "customer_delivery_approval_receipt_read",
+      decision_receipt: receipt
+        ? {
+          user_id: receipt.user_id,
+          decision: receipt.decision,
+          status: receipt.status,
+          request_hash: receipt.request_hash,
+          idempotency_key_hash: receipt.idempotency_key_hash,
+          completed_at: receipt.completed_at,
+        }
+        : null,
+      sensitive_fields_omitted: true,
+      audit_recorded: true,
+      python_proxy_performed: false,
+    });
+    await appendAudit(client, {
+      workspaceId: identity.workspaceId,
+      actorType: "user",
+      actorId: identity.userId,
+      action: "human.approval_detail_read",
+      entityType: "approvals",
+      entityId: approvalId,
+      metadata: {
+        membership_role: role,
+        route: "GET /api/mis/approvals/:approvalId",
+        sensitive_fields_omitted: true,
+        session_credential_omitted: true,
+        token_omitted: true,
+      },
+      requestHash: stableHash({
+        workspace_id: identity.workspaceId,
+        user_id: identity.userId,
+        approval_id: approvalId,
+        operation: "human.approval_detail_read",
+      }),
+    });
     return {
       status: 200,
-      body: {
-        ...response(graph, evidence, "unchanged").body,
-        operation: "customer_delivery_approval_receipt_read",
-        decision_receipt: receipt
-          ? {
-            user_id: receipt.user_id,
-            decision: receipt.decision,
-            status: receipt.status,
-            request_hash: receipt.request_hash,
-            idempotency_key_hash: receipt.idempotency_key_hash,
-            completed_at: receipt.completed_at,
-          }
-          : null,
-      },
+      body,
     };
   });
 }

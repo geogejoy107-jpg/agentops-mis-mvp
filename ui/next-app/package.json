@@ -56,6 +56,7 @@
     "test:human-agent-detail-postgres-contract": "tsx scripts/human-agent-detail-postgres-contract.ts",
     "test:human-worker-fleet-postgres-contract": "tsx scripts/human-worker-fleet-postgres-contract.ts",
     "test:human-memory-export-postgres-contract": "tsx scripts/human-memory-export-postgres-contract.ts",
+    "test:human-approval-read-postgres-contract": "tsx scripts/human-approval-read-postgres-contract.ts",
     "test:prepared-action-owner-contract": "tsx scripts/prepared-action-owner-contract.ts",
     "test:commercial-worker-contract": "tsx scripts/commercial-worker-contract.ts",
     "test:postgres-schema-contract": "tsx scripts/postgres-schema-contract.ts",
