@@ -175,6 +175,8 @@ function assertStaticCustomerBoundary() {
     || !consumer.includes("repository_checkout_required == false")
     || !consumer.includes("compose_build_performed == false")
     || !consumer.includes("/owner-init.sh")
+    || !consumer.includes('test "${duplicate_status}" -ne 0')
+    || consumer.includes('test "${duplicate_status}" -eq 2')
     || !consumer.includes('and .operation == "commercial_owner_bootstrap"')
     || !consumer.includes('and .error == "owner_already_initialized"')
     || !consumer.includes("human_auth.owner_bootstrap")

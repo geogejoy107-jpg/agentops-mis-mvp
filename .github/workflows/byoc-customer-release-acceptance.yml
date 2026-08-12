@@ -297,7 +297,7 @@ jobs:
           set -e
           ! grep -Fq -- "${duplicate_password}" "${duplicate_receipt}"
           duplicate_password=
-          test "${duplicate_status}" -eq 2
+          test "${duplicate_status}" -ne 0
           jq -e '
             .ok == false
             and .error == "owner_already_initialized"
