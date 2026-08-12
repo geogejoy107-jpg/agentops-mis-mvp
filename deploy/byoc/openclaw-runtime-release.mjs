@@ -13,11 +13,21 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import {
+  canonicalRuntimeManifestV2Bytes,
+  parseCanonicalRuntimeManifestV2Envelope,
+} from "./openclaw-runtime-manifest-v2.mjs";
+import {
+  OPENCLAW_RUNTIME_OCI_EXPORT_PROVENANCE_SCHEMA,
+  parseCanonicalOpenClawRuntimeOciExportProvenance,
+} from "./openclaw-runtime-oci-export.mjs";
+
 export const OPENCLAW_RUNTIME_RELEASE_SCHEMA =
-  "agentops_openclaw_runtime_manifest_v2_release_v1";
+  "agentops_openclaw_runtime_manifest_v2_release_v2";
 export const OPENCLAW_RUNTIME_RELEASE_FILES = Object.freeze([
   "openclaw-runtime-manifest-metadata-receipt.json",
   "openclaw-runtime-manifest.json",
+  "openclaw-runtime-oci-export-provenance.json",
 ]);
 
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -91,7 +101,7 @@ function readCommittedFile(target, expectedOwner) {
   }
 }
 
-function validateReceipt(value, manifestBytes, trustRootBytes) {
+function validateReceipt(value, manifestBytes, provenanceBytes, trustRootBytes) {
   const receipt = exactObject(value, [
     "claims",
     "cgroup_policy_sha256",
@@ -100,6 +110,7 @@ function validateReceipt(value, manifestBytes, trustRootBytes) {
     "files",
     "issuer",
     "key_id",
+    "oci_export_provenance",
     "oci_image",
     "platform",
     "private_key_copied",
@@ -116,7 +127,30 @@ function validateReceipt(value, manifestBytes, trustRootBytes) {
     || !SHA256.test(String(receipt.trust_root_sha256 || ""))
     || receipt.trust_root_sha256 !== sha256(trustRootBytes)
   ) fail("runtime_release_receipt_invalid");
-  const files = exactObject(receipt.files, ["manifest"], "runtime_release_receipt_files_invalid");
+  const files = exactObject(
+    receipt.files,
+    ["manifest", "provenance"],
+    "runtime_release_receipt_files_invalid",
+  );
+  const provenance = exactObject(
+    receipt.oci_export_provenance,
+    ["schema", "sha256"],
+    "runtime_release_receipt_provenance_invalid",
+  );
+  if (
+    provenance.schema !== OPENCLAW_RUNTIME_OCI_EXPORT_PROVENANCE_SCHEMA
+    || !SHA256.test(String(provenance.sha256 || ""))
+    || provenance.sha256 !== sha256(provenanceBytes)
+  ) fail("runtime_release_receipt_provenance_invalid");
+  const provenanceFile = exactObject(
+    files.provenance,
+    ["name", "sha256"],
+    "runtime_release_receipt_provenance_file_invalid",
+  );
+  if (
+    provenanceFile.name !== "openclaw-runtime-oci-export-provenance.json"
+    || provenanceFile.sha256 !== provenance.sha256
+  ) fail("runtime_release_receipt_provenance_file_invalid");
   const manifest = exactObject(
     files.manifest,
     ["name", "sha256"],
@@ -127,6 +161,36 @@ function validateReceipt(value, manifestBytes, trustRootBytes) {
     || !SHA256.test(String(manifest.sha256 || ""))
     || manifest.sha256 !== sha256(manifestBytes)
   ) fail("runtime_release_receipt_manifest_invalid");
+  let envelope;
+  let source;
+  try {
+    envelope = parseCanonicalRuntimeManifestV2Envelope(manifestBytes);
+    source = parseCanonicalOpenClawRuntimeOciExportProvenance(provenanceBytes);
+  } catch {
+    fail("runtime_release_manifest_invalid");
+  }
+  if (
+    !canonicalRuntimeManifestV2Bytes(receipt.oci_image).equals(
+      canonicalRuntimeManifestV2Bytes(envelope.body.oci_image),
+    )
+    || !canonicalRuntimeManifestV2Bytes(receipt.rootfs).equals(
+      canonicalRuntimeManifestV2Bytes(envelope.body.rootfs),
+    )
+    || !canonicalRuntimeManifestV2Bytes(source.oci).equals(canonicalRuntimeManifestV2Bytes({
+      digest: envelope.body.oci_image.digest,
+      exact_reference: `${envelope.body.oci_image.name}@${envelope.body.oci_image.digest}`,
+      name: envelope.body.oci_image.name,
+    }))
+    || !canonicalRuntimeManifestV2Bytes({
+      byte_count: source.rootfs.byte_count,
+      file_count: source.rootfs.file_count,
+      merkle_sha256: source.rootfs.merkle_sha256,
+    }).equals(
+      canonicalRuntimeManifestV2Bytes(envelope.body.rootfs),
+    )
+    || source.platform.os !== envelope.body.platform.os
+    || source.platform.architecture !== envelope.body.platform.arch
+  ) fail("runtime_release_receipt_manifest_binding_invalid");
   return receipt;
 }
 
@@ -164,13 +228,18 @@ export function readCommittedOpenClawRuntimeRelease(
     path.join(releaseRoot, "openclaw-runtime-manifest-metadata-receipt.json"),
     expectedOwner,
   );
+  const provenanceBytes = readCommittedFile(
+    path.join(releaseRoot, "openclaw-runtime-oci-export-provenance.json"),
+    expectedOwner,
+  );
   const after = lstatSync(releaseRoot, { bigint: true });
   if (!sameIdentity(before, after)) fail("runtime_release_root_identity_changed");
   const trustRootBytes = Buffer.from(trustRootBytesValue);
   const receipt = validateReceipt(
     canonicalJson(receiptBytes, "runtime_release_receipt_invalid"),
     manifestBytes,
+    provenanceBytes,
     trustRootBytes,
   );
-  return Object.freeze({ manifestBytes, receipt, receiptBytes });
+  return Object.freeze({ manifestBytes, provenanceBytes, receipt, receiptBytes });
 }

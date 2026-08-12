@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   inspectOpenClawRuntimeTarArchive,
+  parseCanonicalOpenClawRuntimeOciExportProvenance,
   readCommittedOpenClawRuntimeOciExportReceipt,
 } from "./openclaw-runtime-oci-export.mjs";
 
@@ -30,6 +31,7 @@ const sourcePath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "o
 const source = readFileSync(sourcePath, "utf8");
 const DOCKER = "/usr/bin/docker";
 const TAR = "/usr/bin/tar";
+const MV = "/usr/bin/mv";
 const SAFE_ENV = { HOME: "/root", LANG: "C.UTF-8", LC_ALL: "C.UTF-8", PATH: "/usr/bin:/bin" };
 
 function octal(value, bytes) {
@@ -105,6 +107,14 @@ for (const required of [
   'syncDirectory(path.dirname(destination))',
   'provenance_output: destinations.provenance.path',
   'provenance_sha256: receipt.sha256',
+  'guest_root_identity: guestRootIdentity',
+  'provenance_bytes: Buffer.from(bytes)',
+  'parseCanonicalOpenClawRuntimeOciExportProvenance(bytes)',
+  'const guestDescriptor = openSync(',
+  'const descriptorAfter = fstatSync(guestDescriptor, { bigint: true })',
+  'const publishedGuestDescriptor = openSync(',
+  'receipt = publishProvenanceReceipt(',
+  'const guestDescriptorAfter = fstatSync(publishedGuestDescriptor, { bigint: true })',
 ]) assert.ok(source.includes(required), `missing static boundary: ${required}`);
 
 assert.equal(/shell\s*:\s*true/.test(source), false);
@@ -114,7 +124,7 @@ assert.equal(/spawnSync\(tool\.identity\.path/.test(source), false);
 assert.equal(/spawn\((?:docker|tar)\.identity\.path/.test(source), false);
 assert.ok(
   source.indexOf("publishGuestRoot(mv, stagingRoot, destinations.guest.path)")
-    < source.indexOf("const receipt = publishProvenanceReceipt("),
+    < source.indexOf("receipt = publishProvenanceReceipt("),
   "provenance must be the commit marker after guest publication",
 );
 assert.ok(
@@ -261,6 +271,102 @@ function canonicalJson(value) {
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function syntheticToolIdentity(toolPath, marker) {
+  return {
+    ctime_ns: "1",
+    dev: "1",
+    gid: 0,
+    ino: marker,
+    mode: "0755",
+    path: toolPath,
+    sha256: marker.padStart(64, "0"),
+    size: 1,
+    uid: 0,
+  };
+}
+
+function syntheticProvenance() {
+  const digest = "a".repeat(64);
+  return {
+    export_archive_sha256: "b".repeat(64),
+    export_policy: {
+      archive_format: "strict_ustar_only_gnu_longname_and_pax_extensions_rejected_fail_closed",
+      extraction: "two_identical_stopped_container_exports_strict_ustar_then_gnu_tar_stream",
+      root_directory: "normalized_root_0_0_0555",
+    },
+    export_tool_identity: {
+      docker: syntheticToolIdentity(DOCKER, "1"),
+      mv: syntheticToolIdentity(MV, "2"),
+      tar: syntheticToolIdentity(TAR, "3"),
+    },
+    guest_root: "/opt/agentops-export/guest-root",
+    guest_root_identity: {
+      ctime_ns: "10",
+      dev: "11",
+      gid: 0,
+      ino: "12",
+      mode: "0555",
+      mtime_ns: "13",
+      uid: 0,
+    },
+    oci: {
+      digest: `sha256:${digest}`,
+      exact_reference: `registry.invalid/agentops/openclaw@sha256:${digest}`,
+      name: "registry.invalid/agentops/openclaw",
+    },
+    platform: { architecture: "amd64", os: "linux" },
+    rootfs: {
+      byte_count: 1,
+      file_count: 1,
+      merkle_sha256: "c".repeat(64),
+      schema: "agentops_openclaw_runtime_rootfs_merkle_v1",
+    },
+    schema: "agentops_openclaw_runtime_oci_export_provenance_v2",
+    source_image_id: `sha256:${"d".repeat(64)}`,
+  };
+}
+
+const synthetic = syntheticProvenance();
+const syntheticBytes = Buffer.from(canonicalJson(synthetic), "utf8");
+assert.deepEqual(parseCanonicalOpenClawRuntimeOciExportProvenance(syntheticBytes), synthetic);
+const structurallyValidDifferentIdentity = structuredClone(synthetic);
+structurallyValidDifferentIdentity.guest_root_identity.ino = "99";
+assert.deepEqual(
+  parseCanonicalOpenClawRuntimeOciExportProvenance(
+    Buffer.from(canonicalJson(structurallyValidDifferentIdentity), "utf8"),
+  ),
+  structurallyValidDifferentIdentity,
+);
+assert.throws(
+  () => parseCanonicalOpenClawRuntimeOciExportProvenance(Buffer.from(
+    `${JSON.stringify(synthetic, null, 2)}\n`, "utf8",
+  )),
+  /runtime_oci_export_provenance_noncanonical/,
+);
+for (const mutate of [
+  (value) => { value.schema = "agentops_openclaw_runtime_oci_export_provenance_v1"; },
+  (value) => { delete value.rootfs.byte_count; },
+  (value) => { value.extra = true; },
+  (value) => { value.oci.extra = true; },
+  (value) => { value.platform.extra = true; },
+  (value) => { value.rootfs.extra = true; },
+  (value) => { value.export_policy.extra = true; },
+  (value) => { value.export_tool_identity.extra = true; },
+  (value) => { value.export_tool_identity.docker.extra = true; },
+  (value) => { value.export_tool_identity.docker.mode = "0777"; },
+  (value) => { value.guest_root_identity.extra = true; },
+  (value) => { value.guest_root_identity.ino = 12; },
+]) {
+  const invalid = structuredClone(synthetic);
+  mutate(invalid);
+  assert.throws(
+    () => parseCanonicalOpenClawRuntimeOciExportProvenance(
+      Buffer.from(canonicalJson(invalid), "utf8"),
+    ),
+    /runtime_oci_export_provenance_/,
+  );
 }
 
 function verifyProcFdExecution() {
@@ -419,6 +525,7 @@ async function realOciContract() {
     assert.equal(secondSummary.provenance_sha256, sha256(secondBytes));
     assert.equal(Object.hasOwn(firstSummary, "provenance"), false);
     assert.equal(firstReceipt.guest_root, firstOutput);
+    assert.equal(firstReceipt.schema, "agentops_openclaw_runtime_oci_export_provenance_v2");
     assert.equal(firstReceipt.oci.exact_reference, amdExact);
     assert.equal(firstReceipt.oci.name, amdExact.split("@")[0]);
     assert.equal(firstReceipt.oci.digest, amdExact.split("@")[1]);
@@ -447,6 +554,22 @@ async function realOciContract() {
     assert.equal(committed.committed, true);
     assert.equal(committed.guest_root, firstOutput);
     assert.equal(committed.provenance_sha256, firstSummary.provenance_sha256);
+    assert.deepEqual(committed.provenance_bytes, firstBytes);
+    assert.deepEqual(
+      parseCanonicalOpenClawRuntimeOciExportProvenance(committed.provenance_bytes),
+      firstReceipt,
+    );
+    const identityMismatchPath = path.join(working, "identity-mismatch.json");
+    const identityMismatch = structuredClone(firstReceipt);
+    identityMismatch.guest_root_identity.ino = (
+      BigInt(identityMismatch.guest_root_identity.ino) + 1n
+    ).toString();
+    writeFileSync(identityMismatchPath, canonicalJson(identityMismatch), { mode: 0o444 });
+    chmodSync(identityMismatchPath, 0o444);
+    assert.throws(
+      () => readCommittedOpenClawRuntimeOciExportReceipt(identityMismatchPath),
+      /runtime_oci_export_commit_guest_root_identity_mismatch/,
+    );
     assert.throws(
       () => readCommittedOpenClawRuntimeOciExportReceipt(path.join(working, "missing.json")),
       /runtime_oci_export_commit_receipt_missing/,
@@ -548,6 +671,7 @@ async function realOciContract() {
       manifest_list_rejected: true,
       provenance_canonical_metadata_no_clobber_and_path_policy_verified: true,
       provenance_commit_marker_consumer_verified: true,
+      provenance_v2_guest_root_identity_mismatch_rejected: true,
       wrong_digest_name_platform_and_path_rejected: true,
     });
   } finally {
@@ -560,7 +684,7 @@ const real = await realOciContract();
 const procFdExecutionPerformed = verifyProcFdExecution();
 
 process.stdout.write(`${JSON.stringify({
-  contract: "agentops_openclaw_runtime_oci_export_contract_v1",
+  contract: "agentops_openclaw_runtime_oci_export_contract_v2",
   exact_child_manifest_and_platform_static_boundary_verified: true,
   fixed_absolute_tool_paths_and_metadata_pin_verified: true,
   proc_fd_execution_static_boundary_verified: true,
@@ -572,6 +696,10 @@ process.stdout.write(`${JSON.stringify({
   provenance_canonical_json_fsync_root_metadata_static_boundary_verified: true,
   provenance_noncanonical_and_overwrite_paths_executed: true,
   provenance_metadata_and_no_clobber_performed: real !== null,
+  provenance_v2_pure_canonical_parser_verified: true,
+  provenance_v2_nested_extra_fields_rejected: true,
+  provenance_v2_guest_identity_fd_merkle_static_boundary_verified: true,
+  provenance_v2_pure_parser_has_no_filesystem_identity_dependency: true,
   strict_ustar_path_hardlink_special_symlink_policy_verified: true,
   ustar_prefix_long_path_accepted_gnu_pax_extensions_fail_closed: true,
   two_export_header_and_full_stream_binding_static_boundary_verified: true,

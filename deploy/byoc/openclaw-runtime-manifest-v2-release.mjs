@@ -28,14 +28,19 @@ import {
   computeOpenClawRuntimeRootfsMerkle,
   OPENCLAW_RUNTIME_CANONICAL_GUEST_MOUNT_PATHS,
 } from "./openclaw-runtime-rootfs-merkle.mjs";
+import {
+  OPENCLAW_RUNTIME_OCI_EXPORT_PROVENANCE_SCHEMA,
+  readCommittedOpenClawRuntimeOciExportReceipt,
+} from "./openclaw-runtime-oci-export.mjs";
 
 export const OPENCLAW_RUNTIME_MANIFEST_V2_RELEASE_SCHEMA =
-  "agentops_openclaw_runtime_manifest_v2_release_v1";
+  "agentops_openclaw_runtime_manifest_v2_release_v2";
 export const OPENCLAW_RUNTIME_MANIFEST_V2_TRUST_ROOTS_SCHEMA =
   "agentops_openclaw_runtime_manifest_trust_roots_v1";
 
 const OUTPUT_FILES = Object.freeze({
   manifest: "openclaw-runtime-manifest.json",
+  provenance: "openclaw-runtime-oci-export-provenance.json",
   receipt: "openclaw-runtime-manifest-metadata-receipt.json",
 });
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -45,12 +50,11 @@ const EXPECTED_OPTIONS = Object.freeze([
   "--cgroup-policy-sha256",
   "--created",
   "--expires",
-  "--guest-root",
   "--issuer",
   "--key-id",
-  "--oci",
   "--output",
   "--private-key",
+  "--provenance",
   "--seccomp-profile-sha256",
   "--trust-root",
 ]);
@@ -270,8 +274,8 @@ function readPinnedTrustRoot(trustPathValue, expectedUid, keyId) {
   }
 }
 
-function releaseBody(input, rootfs) {
-  const image = OCI_REFERENCE.exec(input.oci);
+function releaseBody(input, rootfs, provenance) {
+  const image = OCI_REFERENCE.exec(provenance.oci.exact_reference);
   if (!image) fail("runtime_manifest_v2_release_oci_invalid");
   if (!TOKEN.test(input.issuer)) fail("runtime_manifest_v2_release_issuer_invalid");
   if (!TOKEN.test(input["key-id"])) fail("runtime_manifest_v2_release_key_id_invalid");
@@ -360,7 +364,8 @@ function syncDirectory(target) {
 
 export function buildOpenClawRuntimeManifestV2Release(input) {
   const releaseUid = currentUid();
-  const guestRoot = inspectDirectory(input["guest-root"], "runtime_manifest_v2_release_guest_root");
+  const source = readCommittedOpenClawRuntimeOciExportReceipt(input.provenance);
+  const guestRoot = inspectDirectory(source.guest_root, "runtime_manifest_v2_release_guest_root");
   const output = absoluteCanonicalPath(input.output, "runtime_manifest_v2_release_output");
   if (existsSync(output)) fail("runtime_manifest_v2_release_output_exists");
   const parent = inspectDirectory(
@@ -383,7 +388,10 @@ export function buildOpenClawRuntimeManifestV2Release(input) {
     guestRoot,
     OPENCLAW_RUNTIME_CANONICAL_GUEST_MOUNT_PATHS,
   );
-  const body = releaseBody(input, rootfs);
+  if (canonicalRuntimeManifestV2Bytes(rootfs).compare(
+    canonicalRuntimeManifestV2Bytes(source.provenance.rootfs),
+  ) !== 0) fail("runtime_manifest_v2_release_provenance_rootfs_mismatch");
+  const body = releaseBody(input, rootfs, source.provenance);
   const envelope = signRuntimeManifestV2(body, body.key_id, privateKey);
   const manifestBytes = serializeRuntimeManifestV2Envelope(envelope);
   const receiptBytes = canonicalRuntimeManifestV2Bytes({
@@ -393,9 +401,17 @@ export function buildOpenClawRuntimeManifestV2Release(input) {
     expires_at: body.expires_at,
     files: {
       manifest: { name: OUTPUT_FILES.manifest, sha256: sha256(manifestBytes) },
+      provenance: {
+        name: OUTPUT_FILES.provenance,
+        sha256: source.provenance_sha256,
+      },
     },
     issuer: body.issuer,
     key_id: body.key_id,
+    oci_export_provenance: {
+      schema: OPENCLAW_RUNTIME_OCI_EXPORT_PROVENANCE_SCHEMA,
+      sha256: source.provenance_sha256,
+    },
     oci_image: body.oci_image,
     platform: body.platform,
     private_key_copied: false,
@@ -413,6 +429,7 @@ export function buildOpenClawRuntimeManifestV2Release(input) {
   }
   try {
     writeReadonly(path.join(output, OUTPUT_FILES.manifest), manifestBytes);
+    writeReadonly(path.join(output, OUTPUT_FILES.provenance), source.provenance_bytes);
     writeReadonly(path.join(output, OUTPUT_FILES.receipt), receiptBytes);
     syncDirectory(output);
     chmodSync(output, 0o555);
@@ -431,6 +448,7 @@ export function buildOpenClawRuntimeManifestV2Release(input) {
     private_key_copied: false,
     trust_root_copied: false,
     rootfs_merkle_sha256: body.rootfs.merkle_sha256,
+    provenance_sha256: source.provenance_sha256,
   });
 }
 

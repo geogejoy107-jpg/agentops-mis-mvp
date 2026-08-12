@@ -54,6 +54,7 @@ jobs:
           node deploy/byoc/openclaw-runtime-manifest-contract.mjs
           node deploy/byoc/openclaw-runtime-manifest-v2-contract.mjs
           node deploy/byoc/openclaw-runtime-manifest-v2-release-contract.mjs
+          node deploy/byoc/openclaw-runtime-oci-export-contract.mjs
           node deploy/byoc/openclaw-runtime-rootfs-merkle-contract.mjs
           node deploy/byoc/openclaw-runtime-mount-policy-contract.mjs
           node deploy/byoc/openclaw-runtime-release-contract.mjs
@@ -75,6 +76,40 @@ jobs:
           npm --prefix ui/next-app ci --ignore-scripts
           npm --prefix ui/next-app run typecheck
           npm --prefix ui/next-app run test:commercial-worker-contract
+
+      - name: Bind OCI provenance to signed runtime release
+        run: |
+          set -euo pipefail
+          receipt="${RUNNER_TEMP}/a07-provenance-manifest-release.json"
+          sudo --preserve-env=PATH "$(command -v node)" \
+            deploy/byoc/openclaw-runtime-manifest-v2-release-contract.mjs \
+            --require-root > "${receipt}"
+          jq -e '
+            .root_contract_executed == true
+            and .committed_provenance_remeasured == true
+            and .provenance_sha256_bound_to_release_receipt == true
+            and .oci_and_rootfs_manifest_binding_verified == true
+            and .provenance_tamper_rejected == true
+            and .deterministic_release_verified == true
+            and .ed25519_verification_performed == true
+            and .output_mode_0444_verified == true
+            and .pinned_trust_root_verified == true
+          ' "${receipt}" >/dev/null
+
+      - name: Export exact OCI guest root through Linux release boundary
+        run: |
+          set -euo pipefail
+          receipt="${RUNNER_TEMP}/a07-real-oci-export.json"
+          sudo --preserve-env=PATH "$(command -v node)" \
+            deploy/byoc/openclaw-runtime-oci-export-contract.mjs > "${receipt}"
+          jq -e '
+            .real_oci_export_performed == true
+            and .proc_fd_execution_performed == true
+            and .provenance_metadata_and_no_clobber_performed == true
+            and .real_oci_verification.digest_root_merkle_binding_verified == true
+            and .real_oci_verification.provenance_commit_marker_consumer_verified == true
+            and .real_oci_verification.wrong_digest_name_platform_and_path_rejected == true
+          ' "${receipt}" >/dev/null
 
       - name: Build exact Linux OpenClaw guest-root input
         run: |

@@ -36,10 +36,11 @@ import { TextDecoder } from "node:util";
 import {
   computeOpenClawRuntimeRootfsMerkle,
   OPENCLAW_RUNTIME_CANONICAL_GUEST_MOUNT_PATHS,
+  OPENCLAW_RUNTIME_ROOTFS_MERKLE_SCHEMA,
 } from "./openclaw-runtime-rootfs-merkle.mjs";
 
 export const OPENCLAW_RUNTIME_OCI_EXPORT_PROVENANCE_SCHEMA =
-  "agentops_openclaw_runtime_oci_export_provenance_v1";
+  "agentops_openclaw_runtime_oci_export_provenance_v2";
 
 const DOCKER_PATH = "/usr/bin/docker";
 const TAR_PATH = "/usr/bin/tar";
@@ -346,6 +347,145 @@ function assertExactKeys(value, expected, code) {
   ) fail(code);
 }
 
+function safeIdentityNumber(value) {
+  const number = typeof value === "bigint" ? Number(value) : value;
+  if (!Number.isSafeInteger(number) || number < 0) {
+    fail("runtime_oci_export_identity_invalid");
+  }
+  return number;
+}
+
+function directoryIdentity(metadata) {
+  if (!metadata.isDirectory()) fail("runtime_oci_export_identity_invalid");
+  return Object.freeze({
+    ctime_ns: metadata.ctimeNs.toString(),
+    dev: metadata.dev.toString(),
+    gid: safeIdentityNumber(metadata.gid),
+    ino: metadata.ino.toString(),
+    mode: Number(metadata.mode & 0o7777n).toString(8).padStart(4, "0"),
+    mtime_ns: metadata.mtimeNs.toString(),
+    uid: safeIdentityNumber(metadata.uid),
+  });
+}
+
+function sameDirectoryIdentity(left, right) {
+  return canonicalJson(directoryIdentity(left)) === canonicalJson(directoryIdentity(right));
+}
+
+function validateDecimalIdentity(value) {
+  return typeof value === "string" && /^(?:0|[1-9][0-9]*)$/.test(value);
+}
+
+function validateToolIdentity(value, expectedPath) {
+  assertExactKeys(value, [
+    "ctime_ns", "dev", "gid", "ino", "mode", "path", "sha256", "size", "uid",
+  ], "runtime_oci_export_provenance_tool_identity_invalid");
+  if (
+    value.path !== expectedPath
+    || !/^[a-f0-9]{64}$/.test(value.sha256)
+    || !validateDecimalIdentity(value.dev)
+    || !validateDecimalIdentity(value.ino)
+    || !validateDecimalIdentity(value.ctime_ns)
+    || !/^[0-7]{4}$/.test(value.mode)
+    || (Number.parseInt(value.mode, 8) & 0o022) !== 0
+    || !Number.isSafeInteger(value.uid)
+    || value.uid !== 0
+    || !Number.isSafeInteger(value.gid)
+    || value.gid < 0
+    || !Number.isSafeInteger(value.size)
+    || value.size < 1
+  ) fail("runtime_oci_export_provenance_tool_identity_invalid");
+}
+
+function validateGuestRootIdentity(value) {
+  assertExactKeys(value, [
+    "ctime_ns", "dev", "gid", "ino", "mode", "mtime_ns", "uid",
+  ], "runtime_oci_export_provenance_guest_root_identity_invalid");
+  if (
+    !validateDecimalIdentity(value.dev)
+    || !validateDecimalIdentity(value.ino)
+    || !validateDecimalIdentity(value.ctime_ns)
+    || !validateDecimalIdentity(value.mtime_ns)
+    || value.uid !== 0
+    || value.gid !== 0
+    || value.mode !== "0555"
+  ) fail("runtime_oci_export_provenance_guest_root_identity_invalid");
+}
+
+function provenanceBytes(value) {
+  if (!(value instanceof Uint8Array) || value.byteLength < 2 || value.byteLength > MAX_METADATA_BYTES) {
+    fail("runtime_oci_export_provenance_bytes_invalid");
+  }
+  return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+}
+
+export function parseCanonicalOpenClawRuntimeOciExportProvenance(inputBytes) {
+  const bytes = provenanceBytes(inputBytes);
+  let receipt;
+  try {
+    receipt = JSON.parse(UTF8.decode(bytes));
+  } catch (error) {
+    fail("runtime_oci_export_provenance_invalid", error);
+  }
+  if (!Buffer.from(canonicalJson(receipt), "utf8").equals(bytes)) {
+    fail("runtime_oci_export_provenance_noncanonical");
+  }
+  assertExactKeys(receipt, [
+    "export_archive_sha256",
+    "export_policy",
+    "export_tool_identity",
+    "guest_root",
+    "guest_root_identity",
+    "oci",
+    "platform",
+    "rootfs",
+    "schema",
+    "source_image_id",
+  ], "runtime_oci_export_provenance_invalid");
+  assertExactKeys(receipt.oci, ["digest", "exact_reference", "name"],
+    "runtime_oci_export_provenance_oci_invalid");
+  assertExactKeys(receipt.platform, ["architecture", "os"],
+    "runtime_oci_export_provenance_platform_invalid");
+  assertExactKeys(receipt.rootfs, ["byte_count", "file_count", "merkle_sha256", "schema"],
+    "runtime_oci_export_provenance_rootfs_invalid");
+  assertExactKeys(receipt.export_policy, ["archive_format", "extraction", "root_directory"],
+    "runtime_oci_export_provenance_policy_invalid");
+  assertExactKeys(receipt.export_tool_identity, ["docker", "mv", "tar"],
+    "runtime_oci_export_provenance_tool_identity_invalid");
+  validateToolIdentity(receipt.export_tool_identity.docker, DOCKER_PATH);
+  validateToolIdentity(receipt.export_tool_identity.tar, TAR_PATH);
+  validateToolIdentity(receipt.export_tool_identity.mv, MV_PATH);
+  validateGuestRootIdentity(receipt.guest_root_identity);
+  let parsedReference;
+  try {
+    parsedReference = exactOciReference(receipt.oci.exact_reference);
+  } catch (error) {
+    fail("runtime_oci_export_provenance_oci_invalid", error);
+  }
+  if (
+    receipt.schema !== OPENCLAW_RUNTIME_OCI_EXPORT_PROVENANCE_SCHEMA
+    || !/^[a-f0-9]{64}$/.test(receipt.export_archive_sha256)
+    || !/^sha256:[a-f0-9]{64}$/.test(receipt.source_image_id)
+    || receipt.platform.os !== "linux"
+    || receipt.platform.architecture !== "amd64"
+    || receipt.oci.name !== parsedReference.name
+    || receipt.oci.digest !== parsedReference.digest
+    || receipt.rootfs.schema !== OPENCLAW_RUNTIME_ROOTFS_MERKLE_SCHEMA
+    || !/^[a-f0-9]{64}$/.test(receipt.rootfs.merkle_sha256)
+    || !Number.isSafeInteger(receipt.rootfs.file_count)
+    || receipt.rootfs.file_count < 1
+    || !Number.isSafeInteger(receipt.rootfs.byte_count)
+    || receipt.rootfs.byte_count < 0
+    || receipt.export_policy.archive_format
+      !== "strict_ustar_only_gnu_longname_and_pax_extensions_rejected_fail_closed"
+    || receipt.export_policy.extraction
+      !== "two_identical_stopped_container_exports_strict_ustar_then_gnu_tar_stream"
+    || receipt.export_policy.root_directory !== "normalized_root_0_0_0555"
+  ) fail("runtime_oci_export_provenance_invalid");
+  canonicalExistingPath(receipt.guest_root, "runtime_oci_export_provenance_guest_root_invalid");
+  return Object.freeze(receipt);
+}
+
 export function readCommittedOpenClawRuntimeOciExportReceipt(receiptPathValue) {
   const receiptPath = canonicalExistingPath(
     receiptPathValue,
@@ -398,35 +538,7 @@ export function readCommittedOpenClawRuntimeOciExportReceipt(receiptPathValue) {
   } finally {
     closeSync(descriptor);
   }
-  let receipt;
-  try {
-    receipt = JSON.parse(UTF8.decode(bytes));
-  } catch (error) {
-    fail("runtime_oci_export_commit_receipt_invalid", error);
-  }
-  if (!Buffer.from(canonicalJson(receipt), "utf8").equals(bytes)) {
-    fail("runtime_oci_export_commit_receipt_noncanonical");
-  }
-  assertExactKeys(receipt, [
-    "export_archive_sha256",
-    "export_policy",
-    "export_tool_identity",
-    "guest_root",
-    "oci",
-    "platform",
-    "rootfs",
-    "schema",
-    "source_image_id",
-  ], "runtime_oci_export_commit_receipt_invalid");
-  if (
-    receipt.schema !== OPENCLAW_RUNTIME_OCI_EXPORT_PROVENANCE_SCHEMA
-    || !/^[a-f0-9]{64}$/.test(receipt.export_archive_sha256)
-    || !/^sha256:[a-f0-9]{64}$/.test(receipt.source_image_id)
-    || receipt.platform?.os !== "linux"
-    || receipt.platform?.architecture !== "amd64"
-    || receipt.oci?.exact_reference !== `${receipt.oci?.name}@${receipt.oci?.digest}`
-    || !OCI_REFERENCE.test(receipt.oci.exact_reference)
-  ) fail("runtime_oci_export_commit_receipt_invalid");
+  const receipt = parseCanonicalOpenClawRuntimeOciExportProvenance(bytes);
   const guestRoot = canonicalExistingPath(
     receipt.guest_root,
     "runtime_oci_export_commit_guest_root_invalid",
@@ -443,22 +555,42 @@ export function readCommittedOpenClawRuntimeOciExportReceipt(receiptPathValue) {
   if (
     !guestMetadata.isDirectory()
     || guestMetadata.isSymbolicLink()
-    || guestMetadata.uid !== 0n
-    || guestMetadata.gid !== 0n
-    || (guestMetadata.mode & 0o7777n) !== 0o555n
     || realpathSync(guestRoot) !== guestRoot
-  ) fail("runtime_oci_export_commit_guest_root_metadata_invalid");
-  const measured = computeOpenClawRuntimeRootfsMerkle(
+    || canonicalJson(directoryIdentity(guestMetadata)) !== canonicalJson(receipt.guest_root_identity)
+  ) fail("runtime_oci_export_commit_guest_root_identity_mismatch");
+  const guestDescriptor = openSync(
     guestRoot,
-    OPENCLAW_RUNTIME_CANONICAL_GUEST_MOUNT_PATHS,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_CLOEXEC,
   );
-  if (canonicalJson(measured) !== canonicalJson(receipt.rootfs)) {
-    fail("runtime_oci_export_commit_rootfs_merkle_mismatch");
+  try {
+    const opened = fstatSync(guestDescriptor, { bigint: true });
+    const pathBefore = lstatSync(guestRoot, { bigint: true });
+    if (
+      !sameDirectoryIdentity(opened, pathBefore)
+      || canonicalJson(directoryIdentity(opened)) !== canonicalJson(receipt.guest_root_identity)
+    ) fail("runtime_oci_export_commit_guest_root_identity_mismatch");
+    const measured = computeOpenClawRuntimeRootfsMerkle(
+      guestRoot,
+      OPENCLAW_RUNTIME_CANONICAL_GUEST_MOUNT_PATHS,
+    );
+    const descriptorAfter = fstatSync(guestDescriptor, { bigint: true });
+    const pathAfter = lstatSync(guestRoot, { bigint: true });
+    if (
+      !sameDirectoryIdentity(opened, descriptorAfter)
+      || !sameDirectoryIdentity(opened, pathAfter)
+      || canonicalJson(directoryIdentity(pathAfter)) !== canonicalJson(receipt.guest_root_identity)
+    ) fail("runtime_oci_export_commit_guest_root_identity_changed");
+    if (canonicalJson(measured) !== canonicalJson(receipt.rootfs)) {
+      fail("runtime_oci_export_commit_rootfs_merkle_mismatch");
+    }
+  } finally {
+    closeSync(guestDescriptor);
   }
   return Object.freeze({
     committed: true,
     guest_root: guestRoot,
     provenance: Object.freeze(receipt),
+    provenance_bytes: Buffer.from(bytes),
     provenance_output: receiptPath,
     provenance_sha256: createHash("sha256").update(bytes).digest("hex"),
   });
@@ -466,6 +598,7 @@ export function readCommittedOpenClawRuntimeOciExportReceipt(receiptPathValue) {
 
 function publishProvenanceReceipt(working, destination, value) {
   const bytes = Buffer.from(canonicalJson(value), "utf8");
+  parseCanonicalOpenClawRuntimeOciExportProvenance(bytes);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const staging = path.join(working, "provenance-receipt.staging.json");
   const descriptor = openSync(
@@ -941,7 +1074,28 @@ export async function exportOpenClawRuntimeOciRootfs(input) {
       OPENCLAW_RUNTIME_CANONICAL_GUEST_MOUNT_PATHS,
     );
     syncTree(stagingRoot);
-    const provenance = Object.freeze({
+    publishGuestRoot(mv, stagingRoot, destinations.guest.path);
+    guestPublished = true;
+    syncDirectory(destinations.guest.parent);
+    const publishedGuestMetadata = lstatSync(destinations.guest.path, { bigint: true });
+    const publishedGuestDescriptor = openSync(
+      destinations.guest.path,
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_CLOEXEC,
+    );
+    let receipt;
+    try {
+      const publishedGuestOpened = fstatSync(publishedGuestDescriptor, { bigint: true });
+      if (!sameDirectoryIdentity(publishedGuestMetadata, publishedGuestOpened)) {
+        fail("runtime_oci_export_guest_publish_identity_invalid");
+      }
+      const guestRootIdentity = directoryIdentity(publishedGuestOpened);
+      if (
+        publishedGuestMetadata.isSymbolicLink()
+        || guestRootIdentity.uid !== 0
+        || guestRootIdentity.gid !== 0
+        || guestRootIdentity.mode !== "0555"
+      ) fail("runtime_oci_export_guest_publish_identity_invalid");
+      const provenance = Object.freeze({
         export_archive_sha256: exportSha256,
         export_policy: Object.freeze({
           archive_format: "strict_ustar_only_gnu_longname_and_pax_extensions_rejected_fail_closed",
@@ -950,6 +1104,7 @@ export async function exportOpenClawRuntimeOciRootfs(input) {
         }),
         export_tool_identity: canonicalToolIdentity(docker, tar, mv),
         guest_root: destinations.guest.path,
+        guest_root_identity: guestRootIdentity,
         oci: Object.freeze({
           digest: reference.digest,
           exact_reference: reference.exact,
@@ -959,16 +1114,22 @@ export async function exportOpenClawRuntimeOciRootfs(input) {
         rootfs,
         schema: OPENCLAW_RUNTIME_OCI_EXPORT_PROVENANCE_SCHEMA,
         source_image_id: image.image_id,
-    });
-    publishGuestRoot(mv, stagingRoot, destinations.guest.path);
-    guestPublished = true;
-    syncDirectory(destinations.guest.parent);
-    const receipt = publishProvenanceReceipt(
-      working,
-      destinations.provenance.path,
-      provenance,
-    );
-    provenancePublished = true;
+      });
+      receipt = publishProvenanceReceipt(
+        working,
+        destinations.provenance.path,
+        provenance,
+      );
+      provenancePublished = true;
+      const guestDescriptorAfter = fstatSync(publishedGuestDescriptor, { bigint: true });
+      const guestPathAfter = lstatSync(destinations.guest.path, { bigint: true });
+      if (
+        !sameDirectoryIdentity(publishedGuestOpened, guestDescriptorAfter)
+        || !sameDirectoryIdentity(publishedGuestOpened, guestPathAfter)
+      ) fail("runtime_oci_export_guest_publish_identity_changed");
+    } finally {
+      closeSync(publishedGuestDescriptor);
+    }
     return Object.freeze({
       provenance_output: destinations.provenance.path,
       provenance_sha256: receipt.sha256,
