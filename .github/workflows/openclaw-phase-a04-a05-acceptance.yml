@@ -1,6 +1,7 @@
 name: OpenClaw Phase A04 A05 Acceptance
 
 on:
+  workflow_call:
   workflow_dispatch:
   pull_request:
     paths:
@@ -12,6 +13,7 @@ on:
       - "deploy/byoc/openclaw-phase-a04-a05-*.mjs"
       - "deploy/byoc/openclaw-broker-*.mjs"
       - "deploy/byoc/openclaw-provider-*.mjs"
+      - "deploy/byoc/openclaw-runtime-receipt*.mjs"
   push:
     branches:
       - main
@@ -22,7 +24,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: agentops-openclaw-a04-a05-${{ github.ref }}
+  group: agentops-openclaw-a04-a05-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -46,6 +48,7 @@ jobs:
           node deploy/byoc/openclaw-phase-a04-a05-image-contract.mjs
           node deploy/byoc/openclaw-broker-contract.mjs
           node deploy/byoc/openclaw-provider-contract.mjs
+          node deploy/byoc/openclaw-runtime-receipt-contract.mjs
           node deploy/byoc/worker-service-contract.mjs
 
       - name: Build exact candidate image and bind immutable digest

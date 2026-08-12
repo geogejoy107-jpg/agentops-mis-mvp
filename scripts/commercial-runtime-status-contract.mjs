@@ -17,6 +17,7 @@ const CONTEXTS = ["agentops/real-hermes", "agentops/real-openclaw"];
 const root = mkdtempSync(join(tmpdir(), "agentops-runtime-status-contract-"));
 const receiptPath = join(root, "receipt.json");
 const callsPath = join(root, "gh-calls.jsonl");
+const transientPath = join(root, "gh-transient-failure");
 const fakeGh = join(root, "gh");
 const script = new URL("./commercial-runtime-status.mjs", import.meta.url);
 const ciWorkflow = readFileSync(
@@ -143,6 +144,7 @@ function fixtures(receiptDigest, options = {}) {
     GH_PUBLISH_COMMENT_JSON: JSON.stringify(comment),
     GH_STATUSES_JSON: JSON.stringify(statuses),
     GH_COMMENT_JSON: JSON.stringify(comment),
+    GH_TRANSIENT_READ_ENDPOINT: options.transientReadEndpoint || "",
   };
 }
 
@@ -150,12 +152,14 @@ function run(arguments_, value = receipt(), options = {}) {
   const contents = JSON.stringify(value);
   writeFileSync(receiptPath, contents);
   writeFileSync(callsPath, "");
+  rmSync(transientPath, { force: true });
   const result = spawnSync(process.execPath, [script.pathname, ...arguments_], {
     encoding: "utf8",
     env: {
       ...process.env,
       PATH: `${root}:${process.env.PATH}`,
       GH_CALLS: callsPath,
+      GH_TRANSIENT_PATH: transientPath,
       ...fixtures(digest(contents), options),
     },
   });
@@ -174,6 +178,15 @@ try {
   );
   assert.match(ciWorkflow, /test "\$\(git rev-parse HEAD\)" = "\$GITHUB_SHA"/);
   assert.match(ciWorkflow, /--sha "\$AGENTOPS_REAL_EVIDENCE_SHA"/);
+  assert.match(
+    ciWorkflow,
+    /openclaw-a04-a05-acceptance:\n[\s\S]{0,180}uses: \.\/\.github\/workflows\/openclaw-phase-a04-a05-acceptance\.yml/,
+  );
+  assert.match(
+    ciWorkflow,
+    /commercial-promotion-gate:[\s\S]{0,500}needs:[\s\S]{0,400}- openclaw-a04-a05-acceptance/,
+  );
+  assert.match(ciWorkflow, /test "\$OPENCLAW_A04_A05_RESULT" = success/);
   assert.doesNotMatch(
     ciWorkflow,
     /commercial-runtime-status\.mjs verify[\s\S]{0,220}--sha "\$GITHUB_SHA"/,
@@ -183,6 +196,14 @@ const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.GH_CALLS, JSON.stringify(args) + "\\n");
 const endpoint = args[1] || "";
+if (
+  process.env.GH_TRANSIENT_READ_ENDPOINT
+  && endpoint.includes(process.env.GH_TRANSIENT_READ_ENDPOINT)
+  && !fs.existsSync(process.env.GH_TRANSIENT_PATH)
+) {
+  fs.writeFileSync(process.env.GH_TRANSIENT_PATH, "failed-once");
+  process.exit(1);
+}
 let response = "{}";
 if (args[0] === "api" && endpoint === "user") response = process.env.GH_USER_JSON;
 else if (endpoint.includes("/statuses?per_page=100")) response = process.env.GH_STATUSES_JSON;
@@ -231,6 +252,16 @@ process.stdout.write(response + "\\n");
   assert.equal(verified.payload.publisher, PUBLISHER);
   assert.equal(verified.payload.contexts["agentops/real-hermes"], "success");
   assert.equal(verified.payload.attestation_url, COMMENT_URL);
+
+  const transientlyVerified = run([
+    "verify", "--sha", SHA, "--repo", REPOSITORY, "--publisher", PUBLISHER,
+  ], receipt(), { transientReadEndpoint: "/statuses?per_page=100" });
+  assert.equal(transientlyVerified.status, 0);
+  assert.equal(transientlyVerified.payload.ok, true);
+  assert.equal(
+    transientlyVerified.calls.filter((call) => call[1]?.includes("/statuses?per_page=100")).length,
+    2,
+  );
 
   const missingPublisher = run(["verify", "--sha", SHA, "--repo", REPOSITORY]);
   assert.equal(missingPublisher.status, 1);

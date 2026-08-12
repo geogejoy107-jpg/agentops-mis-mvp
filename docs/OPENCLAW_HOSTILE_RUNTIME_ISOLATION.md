@@ -46,6 +46,13 @@ this interim topology, so the check is not an independent security authority
 against a runtime that has already compromised that uid. Receipts must keep
 `healthcheck_security_boundary_verified=false`; A06 and later identity/runtime
 separation must close that gap before any complete hostile-runtime claim.
+The source-only A06 receipt primitive validates canonical Ed25519 envelopes,
+pinned Executor keys, bounded candidate request/result/isolation bindings, and
+an in-process receipt-id/nonce replay-cache contract. It is not wired to a root
+Executor, persistent replay store, or uid `1200` runtime yet, so its
+contracts must keep `runtime_receipt_verified=false` and
+`real_runtime_process_spawned=false` until exact-image Linux execution proves
+the signer key, runtime identity, cgroup cleanup, and Broker verification path.
 Even after Phase A passes, the release metadata must state:
 
 ```text
