@@ -2,12 +2,14 @@
 
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 const CONTRACT = "agentops_commercial_runtime_exact_head_status_v1";
 const CONTEXTS = Object.freeze({
   hermes: "agentops/real-hermes",
   openclaw: "agentops/real-openclaw",
 });
+const CONTEXT_VALUES = Object.freeze(Object.values(CONTEXTS));
 
 function fail(code) {
   const error = new Error(code);
@@ -39,9 +41,11 @@ function object(value) {
 }
 
 function validateReceipt(path, sha) {
+  let contents;
   let receipt;
   try {
-    receipt = JSON.parse(readFileSync(path, "utf8"));
+    contents = readFileSync(path);
+    receipt = JSON.parse(contents.toString("utf8"));
   } catch {
     fail("runtime_status_receipt_invalid");
   }
@@ -97,7 +101,10 @@ function validateReceipt(path, sha) {
       cost_reservation_settled: true,
     };
   }
-  return evidence;
+  return {
+    evidence,
+    receipt_sha256: createHash("sha256").update(contents).digest("hex"),
+  };
 }
 
 function gh(arguments_) {
@@ -115,36 +122,131 @@ function repository(value) {
   return candidate;
 }
 
-function publish(repo, sha, targetUrl) {
+function login(value, error = "runtime_status_publisher_required") {
+  const candidate = String(value || "").trim();
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(candidate)) fail(error);
+  return candidate;
+}
+
+function githubJson(arguments_, error = "runtime_status_github_response_invalid") {
+  try {
+    return JSON.parse(gh(arguments_));
+  } catch {
+    fail(error);
+  }
+}
+
+function statusDescription(runtime, digest) {
+  return `Real ${runtime} runtime receipt sha256:${digest}`;
+}
+
+function attestation(sha, digest) {
+  return {
+    contract: CONTRACT,
+    source_commit: sha,
+    receipt_sha256: digest,
+    contexts: CONTEXT_VALUES,
+  };
+}
+
+function attestationBody(sha, digest) {
+  return JSON.stringify(attestation(sha, digest));
+}
+
+function commentTarget(repo, sha, value) {
+  let url;
+  try {
+    url = new URL(String(value || ""));
+  } catch {
+    fail("runtime_status_comment_target_invalid");
+  }
+  const expectedPath = `/${repo}/commit/${sha}`.toLowerCase();
+  const match = /^#commitcomment-([1-9][0-9]*)$/.exec(url.hash);
+  if (
+    url.protocol !== "https:"
+    || url.hostname.toLowerCase() !== "github.com"
+    || url.port !== ""
+    || url.username !== ""
+    || url.password !== ""
+    || url.search !== ""
+    || url.pathname.toLowerCase() !== expectedPath
+    || !match
+  ) {
+    fail("runtime_status_comment_target_invalid");
+  }
+  return { id: match[1], url: url.toString() };
+}
+
+function publish(repo, sha, digest) {
+  const authenticated = githubJson(["api", "user"], "runtime_status_github_user_invalid");
+  const publisher = login(authenticated?.login, "runtime_status_github_user_invalid");
+  const body = attestationBody(sha, digest);
+  const comment = githubJson([
+    "api", `repos/${repo}/commits/${sha}/comments`,
+    "-f", `body=${body}`,
+  ]);
+  const target = commentTarget(repo, sha, comment?.html_url);
+  if (
+    String(comment?.commit_id || "").toLowerCase() !== sha
+    || String(comment?.user?.login || "").toLowerCase() !== publisher.toLowerCase()
+    || comment?.body !== body
+  ) {
+    fail("runtime_status_comment_publish_invalid");
+  }
   for (const [runtime, context] of Object.entries(CONTEXTS)) {
     const fields = [
       "api", `repos/${repo}/statuses/${sha}`,
       "-f", "state=success",
       "-f", `context=${context}`,
-      "-f", `description=Real ${runtime} TypeScript/Postgres acceptance passed`,
+      "-f", `description=${statusDescription(runtime, digest)}`,
+      "-f", `target_url=${target.url}`,
     ];
-    if (targetUrl) fields.push("-f", `target_url=${targetUrl}`);
     gh(fields);
   }
+  return { digest, publisher, targetUrl: target.url };
 }
 
-function verify(repo, sha) {
-  let statuses;
-  try {
-    statuses = JSON.parse(gh([
-      "api", `repos/${repo}/commits/${sha}/statuses?per_page=100`,
-    ]));
-  } catch {
-    fail("runtime_status_github_response_invalid");
-  }
+function verify(repo, sha, expectedPublisher) {
+  const publisher = login(expectedPublisher);
+  const statuses = githubJson([
+    "api", `repos/${repo}/commits/${sha}/statuses?per_page=100`,
+  ]);
   if (!Array.isArray(statuses)) fail("runtime_status_github_response_invalid");
   const contexts = {};
-  for (const context of Object.values(CONTEXTS)) {
+  let sharedTarget;
+  let sharedDigest;
+  for (const [runtime, context] of Object.entries(CONTEXTS)) {
     const latest = statuses.find((status) => status?.context === context);
-    contexts[context] = latest?.state || "missing";
     if (latest?.state !== "success") fail("runtime_status_exact_head_context_missing");
+    if (String(latest?.creator?.login || "").toLowerCase() !== publisher.toLowerCase()) {
+      fail("runtime_status_publisher_mismatch");
+    }
+    if (String(latest?.sha || "").toLowerCase() !== sha) {
+      fail("runtime_status_status_sha_mismatch");
+    }
+    const description = String(latest?.description || "");
+    const digestMatch = /^Real (hermes|openclaw) runtime receipt sha256:([a-f0-9]{64})$/.exec(description);
+    if (!digestMatch || digestMatch[1] !== runtime) {
+      fail("runtime_status_description_invalid");
+    }
+    const target = commentTarget(repo, sha, latest?.target_url);
+    if (sharedTarget && sharedTarget.id !== target.id) fail("runtime_status_comment_target_mismatch");
+    if (sharedDigest && sharedDigest !== digestMatch[2]) fail("runtime_status_receipt_digest_mismatch");
+    sharedTarget = target;
+    sharedDigest = digestMatch[2];
+    contexts[context] = "success";
   }
-  return contexts;
+  const comment = githubJson(["api", `repos/${repo}/comments/${sharedTarget.id}`]);
+  if (
+    String(comment?.user?.login || "").toLowerCase() !== publisher.toLowerCase()
+    || String(comment?.commit_id || "").toLowerCase() !== sha
+    || comment?.html_url !== sharedTarget.url
+    || comment?.body !== attestationBody(sha, sharedDigest)
+  ) {
+    fail("runtime_status_comment_attestation_invalid");
+  }
+  return { contexts, publisher, receipt_sha256: sharedDigest,
+    attestation_url: sharedTarget.url };
 }
 
 function output(value) {
@@ -160,18 +262,22 @@ try {
   const args = argumentsMap(process.argv.slice(2));
   const sha = exactSha(args.sha);
   if (args.command === "validate") {
+    const validated = validateReceipt(args.receipt, sha);
     output({ ok: true, operation: "validate", source_commit: sha,
-      evidence: validateReceipt(args.receipt, sha) });
+      receipt_sha256: validated.receipt_sha256, evidence: validated.evidence });
   } else if (args.command === "publish") {
-    const evidence = validateReceipt(args.receipt, sha);
+    const validated = validateReceipt(args.receipt, sha);
     const repo = repository(args.repo);
-    publish(repo, sha, String(args.target_url || "").trim());
+    const published = publish(repo, sha, validated.receipt_sha256);
     output({ ok: true, operation: "publish", source_commit: sha, repository: repo,
-      contexts: Object.values(CONTEXTS), evidence });
+      contexts: CONTEXT_VALUES, publisher: published.publisher,
+      receipt_sha256: published.digest, attestation_url: published.targetUrl,
+      evidence: validated.evidence });
   } else if (args.command === "verify") {
     const repo = repository(args.repo);
+    const verified = verify(repo, sha, args.publisher);
     output({ ok: true, operation: "verify", source_commit: sha, repository: repo,
-      contexts: verify(repo, sha) });
+      ...verified });
   } else {
     fail("runtime_status_command_invalid");
   }

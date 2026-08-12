@@ -761,7 +761,8 @@ jobs:
           node scripts/commercial-runtime-status-contract.mjs
           node scripts/commercial-runtime-status.mjs verify \
             --repo "$GITHUB_REPOSITORY" \
-            --sha "$GITHUB_SHA"
+            --sha "$GITHUB_SHA" \
+            --publisher "$GITHUB_REPOSITORY_OWNER"
 
       - name: Require every commercial promotion lane
         env:
