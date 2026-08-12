@@ -307,7 +307,6 @@ function syntheticProvenance() {
     export_policy: {
       archive_format: "strict_ustar_only_gnu_longname_and_pax_extensions_rejected_fail_closed",
       extraction: "two_identical_stopped_container_exports_strict_ustar_then_gnu_tar_stream",
-      registry_transport: "tls_required",
       root_directory: "normalized_root_0_0_0555",
     },
     export_tool_identity: {
@@ -367,8 +366,6 @@ for (const mutate of [
   (value) => { value.platform.extra = true; },
   (value) => { value.rootfs.extra = true; },
   (value) => { value.export_policy.extra = true; },
-  (value) => { value.export_policy.registry_transport = "insecure_remote"; },
-  (value) => { value.export_policy.registry_transport = "insecure_loopback_contract"; },
   (value) => { value.export_tool_identity.extra = true; },
   (value) => { value.export_tool_identity.docker.extra = true; },
   (value) => { value.export_tool_identity.docker.mode = "0777"; },
@@ -550,7 +547,7 @@ async function realOciContract() {
     assert.equal(firstReceipt.source_image_id.startsWith("sha256:"), true);
     assert.equal(firstReceipt.platform.os, "linux");
     assert.equal(firstReceipt.platform.architecture, "amd64");
-    assert.equal(firstReceipt.export_policy.registry_transport, "insecure_loopback_contract");
+    assert.match(firstReceipt.oci.name, /^(?:127\.0\.0\.1|localhost):[1-9][0-9]{0,4}\//);
     assert.match(firstReceipt.export_archive_sha256, /^[a-f0-9]{64}$/);
     assert.match(firstReceipt.export_tool_identity.docker.sha256, /^[a-f0-9]{64}$/);
     assert.match(firstReceipt.export_tool_identity.mv.sha256, /^[a-f0-9]{64}$/);

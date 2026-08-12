@@ -457,9 +457,7 @@ export function parseCanonicalOpenClawRuntimeOciExportProvenance(inputBytes) {
     "runtime_oci_export_provenance_platform_invalid");
   assertExactKeys(receipt.rootfs, ["byte_count", "file_count", "merkle_sha256", "schema"],
     "runtime_oci_export_provenance_rootfs_invalid");
-  assertExactKeys(receipt.export_policy, [
-    "archive_format", "extraction", "registry_transport", "root_directory",
-  ],
+  assertExactKeys(receipt.export_policy, ["archive_format", "extraction", "root_directory"],
     "runtime_oci_export_provenance_policy_invalid");
   assertExactKeys(receipt.export_tool_identity, ["docker", "mv", "tar"],
     "runtime_oci_export_provenance_tool_identity_invalid");
@@ -491,13 +489,6 @@ export function parseCanonicalOpenClawRuntimeOciExportProvenance(inputBytes) {
       !== "strict_ustar_only_gnu_longname_and_pax_extensions_rejected_fail_closed"
     || receipt.export_policy.extraction
       !== "two_identical_stopped_container_exports_strict_ustar_then_gnu_tar_stream"
-    || !["tls_required", "insecure_loopback_contract"].includes(
-      receipt.export_policy.registry_transport,
-    )
-    || (
-      receipt.export_policy.registry_transport === "insecure_loopback_contract"
-      && !loopbackRegistry(exactOciReference(receipt.oci.exact_reference))
-    )
     || receipt.export_policy.root_directory !== "normalized_root_0_0_0555"
   ) fail("runtime_oci_export_provenance_invalid");
   canonicalExistingPath(receipt.guest_root, "runtime_oci_export_provenance_guest_root_invalid");
@@ -1135,9 +1126,6 @@ export async function exportOpenClawRuntimeOciRootfs(input) {
         export_policy: Object.freeze({
           archive_format: "strict_ustar_only_gnu_longname_and_pax_extensions_rejected_fail_closed",
           extraction: "two_identical_stopped_container_exports_strict_ustar_then_gnu_tar_stream",
-          registry_transport: allowInsecureLoopback
-            ? "insecure_loopback_contract"
-            : "tls_required",
           root_directory: "normalized_root_0_0_0555",
         }),
         export_tool_identity: canonicalToolIdentity(docker, tar, mv),

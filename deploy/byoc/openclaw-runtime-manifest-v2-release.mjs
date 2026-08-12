@@ -365,7 +365,7 @@ function syncDirectory(target) {
 export function buildOpenClawRuntimeManifestV2Release(input) {
   const releaseUid = currentUid();
   const source = readCommittedOpenClawRuntimeOciExportReceipt(input.provenance);
-  if (source.provenance.export_policy.registry_transport !== "tls_required") {
+  if (/^(?:127\.0\.0\.1|localhost):[1-9][0-9]{0,4}\//.test(source.provenance.oci.name)) {
     fail("runtime_manifest_v2_release_insecure_registry_provenance_rejected");
   }
   const guestRoot = inspectDirectory(source.guest_root, "runtime_manifest_v2_release_guest_root");
