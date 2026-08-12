@@ -48,6 +48,14 @@ try {
     assert.match(compose, /read_only: true/);
     assert.match(compose, /cap_drop:\s*\n\s+- ALL/);
     assert.match(compose, /no-new-privileges:true/);
+    assert.match(
+      compose,
+      /o: uid=1001,gid=1000,mode=0750,nosuid,nodev,noexec,size=1m/,
+    );
+    assert.doesNotMatch(
+      compose,
+      /agentops_openclaw_provider_socket:[\s\S]*?mode=077[0-7]/,
+    );
     assert.doesNotMatch(compose, /^\s+(?:AGENTOPS_API_KEY|AGENTOPS_AGENT_TOKEN):/m);
     const provider = compose.match(
       /  openclaw-provider:\n([\s\S]*?)(?=\n  worker-openclaw:)/,
