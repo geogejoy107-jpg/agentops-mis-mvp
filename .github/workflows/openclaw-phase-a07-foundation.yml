@@ -221,7 +221,10 @@ jobs:
             --workdir /workspace \
             --entrypoint /bin/sh \
             "${launcher_image}" -ec '
+              stage=overlay_mount
+              trap '\''printf "a07_real_runner_stage=%s\n" "${stage}" >&2'\'' ERR
               mount -t overlay overlay -o lowerdir=/contract/lower,upperdir=/contract/upper,workdir=/contract/work /contract/merged
+              stage=guest_mounts
               mkdir -p \
                 /contract/merged/opt/agentops/real-runner \
                 /contract/merged/opt/agentops-worker/workspace \
@@ -239,6 +242,7 @@ jobs:
               mount -t tmpfs -o uid=1200,gid=1200,mode=1777,nosuid,nodev,noexec,size=64m tmpfs /contract/merged/tmp
               mount --bind /contract/config /contract/merged/run/secrets/openclaw_config
               mount -o remount,bind,ro,nosuid,nodev,noexec /contract/merged/run/secrets/openclaw_config
+              stage=cgroup_delegation
               test -f /sys/fs/cgroup/cgroup.controllers
               grep -qw cpu /sys/fs/cgroup/cgroup.controllers
               grep -qw io /sys/fs/cgroup/cgroup.controllers
@@ -255,6 +259,7 @@ jobs:
               echo "+cpu +io +memory +pids" > /sys/fs/cgroup/agentops-openclaw-executor/cgroup.subtree_control
               io_device="$(awk '\''$3 ~ /^[0-9]+$/ && $3 > 0 && $4 !~ /^(loop|ram|zram)/ { print $1 ":" $2; exit }'\'' /proc/partitions)"
               test -n "${io_device}"
+              stage=production_runner
               export AGENTOPS_REAL_RUNNER_GUEST_ROOT=/contract/merged
               export AGENTOPS_REAL_RUNNER_CGROUP_ROOT=/sys/fs/cgroup/agentops-openclaw-executor
               export AGENTOPS_REAL_RUNNER_LAUNCHER=/agentops-openclaw-runtime-launcher

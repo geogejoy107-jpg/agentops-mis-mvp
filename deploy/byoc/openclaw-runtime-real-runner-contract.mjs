@@ -480,7 +480,19 @@ async function runStrictContract() {
 if (guestWrapperInvocation()) {
   await runGuestWrapper();
 } else if (process.argv.length === 3 && process.argv[2] === REQUIRED_ARGUMENT) {
-  await runStrictContract();
+  try {
+    await runStrictContract();
+  } catch (error) {
+    process.stderr.write(jsonLine({
+      contract: CONTRACT_SCHEMA,
+      error: typeof error?.code === "string" ? error.code : "real_runner_contract_failed",
+      ok: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      secrets_omitted: true,
+    }));
+    process.exitCode = 1;
+  }
 } else if (process.argv.length === 2) {
   process.stdout.write(jsonLine(await sourceAudit()));
 } else {
