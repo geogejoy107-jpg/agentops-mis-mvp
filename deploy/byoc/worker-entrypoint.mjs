@@ -346,13 +346,18 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
 
   const handlers = new Map();
   let forceStop;
+  let forcedStop = false;
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     const handler = () => {
       stopping = true;
       status = "stopping";
       signalChildGroup(child, signal);
       if (!forceStop) {
-        forceStop = setTimeout(() => signalChildGroup(child, "SIGKILL"), 20_000);
+        forceStop = setTimeout(() => {
+          forcedStop = true;
+          status = "failed";
+          signalChildGroup(child, "SIGKILL");
+        }, 20_000);
         forceStop.unref();
       }
     };
@@ -366,7 +371,9 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
   clearInterval(refresh);
   if (forceStop) clearTimeout(forceStop);
   for (const [signal, handler] of handlers) process.removeListener(signal, handler);
-  status = stopping && (result.code === 0 || result.signal) ? "stopped" : "failed";
+  status = stopping && !forcedStop && (result.code === 0 || result.signal)
+    ? "stopped"
+    : "failed";
   writeState({
     status,
     runtime,
@@ -378,7 +385,7 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
     last_receipt: lastReceipt,
     token_omitted: true,
   }, statePath);
-  if (result.signal && stopping) return 0;
+  if (result.signal && stopping && !forcedStop) return 0;
   return result.code === 0 && status === "stopped" ? 0 : 1;
 }
 

@@ -160,6 +160,8 @@ function assertStaticCustomerBoundary() {
     || !workerEntrypoint.includes("AGENTOPS_AGENT_TOKEN_SOURCE_FILE: tokenSource")
     || !workerEntrypoint.includes("process.kill(-child.pid, signal)")
     || !workerEntrypoint.includes('signalChildGroup(child, "SIGKILL")')
+    || !workerEntrypoint.includes("forcedStop = true")
+    || !workerEntrypoint.includes("result.signal && stopping && !forcedStop")
     || !workerEntrypoint.includes("stopping && !forcedStop")
     || !workerEntrypoint.includes("worker_receipt_boundary_invalid")
     || !workerHealthcheck.includes("process.kill(payload.pid, 0)")
