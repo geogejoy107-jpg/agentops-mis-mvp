@@ -61,3 +61,6 @@ class BudgetGate:
         prune = enough and latest is not None and (latest < threshold if direction == "maximize" else latest > threshold)
         result = {"prune": prune, "reason": "threshold_not_met" if prune else "continue", "observations": len(metric_history)}
         return {**result, "receipt_hash": canonical_hash(result)}
+
+
+budget_gate = BudgetGate

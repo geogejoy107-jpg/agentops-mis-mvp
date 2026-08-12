@@ -28,5 +28,15 @@ Required before integration can pass:
    reviewed commit and recompute manifest integrity before signing. The all-zero
    source commit in this staged candidate is an intentional non-promotable
    placeholder.
+12. Inject C0's `TrustedCoreReceiptVerifier` (or another implementation of the
+   same opaque verifier port) into every Research domain adapter. Receipts use
+   exactly `payload`, `proof`, and `receipt_hash`; proof purposes follow C0's
+   lowercase dot/hyphen grammar, for example
+   `research.execution-authorization.v1`. The domain never receives a private
+   key or signing callback.
+13. Mount only the 16 `authority: template_domain` repositories. The 16
+   `mis_core_reference` declarations remain reference metadata and must never
+   be registered as domain repositories. Register memory policy ID
+   `research_lab.memory_policy.default` with candidate-only/shared-deny fields.
 
 Until this change request is merged and verified, API/CLI/UI/runtime/migration declarations in C1 are integration-ready domain adapters, not a claim of mounted product availability.

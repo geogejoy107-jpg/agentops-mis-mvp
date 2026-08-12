@@ -10,7 +10,7 @@ from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 from template_runtime.protocols import OpenJiuwenRuntimePort, RuntimeRequest, RuntimeState
 
 from .contracts import ResearchError, canonical_hash
-from .trust import CoreTrustStore, require_core_receipt
+from .trust import CoreReceiptVerifier, require_core_receipt
 
 
 RESEARCH_AGENT_ROLES = (
@@ -70,7 +70,6 @@ class ResearchRuntimeCoordinator:
         if observed.get("state") == "ready" and not observed.get("upstream_version"):
             raise ResearchError("research.runtime_false_ready", "ready runtime must report pinned upstream version")
         return observed
-
     def dispatch(self, request: RuntimeRequest, *, input_event: str) -> Mapping[str, Any]:
         matching = [step for step in DEFAULT_TEAM if step.input_event == input_event]
         if len(matching) != 1:
@@ -139,7 +138,7 @@ class CoreRuntimeDomainPort(Protocol):
 class CoreResearchRuntimeGovernance:
     """Concrete MIS Core adapter: governed runtime output atomically drives domain state."""
 
-    def __init__(self, core: CoreRuntimeDomainPort, trust: CoreTrustStore) -> None:
+    def __init__(self, core: CoreRuntimeDomainPort, trust: CoreReceiptVerifier) -> None:
         if not isinstance(core, CoreRuntimeDomainPort):
             raise TypeError("core must implement CoreRuntimeDomainPort")
         self.core = core
@@ -195,3 +194,6 @@ class CoreResearchRuntimeGovernance:
         ):
             raise ResearchError("research.runtime_receipt_unverified", "MIS Core runtime receipt attestation is incomplete or mismatched")
         return observed
+
+
+research_runtime_coordinator = ResearchRuntimeCoordinator

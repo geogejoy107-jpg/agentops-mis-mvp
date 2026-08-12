@@ -40,7 +40,7 @@ class ExportsBudgetsTests(unittest.TestCase):
         self.assertTrue({"protocol_hashes", "metric_ids", "artifact_sha256s", "evaluation_ids", "reviewer_ids"}.issubset(port.references))
         class ForgedPort:
             def verify_export_evidence(self, *, export_kind, references): return {"verified": True, "export_kind": export_kind, "reference_hash": canonical_hash({"export_kind": export_kind, "references": {key: list(map(str, value)) for key, value in sorted(references.items())}}), "receipt_hash": "0" * 64}
-        with self.assertRaisesRegex(ResearchError, "verification|readback"):
+        with self.assertRaisesRegex(ResearchError, "verification|readback|envelope"):
             reproducibility_bundle(protocol={"protocol_hash": "a" * 64, "code_commit": "b" * 40, "dataset_version": "d1", "environment_lock_hash": "c" * 64, "seeds": [7]}, attempts=[], metrics=[], artifacts=[], claims=[], evidence_port=ForgedPort(), trust=TEST_TRUST)
 
     def test_evidence_sections_require_claims_and_citation_locators(self) -> None:

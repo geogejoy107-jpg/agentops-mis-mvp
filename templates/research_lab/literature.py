@@ -9,7 +9,7 @@ from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 from urllib.parse import urlsplit, urlunsplit
 
 from .contracts import ResearchError, canonical_hash
-from .trust import CoreTrustStore, require_core_receipt
+from .trust import CoreReceiptVerifier, require_core_receipt
 
 _DOI = re.compile(r"^10\.\d{4,9}/[-._;()/:A-Za-z0-9]+$", re.I)
 _ARXIV = re.compile(r"^(?:arXiv:)?(\d{4}\.\d{4,5})(?:v\d+)?$", re.I)
@@ -108,7 +108,7 @@ def deduplicate(records: Sequence[LiteratureRecord]) -> tuple[LiteratureRecord, 
     return tuple(sorted(by_identity.values(), key=lambda item: item.literature_id))
 
 
-def verify_citation_claims(claims: Sequence[Mapping[str, Any]], sources: Mapping[str, LiteratureRecord], evidence_port: "CitationEvidencePort", trust: CoreTrustStore) -> tuple[Mapping[str, Any], ...]:
+def verify_citation_claims(claims: Sequence[Mapping[str, Any]], sources: Mapping[str, LiteratureRecord], evidence_port: "CitationEvidencePort", trust: CoreReceiptVerifier) -> tuple[Mapping[str, Any], ...]:
     if not isinstance(evidence_port, CitationEvidencePort):
         raise ResearchError("research.citation_core_readback_missing", "citation verification requires a MIS Core Artifact readback port")
     results = []

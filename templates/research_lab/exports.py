@@ -9,7 +9,7 @@ import re
 from typing import Any, Protocol, runtime_checkable
 
 from .contracts import ResearchError, canonical_hash
-from .trust import CoreTrustStore, reject_untrusted_payload, require_core_receipt
+from .trust import CoreReceiptVerifier, reject_untrusted_payload, require_core_receipt
 
 
 @runtime_checkable
@@ -17,7 +17,7 @@ class ExportEvidencePort(Protocol):
     def verify_export_evidence(self, *, export_kind: str, references: Mapping[str, Sequence[str]]) -> Mapping[str, Any]: ...
 
 
-def _verified_export(port: ExportEvidencePort, kind: str, references: Mapping[str, Sequence[str]], trust: CoreTrustStore) -> str:
+def _verified_export(port: ExportEvidencePort, kind: str, references: Mapping[str, Sequence[str]], trust: CoreReceiptVerifier) -> str:
     if not isinstance(port, ExportEvidencePort):
         raise ResearchError("research.export_core_readback_missing", "export requires a MIS Core evidence readback port")
     normalized = {key: list(map(str, value)) for key, value in sorted(references.items())}
@@ -27,7 +27,7 @@ def _verified_export(port: ExportEvidencePort, kind: str, references: Mapping[st
     return str(receipt["receipt_hash"])
 
 
-def reproducibility_bundle(*, protocol: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]], metrics: Sequence[Mapping[str, Any]], artifacts: Sequence[Mapping[str, Any]], claims: Sequence[Mapping[str, Any]], evidence_port: ExportEvidencePort, trust: CoreTrustStore) -> Mapping[str, Any]:
+def reproducibility_bundle(*, protocol: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]], metrics: Sequence[Mapping[str, Any]], artifacts: Sequence[Mapping[str, Any]], claims: Sequence[Mapping[str, Any]], evidence_port: ExportEvidencePort, trust: CoreReceiptVerifier) -> Mapping[str, Any]:
     required_protocol = {"protocol_hash", "code_commit", "dataset_version", "environment_lock_hash", "seeds"}
     missing = sorted(required_protocol - protocol.keys())
     if missing:
@@ -49,7 +49,7 @@ def reproducibility_bundle(*, protocol: Mapping[str, Any], attempts: Sequence[Ma
     return {**manifest, "bundle_hash": canonical_hash(manifest)}
 
 
-def manuscript_section(*, section: str, content_artifact_id: str, claim_ids: Sequence[str], figure_artifact_ids: Sequence[str], table_artifact_ids: Sequence[str], citations: Sequence[Mapping[str, str]], evidence_port: ExportEvidencePort, trust: CoreTrustStore) -> Mapping[str, Any]:
+def manuscript_section(*, section: str, content_artifact_id: str, claim_ids: Sequence[str], figure_artifact_ids: Sequence[str], table_artifact_ids: Sequence[str], citations: Sequence[Mapping[str, str]], evidence_port: ExportEvidencePort, trust: CoreReceiptVerifier) -> Mapping[str, Any]:
     if section not in {"abstract", "introduction", "related_work", "method", "experiments", "results", "limitations", "conclusion"}:
         raise ResearchError("research.invalid_manuscript_section", "unsupported manuscript section")
     if section in {"method", "experiments", "results"} and not claim_ids:
@@ -61,7 +61,7 @@ def manuscript_section(*, section: str, content_artifact_id: str, claim_ids: Seq
     return {**value, "section_hash": canonical_hash(value)}
 
 
-def research_receipt(*, core_refs: Mapping[str, str], protocol_hash: str, experiment_id: str, trial_ids: Sequence[str], attempt_ids: Sequence[str], artifact_ids: Sequence[str], evaluation_ids: Sequence[str], claim_ids: Sequence[str], reviewer_ids: Sequence[str], external_integrations: Sequence[Mapping[str, Any]], evidence_port: ExportEvidencePort, trust: CoreTrustStore) -> Mapping[str, Any]:
+def research_receipt(*, core_refs: Mapping[str, str], protocol_hash: str, experiment_id: str, trial_ids: Sequence[str], attempt_ids: Sequence[str], artifact_ids: Sequence[str], evaluation_ids: Sequence[str], claim_ids: Sequence[str], reviewer_ids: Sequence[str], external_integrations: Sequence[Mapping[str, Any]], evidence_port: ExportEvidencePort, trust: CoreReceiptVerifier) -> Mapping[str, Any]:
     required_core = {"workspace_id", "project_id", "task_id", "plan_id", "run_id", "audit_id"}
     if sorted(required_core - core_refs.keys()):
         raise ResearchError("research.receipt_core_refs_missing", "Research Receipt must bind MIS Core authority")
@@ -113,7 +113,7 @@ def bdci_evaluation_script(*, input_schema: Mapping[str, Any], output_schema: Ma
         "json.dump({'metric':cfg['metric'],'score':score,'accepted':True},sys.stdout,sort_keys=True)", ""))
 
 
-def bdci_submission_package(*, short_paper: str, iclr_export: str, reproducibility: Mapping[str, Any], input_output_manifest: Mapping[str, Any], evaluation_script: str, claims: Sequence[Mapping[str, Any]], evidence_port: SubmissionEvidencePort, trust: CoreTrustStore) -> Mapping[str, Any]:
+def bdci_submission_package(*, short_paper: str, iclr_export: str, reproducibility: Mapping[str, Any], input_output_manifest: Mapping[str, Any], evaluation_script: str, claims: Sequence[Mapping[str, Any]], evidence_port: SubmissionEvidencePort, trust: CoreReceiptVerifier) -> Mapping[str, Any]:
     reject_untrusted_payload({"input_output_manifest": input_output_manifest, "claims": claims}, path="bdci_submission")
     if not short_paper.strip() or not iclr_export.strip() or not evaluation_script.startswith("#!/usr/bin/env python3"):
         raise ResearchError("research.bdci_submission_incomplete", "short paper, ICLR export and executable evaluation script are required")

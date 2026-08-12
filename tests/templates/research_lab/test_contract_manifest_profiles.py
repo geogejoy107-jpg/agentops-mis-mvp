@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import importlib
+import os
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -39,9 +43,39 @@ class ContractManifestProfileTests(unittest.TestCase):
         manifest = build_manifest()
         self.assertEqual(len(manifest["ui_extensions"]), 1)
         self.assertEqual(manifest["ui_extensions"][0]["metadata"]["surfaces"], 18)
-        self.assertGreaterEqual(len(manifest["api_routes"][0]["configuration"]["routes"]), 15)
+        self.assertEqual(len(manifest["api_routes"]), 41)
+        self.assertEqual(len({(item["configuration"]["method"], item["configuration"]["path"]) for item in manifest["api_routes"]}), 41)
         self.assertTrue(any(item["id"] == "research_lab.tool.ssh_execute" and item["approval"] == "always" for item in manifest["tools"]))
         self.assertTrue(any(item["id"] == "research_lab.permission.compute_remote" and item["default"] == "deny" for item in manifest["permissions"]))
+
+    def test_real_c0_sdk_mounts_exact_manifest_without_core_duplication(self) -> None:
+        c0 = ROOT.parent / "agentops-mis-template-platform-runtime"
+        if not (c0 / "template_runtime/sdk.py").is_file():
+            self.skipTest("C0 platform runtime checkout is unavailable")
+        script = """
+from template_runtime.sdk import TemplateSDK
+from templates.research_lab.manifest import build_manifest, register_with_sdk
+sdk = TemplateSDK(build_manifest())
+register_with_sdk(sdk)
+snapshot = sdk.snapshot()
+assert len(snapshot['registrations']['api_route']) == 41
+assert len(snapshot['registrations']['domain_repository']) == 16
+assert snapshot['registrations']['memory_policy'] == ['research_lab.memory_policy.default']
+assert snapshot['mis_core_authority_duplicated'] is False
+"""
+        environment = {**os.environ, "PYTHONPATH": os.pathsep.join((str(c0), str(ROOT)))}
+        completed = subprocess.run([sys.executable, "-P", "-W", "error", "-c", script], cwd="/tmp", env=environment, capture_output=True, text=True, check=False)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_every_declared_entrypoint_resolves_to_a_callable(self) -> None:
+        manifest = build_manifest()
+        fields = ("workflows", "agents", "skills", "tools", "policies", "evaluators", "ui_extensions", "reports", "api_routes", "cli_commands", "fixtures", "testing_hooks", "exports", "permissions", "migrations")
+        for field in fields:
+            for declaration in manifest[field]:
+                with self.subTest(field=field, declaration=declaration["id"]):
+                    module_name, separator, attribute = declaration["entrypoint"].partition(":")
+                    self.assertEqual(separator, ":")
+                    self.assertTrue(callable(getattr(importlib.import_module(module_name), attribute)))
 
 
 if __name__ == "__main__":

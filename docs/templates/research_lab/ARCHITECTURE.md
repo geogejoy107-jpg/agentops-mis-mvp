@@ -47,6 +47,10 @@ heartbeats, cancellation, timeouts, resource limits and adoption receipts.
 SSH uses strict host keys, a secret resolver, stdin-only request transfer and a
 durable idempotent remote wrapper with hashed Artifact collection. Private SSH
 addresses additionally require an exact, signed target-registration snapshot.
+The wrapper persists and fsyncs `launch-intent.json` before launching. After a
+crash, the exact attempt/request can only be adopted from an authoritative
+remote registry; missing evidence yields `remote_unknown`, never a second
+process.
 Slurm uses
 Core-approved argv-only `sbatch`/`sacct`/`scancel`, scheduler IDs, arrays,
 resources and receipts.

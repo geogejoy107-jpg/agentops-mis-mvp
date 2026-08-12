@@ -43,7 +43,7 @@ tests:
     - live MIS ledger write chain blocked by Human worker-status session
     - real openJiuwen/SSH GPU/Slurm acceptance unavailable
 security_review: internal contract tests cover purpose-separated cryptographic Core receipts with key revocation and exact field/document bindings; exact executable/root/hash/cwd/env/resource approval binding; signed private-target registration; resolved-IP SSH with HostKeyAlias; request/target/authorization-bound remote receipts; rejection of caller booleans, self-hashed terminal success, generic credential-shaped payloads and Slurm substring states; socket-only secret transport and nested redaction; real infrastructure penetration acceptance remains external
-concurrency_recovery_review: internal tests cover project-scoped atomic records+outbox with per-record signed receipt verification, Core admission, concurrent reservation, deterministic migration replay, a WAL/FULL restart journal, durable request/PID identity marker, cancel and identity-bound adoption; real restart/disconnect/preemption acceptance remains external
+concurrency_recovery_review: internal tests cover project-scoped atomic records+outbox with per-record signed receipt verification, Core admission, concurrent reservation, deterministic migration replay, a WAL/FULL restart journal, fsynced pre-launch intent/fence, atomic no-clobber receipt creation, after-fence and after-launch-before-receipt crashes, cancel and attempt/request-authoritative adoption; real restart/disconnect/preemption acceptance remains external
 domain_review: Claim stage is derived from frozen Protocol and requires current Core Run plus completed Protocol/Trial/JobAttempt, metric and figure/table Artifacts, Claim/statement/metric-direction/support-strength-bound Evaluation and independent reviewer Identity/Permission; full chain is persisted atomically
 open_defects:
   p0: []
@@ -55,7 +55,7 @@ known_product_boundaries:
   - candidate and canonical=false
   - manifest provenance source_commit is all-zero candidate placeholder and must be stamped to the exact reviewed commit by governed packaging before signature/promotion
   - fixtures do not satisfy real integration gates
-  - HMAC is the initial private-host verifier and the fixed test key is fixture-only; production C0 must inject protected verification material, signing separation, rotation and revocation state and must not expose signing material to caller payloads
+  - production receipt verification is C0-owned Ed25519 public-key-only verification with purpose allowlists, exact bindings and revocation; the Research domain contains no signing secret and test signing material remains fixture-only
 remaining_work:
   - C0 integrate the revised project-scoped atomic Core/admission/export/operations ports and concrete API/AppShell registrations
   - after Human session restores MIS preflight, create governed Plan/Run and record Artifact/Evaluation readback

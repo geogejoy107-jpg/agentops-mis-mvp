@@ -11,7 +11,7 @@ from template_runtime.protocols import InstallationIdentity, LifecycleCommand, L
 
 from .contracts import ResearchError, canonical_hash, require_sha256
 from .migration_journal import MigrationRestartJournal
-from .trust import CoreTrustStore, require_core_receipt
+from .trust import CoreReceiptVerifier, require_core_receipt
 
 
 LEGACY_SCHEMA = "research_lab_mis_evidence_v1"
@@ -112,7 +112,7 @@ class ResearchMigrationAdapter:
     """Complete frozen TemplateMigrationPort adapter with Core-owned atomicity."""
     migration_id = "research_lab.migration.0_1_0_to_1_0_0"
 
-    def __init__(self, core: CoreMigrationTransactionPort, trust: CoreTrustStore, journal: MigrationRestartJournal | None = None) -> None:
+    def __init__(self, core: CoreMigrationTransactionPort, trust: CoreReceiptVerifier, journal: MigrationRestartJournal | None = None) -> None:
         if not isinstance(core, CoreMigrationTransactionPort):
             raise TypeError("core must implement CoreMigrationTransactionPort")
         self.core = core
@@ -163,7 +163,6 @@ class ResearchMigrationAdapter:
         require_sha256(str(backup.get("backup_sha256") or ""), "backup_sha256")
         if self.journal:
             journaled_backup = self.journal.record_backup_once(request_hash, backup)
-            journaled_backup = require_core_receipt(journaled_backup, trust=self.trust, purpose="research.migration-backup-once/v1", bindings={"verified": True, "request_hash": request_hash, "workspace_id": identity.workspace_id, "template_id": identity.template_id})
             if journaled_backup["receipt_hash"] != backup["receipt_hash"]:
                 raise ResearchError("research.migration_journal_conflict", "journaled backup receipt conflicts with Core authority")
         authorization = require_core_receipt(self.core.authorize_migration(command=command, migration_ids=migration_ids, request_hash=request_hash), trust=self.trust, purpose="research.migration-authorization/v1", bindings={"decision": "allow", "executed_once": True, "request_hash": request_hash, "backup_receipt_id": backup["backup_receipt_id"], "workspace_id": identity.workspace_id, "template_id": identity.template_id})

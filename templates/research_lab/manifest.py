@@ -23,13 +23,14 @@ def register_with_sdk(sdk: Any) -> None:
     }
     for section, method in routes.items():
         registrar = getattr(sdk, method)
-        if section == "api_routes":
-            for index, route in enumerate(route_contracts()):
-                registrar(_decl(f"api.route_{index + 1:02d}", "templates.research_lab.api:ResearchAPI.dispatch", contract_version="template-platform-api/v1", **dict(route)))
-        else:
-            for declaration in manifest[section]:
+        for declaration in manifest[section]:
+            if section != "domain_objects" or declaration.get("authority") == "template_domain":
                 registrar(declaration)
-    sdk.register_memory_policy({"template_id": "research_lab", **manifest["memory"]})
+    sdk.register_memory_policy({
+        "id": "research_lab.memory_policy.default",
+        "candidate_only": manifest["memory"]["candidate_only"],
+        "shared_memory": manifest["memory"]["shared_memory"],
+    })
 
 
 def _decl(suffix: str, entrypoint: str, **extra: Any) -> dict[str, Any]:
@@ -65,29 +66,29 @@ def build_manifest() -> dict[str, Any]:
             "research.claim_gate", "research.manuscript", "research.reproducibility",
         ],
         "domain_objects": [],
-        "workflows": [_decl("workflow.production", "templates.research_lab.runtime_team")],
-        "agents": [_decl(f"agent.{role}", "templates.research_lab.runtime_team") for role in (
+        "workflows": [_decl("workflow.production", "templates.research_lab.runtime_team:research_runtime_coordinator")],
+        "agents": [_decl(f"agent.{role}", "templates.research_lab.runtime_team:research_runtime_coordinator") for role in (
             "research_lead", "literature_researcher", "protocol_planner", "experiment_planner", "training_operator", "failure_diagnoser", "metrics_analyst", "evidence_reviewer", "paper_writer", "memory_curator"
         )],
         "skills": [
             _decl("skill.literature_verify", "templates.research_lab.literature:verify_citation_claims"),
-            _decl("skill.protocol_freeze", "templates.research_lab.service"),
+            _decl("skill.protocol_freeze", "templates.research_lab.service:research_service"),
             _decl("skill.claim_gate", "templates.research_lab.evidence:evaluate_claim"),
             _decl("skill.reproducibility_export", "templates.research_lab.exports:reproducibility_bundle"),
         ],
         "tools": [
             _decl("tool.deep_search", "templates.research_lab.literature:normalize_source_url", risk="medium", side_effect="external_write", approval="always"),
-            _decl("tool.local_execute", "templates.research_lab.executors", risk="high", side_effect="internal_write", approval="policy"),
-            _decl("tool.ssh_execute", "templates.research_lab.executors", risk="critical", side_effect="external_write", approval="always"),
-            _decl("tool.slurm_execute", "templates.research_lab.executors", risk="critical", side_effect="external_write", approval="always"),
+            _decl("tool.local_execute", "templates.research_lab.executors:local_process_executor", risk="high", side_effect="internal_write", approval="policy"),
+            _decl("tool.ssh_execute", "templates.research_lab.executors:ssh_executor", risk="critical", side_effect="external_write", approval="always"),
+            _decl("tool.slurm_execute", "templates.research_lab.executors:slurm_executor", risk="critical", side_effect="external_write", approval="always"),
         ],
         "policies": [
-            _decl("policy.read_only", "templates.research_lab.runtime_team"),
-            _decl("policy.deep_search", "templates.research_lab.runtime_team"),
-            _decl("policy.no_external_write", "templates.research_lab.runtime_team"),
-            _decl("policy.compute", "templates.research_lab.budgets"),
-            _decl("policy.diagnostics", "templates.research_lab.runtime_team"),
-            _decl("policy.memory_candidate", "templates.research_lab.runtime_team"),
+            _decl("policy.read_only", "templates.research_lab.runtime_team:research_runtime_coordinator"),
+            _decl("policy.deep_search", "templates.research_lab.runtime_team:research_runtime_coordinator"),
+            _decl("policy.no_external_write", "templates.research_lab.runtime_team:research_runtime_coordinator"),
+            _decl("policy.compute", "templates.research_lab.budgets:budget_gate"),
+            _decl("policy.diagnostics", "templates.research_lab.runtime_team:research_runtime_coordinator"),
+            _decl("policy.memory_candidate", "templates.research_lab.runtime_team:research_runtime_coordinator"),
             _decl("policy.claim_gate", "templates.research_lab.evidence:evaluate_claim"),
         ],
         "evaluators": [
@@ -105,13 +106,21 @@ def build_manifest() -> dict[str, Any]:
         "fixtures": [_decl("fixture.reference_e2e", "templates.research_lab.fixtures:reference_workload")],
         "migrations": [_decl("migration.0_1_0_to_1_0_0", "templates.research_lab.migrations:transform_legacy", from_version="0.1.0", to_version="1.0.0", checksum=migration_checksum(), reversible=True)],
         "permissions": [
-            _decl("permission.read", "templates.research_lab.api", action="research_lab.permission.read", scope="template", risk="low", default="allow"),
-            _decl("permission.experiment_write", "templates.research_lab.api", action="research_lab.permission.experiment.write", scope="project", risk="medium", default="ask"),
-            _decl("permission.compute_local", "templates.research_lab.executors", action="research_lab.permission.compute.local", scope="run", risk="high", default="deny"),
-            _decl("permission.compute_remote", "templates.research_lab.executors", action="research_lab.permission.compute.remote", scope="run", risk="critical", default="deny"),
+            _decl("permission.read", "templates.research_lab.api:research_api", action="research_lab.permission.read", scope="template", risk="low", default="allow"),
+            _decl("permission.experiment_write", "templates.research_lab.api:research_api", action="research_lab.permission.experiment.write", scope="project", risk="medium", default="ask"),
+            _decl("permission.compute_local", "templates.research_lab.executors:local_process_executor", action="research_lab.permission.compute.local", scope="run", risk="high", default="deny"),
+            _decl("permission.compute_remote", "templates.research_lab.executors:ssh_executor", action="research_lab.permission.compute.remote", scope="run", risk="critical", default="deny"),
             _decl("permission.claim_review", "templates.research_lab.evidence:evaluate_claim", action="research_lab.permission.claim.review", scope="project", risk="medium", default="ask"),
         ],
-        "api_routes": [_decl("api.domain", "templates.research_lab.api:route_contracts", contract_version="template-platform-api/v1", configuration={"prefix": "/api/v1/templates/research_lab", "routes": [dict(route) for route in route_contracts()]})],
+        "api_routes": [
+            _decl(
+                f"api.route_{index:02d}",
+                "templates.research_lab.api:route_contracts",
+                contract_version="template-platform-api/v1",
+                configuration=dict(route),
+            )
+            for index, route in enumerate(route_contracts(), 1)
+        ],
         "cli_commands": [
             _decl("cli.validate", "templates.research_lab.cli:main"),
             _decl("cli.migration_dry_run", "templates.research_lab.cli:main"),

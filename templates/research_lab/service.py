@@ -20,7 +20,7 @@ from .contracts import (
 )
 from .evidence import ClaimDecision, EvidenceGraph, evaluate_claim
 from .repository import ResearchRepository
-from .trust import reject_untrusted_payload
+from .trust import core_receipt_payload, reject_untrusted_payload
 
 
 class ResearchService:
@@ -239,7 +239,7 @@ class ResearchService:
                 JobAttemptState.CANCELLED: {"cancel"},
                 JobAttemptState.REMOTE_UNKNOWN: {"status", "reconcile"},
             }[state]
-            if receipt.get("operation") not in expected_operations:
+            if core_receipt_payload(receipt).get("operation") not in expected_operations:
                 raise ResearchError("research.execution_receipt_mismatch", "executor receipt does not bind Attempt, executor, request and Core admission")
             receipt = self.repository.verify_core_receipt(receipt, purpose="research.execution-receipt/v1", bindings={"attempt_id": attempt_id, "executor": current.get("executor"), "state": state.value, "admission_receipt_hash": current.get("admission_receipt_hash"), "workspace_id": refs.workspace_id, "project_id": refs.project_id, "run_id": refs.run_id})
             if not re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("request_hash") or "")) or not re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("authorization_receipt_hash") or "")):
@@ -396,3 +396,6 @@ class ResearchService:
             raise ResearchError("research.core_evidence_chain_mismatch", "MIS Evaluation readback is not bound and passed")
         value = {"task_id": refs.task_id, "plan_id": refs.plan_id, "run_id": refs.run_id, "plan_status": plan.get("status"), "run_status": run.get("status"), "artifact_ids": list(artifact_ids), "evaluation_ids": list(evaluation_ids), "verified": True}
         return {**value, "evidence_chain_hash": canonical_hash(value)}
+
+
+research_service = ResearchService

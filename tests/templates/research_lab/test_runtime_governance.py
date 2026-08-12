@@ -67,7 +67,7 @@ class RuntimeGovernanceTests(unittest.TestCase):
         self.assertTrue({"register_workflow", "register_agent_team", "register_tool", "register_api_route", "register_ui_extension", "register_memory_policy", "register_cli_command", "register_fixture", "register_testing_hook", "register_exporter"}.issubset(methods))
         registered_routes = [declaration for name, declaration in sdk.calls if name == "register_api_route"]
         self.assertEqual(len(registered_routes), 41)
-        self.assertEqual(len({(item["method"], item["path"]) for item in registered_routes}), 41)
+        self.assertEqual(len({(item["configuration"]["method"], item["configuration"]["path"]) for item in registered_routes}), 41)
 
     def test_core_runtime_attestation_binds_policy_input_provider_model_and_audit(self):
         request = RuntimeRequest("rq_1", "ws_1", "prj_1", "research_lab", None, "run_1", "agt_1", "team_1", "provider", "model", "a" * 64, "idem", None, "art_input")
@@ -100,8 +100,7 @@ class RuntimeGovernanceTests(unittest.TestCase):
 
         class Forged(Core):
             def verify_runtime_resume_receipt_readback(self, **kwargs):
-                value = dict(super().verify_runtime_resume_receipt_readback(**kwargs))
-                value = {key: child for key, child in value.items() if key not in {"signature", "receipt_hash"}}
+                value = dict(super().verify_runtime_resume_receipt_readback(**kwargs)["payload"])
                 value["runtime_receipt_document_hash"] = "f" * 64
                 return signed(value, "research.runtime-resume-receipt/v1")
         with self.assertRaisesRegex(ResearchError, "bind runtime_receipt_document_hash"):

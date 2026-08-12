@@ -1,18 +1,72 @@
 from __future__ import annotations
 
+import base64
+import atexit
 import copy
+import json
+import shutil
+import subprocess
+import tempfile
 import threading
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 from templates.research_lab.contracts import canonical_hash
-from templates.research_lab.trust import CoreTrustStore, attest_test_receipt
+from templates.research_lab.trust import CoreReceiptVerifier, receipt_purpose
 
 TEST_KEY_ID = "mis-core-test-v1"
-TEST_KEY = b"research-test-core-key-material-32bytes-minimum"
-TEST_TRUST = CoreTrustStore({TEST_KEY_ID: TEST_KEY})
+_OPENSSL = shutil.which("openssl")
+if _OPENSSL is None:
+    raise RuntimeError("openssl is required for Research Lab receipt tests")
+_KEY_ROOT = Path(tempfile.mkdtemp(prefix="research-lab-test-key-"))
+atexit.register(shutil.rmtree, _KEY_ROOT, ignore_errors=True)
+TEST_PRIVATE_KEY = _KEY_ROOT / "private.pem"
+TEST_PUBLIC_KEY = _KEY_ROOT / "public.pem"
+subprocess.run([_OPENSSL, "genpkey", "-algorithm", "ed25519", "-out", str(TEST_PRIVATE_KEY)], check=True, capture_output=True)
+subprocess.run([_OPENSSL, "pkey", "-in", str(TEST_PRIVATE_KEY), "-pubout", "-out", str(TEST_PUBLIC_KEY)], check=True, capture_output=True)
+_SIGNING_LOCK = threading.Lock()
+
+
+class TestCoreReceiptVerifier(CoreReceiptVerifier):
+    """Test-only public-key verifier; production uses C0's trusted verifier."""
+
+    def __init__(self, *, revoked: bool = False) -> None:
+        self.revoked = revoked
+
+    def verify(self, payload, proof, *, purpose, expected_bindings):
+        if self.revoked:
+            raise ValueError("receipt verification key is revoked")
+        if proof.get("algorithm") != "ed25519" or proof.get("key_id") != TEST_KEY_ID or proof.get("purpose") != purpose:
+            raise ValueError("receipt proof is out of scope")
+        if any(payload.get(key) != value for key, value in expected_bindings.items()):
+            raise ValueError("receipt binding mismatch")
+        if proof.get("payload_sha256") != canonical_hash(payload):
+            raise ValueError("payload hash mismatch")
+        with _SIGNING_LOCK:
+            message = _KEY_ROOT / "verify.json"
+            signature = _KEY_ROOT / "verify.bin"
+            message.write_text(json.dumps({"purpose": purpose, "payload": dict(payload)}, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+            signature.write_bytes(base64.b64decode(str(proof.get("value") or ""), validate=True))
+            completed = subprocess.run([_OPENSSL, "pkeyutl", "-verify", "-pubin", "-inkey", str(TEST_PUBLIC_KEY), "-rawin", "-in", str(message), "-sigfile", str(signature)], capture_output=True, check=False)
+        if completed.returncode:
+            raise ValueError("signature invalid")
+        return {"verified": True, "purpose": purpose, "key_id": TEST_KEY_ID, "revocation_checked": True}
+
+
+TEST_TRUST = TestCoreReceiptVerifier()
 
 def signed(value, purpose):
-    return attest_test_receipt(value, purpose=purpose, key_id=TEST_KEY_ID, key=TEST_KEY)
+    purpose = receipt_purpose(purpose)
+    payload = {"authority": "mis_core", "audit_id": str(value.get("audit_id") or "aud_test"), **dict(value)}
+    with _SIGNING_LOCK:
+        message = _KEY_ROOT / "sign.json"
+        signature = _KEY_ROOT / "sign.bin"
+        message.write_text(json.dumps({"purpose": purpose, "payload": payload}, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        subprocess.run([_OPENSSL, "pkeyutl", "-sign", "-inkey", str(TEST_PRIVATE_KEY), "-rawin", "-in", str(message), "-out", str(signature)], check=True, capture_output=True)
+        encoded = base64.b64encode(signature.read_bytes()).decode("ascii")
+    proof = {"algorithm": "ed25519", "key_id": TEST_KEY_ID, "purpose": purpose, "payload_sha256": canonical_hash(payload), "value": encoded}
+    envelope = {"payload": payload, "proof": proof}
+    return {**envelope, "receipt_hash": canonical_hash(envelope)}
 
 
 class FakeCore:

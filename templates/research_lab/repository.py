@@ -13,7 +13,7 @@ from typing import Any, Protocol, runtime_checkable
 from template_runtime.contracts import validate_event_envelope
 
 from .contracts import CoreRefs, ResearchError, canonical_hash, require_id
-from .trust import CoreTrustStore, require_core_receipt
+from .trust import CoreReceiptVerifier, core_receipt_payload, require_core_receipt
 
 
 @runtime_checkable
@@ -34,7 +34,7 @@ class ResearchCorePort(Protocol):
 class ResearchRepository:
     namespace = "research_lab"
 
-    def __init__(self, core: ResearchCorePort, trust: CoreTrustStore) -> None:
+    def __init__(self, core: ResearchCorePort, trust: CoreReceiptVerifier) -> None:
         if not isinstance(core, ResearchCorePort):
             raise TypeError("core must implement ResearchCorePort")
         self._core = core
@@ -91,10 +91,11 @@ class ResearchRepository:
         value = self._core.get_core_authority_record(authority=authority, record_id=record_id, workspace_id=refs.workspace_id)
         if value is None:
             raise ResearchError("research.core_reference_missing", f"MIS Core {authority} readback failed")
+        payload = core_receipt_payload(value)
         if (
-            value.get("workspace_id") != refs.workspace_id
-            or value.get("project_id") != refs.project_id
-            or value.get(f"{authority}_id", record_id) != record_id
+            payload.get("workspace_id") != refs.workspace_id
+            or payload.get("project_id") != refs.project_id
+            or payload.get(f"{authority}_id", record_id) != record_id
         ):
             raise ResearchError("research.core_reference_mismatch", f"MIS Core {authority} readback mismatched")
         return require_core_receipt(value, trust=self._trust, purpose=f"research.core-authority/{authority}/v1", bindings={"workspace_id": refs.workspace_id, "project_id": refs.project_id, f"{authority}_id": record_id})

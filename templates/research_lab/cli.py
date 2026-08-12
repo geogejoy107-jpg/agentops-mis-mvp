@@ -16,7 +16,7 @@ from .manifest import build_manifest
 from .migrations import dry_run_legacy
 from .contracts import CoreRefs
 from .operations import ResearchOperationsAdapter
-from .trust import CoreTrustStore
+from .trust import CoreReceiptVerifier
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -37,7 +37,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None, *, evidence_port: SubmissionEvidencePort | None = None, operations: ResearchOperationsAdapter | None = None, trust: CoreTrustStore | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, evidence_port: SubmissionEvidencePort | None = None, operations: ResearchOperationsAdapter | None = None, trust: CoreReceiptVerifier | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "validate-manifest":
         payload = {"valid": True, "manifest": validate_template_manifest(build_manifest())}

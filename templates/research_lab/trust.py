@@ -1,91 +1,100 @@
-"""Cryptographic MIS Core receipt verification for the Research domain.
+"""Opaque MIS Core receipt verification for the Research domain.
 
-The domain never treats caller-supplied booleans or a self-computed content
-hash as authority.  C0 injects a bounded trust store whose keys can be revoked.
+The domain owns no signing key and implements no signature algorithm. C0
+injects a public-key-only verifier through this narrow structural protocol.
 """
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import re
-from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 from .contracts import ResearchError, canonical_hash
 
 
-_KEY_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SENSITIVE_KEY = re.compile(r"(?:^|[_-])(?:token|secret|password|passwd|api[_-]?key|private[_-]?key|credential)(?:$|[_-])", re.I)
 _SECRET_VALUE = re.compile(r"(?:^|\b)(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|Bearer\s+\S+|agtok_\S+|agtsess_\S+)", re.I)
 
 
-def _signed_document(receipt: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in receipt.items() if key not in {"receipt_hash", "signature"}}
+def receipt_purpose(value: str) -> str:
+    """Map the domain's version separator onto C0's strict purpose grammar."""
+    normalized = value.replace("/", ".")
+    if not re.fullmatch(r"[a-z][a-z0-9_.-]{2,127}", normalized):
+        raise ResearchError("research.core_receipt_purpose_invalid", "Core receipt purpose is invalid")
+    return normalized
 
 
-@dataclass(frozen=True, slots=True)
-class CoreTrustStore:
-    """Process-local public trust configuration supplied by C0.
+def core_receipt_payload(receipt: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Read the untrusted payload for routing only; callers must then verify it."""
+    payload = receipt.get("payload")
+    return payload if isinstance(payload, Mapping) else {}
 
-    HMAC is the initial local/private-host verifier.  A production remote Core
-    can implement the same receipt envelope with an asymmetric verifier in C0;
-    domain code never receives or persists the key.
-    """
 
-    keys: Mapping[str, bytes]
-    revoked_key_ids: frozenset[str] = frozenset()
+class CoreReceiptVerifier(Protocol):
+    """C0-owned receipt verifier; implementations contain public keys only."""
 
-    def __post_init__(self) -> None:
-        if not self.keys:
-            raise ResearchError("research.core_trust_empty", "at least one Core verification key is required")
-        for key_id, key in self.keys.items():
-            if not _KEY_ID.fullmatch(key_id) or not isinstance(key, bytes) or len(key) < 32:
-                raise ResearchError("research.core_trust_invalid", "Core trust keys require a safe id and at least 256 bits")
+    def verify(
+        self,
+        payload: Mapping[str, Any],
+        proof: Mapping[str, Any],
+        *,
+        purpose: str,
+        expected_bindings: Mapping[str, Any],
+    ) -> Mapping[str, Any]: ...
 
-    def verify(self, receipt: Mapping[str, Any], *, purpose: str) -> None:
-        key_id = str(receipt.get("key_id") or "")
-        if key_id in self.revoked_key_ids:
-            raise ResearchError("research.core_key_revoked", "Core receipt verification key is revoked")
-        key = self.keys.get(key_id)
-        if key is None or receipt.get("signature_algorithm") != "hmac-sha256":
-            raise ResearchError("research.core_signature_untrusted", "Core receipt key or algorithm is not trusted")
-        signature = str(receipt.get("signature") or "")
-        if not _SHA256.fullmatch(signature):
-            raise ResearchError("research.core_signature_invalid", "Core receipt signature is invalid")
-        message = canonical_hash({"purpose": purpose, "receipt": _signed_document(receipt)}).encode("ascii")
-        expected = hmac.new(key, message, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(signature, expected):
-            raise ResearchError("research.core_signature_invalid", "Core receipt signature verification failed")
+
+def build_production_core_receipt_verifier() -> CoreReceiptVerifier:
+    """Bind production composition to C0's public-key-only implementation."""
+    try:
+        from template_runtime.trust import (
+            TrustedCoreReceiptVerifier,
+            build_core_receipt_verifier,
+        )
+    except (ImportError, ModuleNotFoundError) as exc:
+        raise ResearchError("research.core_verifier_unavailable", "C0 TrustedCoreReceiptVerifier is unavailable") from exc
+    verifier = build_core_receipt_verifier(required=True)
+    if type(verifier) is not TrustedCoreReceiptVerifier:
+        raise ResearchError("research.core_verifier_untrusted", "production composition requires C0 TrustedCoreReceiptVerifier")
+    return verifier
 
 
 def require_core_receipt(
     receipt: Mapping[str, Any],
     *,
-    trust: CoreTrustStore,
+    trust: CoreReceiptVerifier,
     purpose: str,
     bindings: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    value = dict(receipt)
-    supplied_hash = str(value.pop("receipt_hash", ""))
-    if supplied_hash != canonical_hash(value):
-        raise ResearchError("research.core_receipt_noncanonical", "Core receipt content hash verification failed")
-    if value.get("authority") != "mis_core" or not value.get("audit_id"):
+    envelope = dict(receipt)
+    if set(envelope) != {"payload", "proof", "receipt_hash"}:
+        raise ResearchError("research.core_receipt_envelope_invalid", "Core receipt envelope must contain only payload, proof, and receipt_hash")
+    payload = envelope.get("payload")
+    proof = envelope.get("proof")
+    if not isinstance(payload, Mapping) or not isinstance(proof, Mapping):
+        raise ResearchError("research.core_receipt_envelope_invalid", "Core receipt payload and proof must be objects")
+    supplied_hash = str(envelope.get("receipt_hash") or "")
+    unsigned = {"payload": dict(payload), "proof": dict(proof)}
+    if not _SHA256.fullmatch(supplied_hash) or supplied_hash != canonical_hash(unsigned):
+        raise ResearchError("research.core_receipt_noncanonical", "Core receipt envelope hash verification failed")
+    if payload.get("authority") != "mis_core" or not payload.get("audit_id"):
         raise ResearchError("research.core_receipt_untrusted", "Core receipt authority and Audit ID are required")
-    trust.verify(value, purpose=purpose)
-    for field, expected in (bindings or {}).items():
-        if value.get(field) != expected:
+    expected = dict(bindings or {})
+    for field, required in expected.items():
+        if payload.get(field) != required:
             raise ResearchError("research.core_receipt_mismatch", f"Core receipt does not bind {field}")
-    return {**value, "receipt_hash": supplied_hash}
-
-
-def attest_test_receipt(value: Mapping[str, Any], *, purpose: str, key_id: str, key: bytes) -> dict[str, Any]:
-    """Deterministic test/fixture signer; never used by production adapters."""
-    document = {"authority": "mis_core", "audit_id": str(value.get("audit_id") or "aud_test"), "key_id": key_id, "signature_algorithm": "hmac-sha256", **dict(value)}
-    message = canonical_hash({"purpose": purpose, "receipt": document}).encode("ascii")
-    signed = {**document, "signature": hmac.new(key, message, hashlib.sha256).hexdigest()}
-    return {**signed, "receipt_hash": canonical_hash(signed)}
+    try:
+        verification = trust.verify(
+            payload,
+            proof,
+            purpose=receipt_purpose(purpose),
+            expected_bindings=expected,
+        )
+    except Exception as exc:
+        raise ResearchError("research.core_receipt_untrusted", "Core receipt signature, purpose, revocation, or authority binding verification failed") from exc
+    if verification.get("verified") is not True:
+        raise ResearchError("research.core_receipt_untrusted", "Core receipt verifier did not return verified evidence")
+    return {**dict(payload), "receipt_hash": supplied_hash}
 
 
 def reject_untrusted_payload(value: Any, *, path: str = "payload") -> None:

@@ -13,6 +13,13 @@ strict scheduler-state parsing; signed private SSH target registration;
 restart-safe migration coordination; and individual registration of 41 API
 method/path declarations. The runtime dependency is exactly pinned to 0.1.16.
 
+Production trust now uses C0's Ed25519 public-key-only opaque verifier; HMAC and
+domain-side signing were removed. Strict SDK registration mounts only 16
+template-owned domain objects, uses `research_lab.memory_policy.default`, and
+registers exactly the 41 manifest-declared routes. SSH execution fsyncs a
+launch fence before launch and cannot start a second process after the
+fence/launch/receipt crash windows.
+
 This build is Candidate and `canonical=false`. Release-level real openJiuwen,
 SSH GPU, restart/disconnect, checkpoint/resume, transfer and Claim receipts are
 not available in this environment. Slurm remains required if the selected

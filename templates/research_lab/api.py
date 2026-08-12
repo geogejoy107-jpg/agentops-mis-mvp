@@ -163,3 +163,6 @@ def route_contracts() -> tuple[Mapping[str, Any], ...]:
     writes = tuple({"method": "POST", "path": f"{ROUTE_PREFIX}/{resource}", "handler": "ResearchAPI.dispatch", "permission": "research_lab.permission.experiment.write"} for resource in ("projects", "experiments"))
     actions = tuple({"method": "POST", "path": f"{ROUTE_PREFIX}/{resource}", "handler": "ResearchAPI.dispatch", "permission": permission} for resource, permission in ACTION_PERMISSIONS.items())
     return (*reads, *details, *writes, *actions)
+
+
+research_api = ResearchAPI

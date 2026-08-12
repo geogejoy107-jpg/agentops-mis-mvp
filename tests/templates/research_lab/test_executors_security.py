@@ -9,7 +9,7 @@ from pathlib import Path
 from templates.research_lab.contracts import ResearchError
 from templates.research_lab.contracts import canonical_hash
 from templates.research_lab.executors import ExecutionPolicy, ExecutionRequest, LocalProcessExecutor, SSHComputeTarget, SSHExecutor, SlurmExecutor, SlurmRequest
-from .support import TEST_KEY, TEST_KEY_ID, TEST_TRUST, signed
+from .support import TEST_TRUST, signed
 
 
 class FakeRunner:

@@ -7,7 +7,7 @@ import re
 from typing import Any, Protocol, runtime_checkable
 
 from .contracts import CoreRefs, ResearchError, canonical_hash
-from .trust import CoreTrustStore, reject_untrusted_payload, require_core_receipt
+from .trust import CoreReceiptVerifier, reject_untrusted_payload, require_core_receipt
 
 
 @runtime_checkable
@@ -28,7 +28,7 @@ WRITE_OPERATIONS = frozenset({
 class ResearchOperationsAdapter:
     """Fail-closed bridge used by ResearchAPI; C0 injects its real Core use cases."""
 
-    def __init__(self, core: GovernedResearchOperationsPort, trust: CoreTrustStore) -> None:
+    def __init__(self, core: GovernedResearchOperationsPort, trust: CoreReceiptVerifier) -> None:
         if not isinstance(core, GovernedResearchOperationsPort):
             raise TypeError("core must implement GovernedResearchOperationsPort")
         self.core = core

@@ -8,22 +8,24 @@ import os
 import re
 import signal
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .contracts import ResearchError, canonical_hash
-from .trust import CoreTrustStore, require_core_receipt
+from .trust import CoreReceiptVerifier, require_core_receipt
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 
 
 class DurableSSHWrapper:
-    def __init__(self, *, governed_root: Path, trust: CoreTrustStore, process_launcher: Callable[[Mapping[str, Any], Path], Mapping[str, Any]], process_probe: Callable[[int, str], bool] | None = None, process_cancel: Callable[[int, str], None] | None = None, terminal_verifier: Callable[[Mapping[str, Any], Mapping[str, Any]], bool] | None = None, maximum_artifact_bytes: int = 10 * 1024**3) -> None:
+    def __init__(self, *, governed_root: Path, trust: CoreReceiptVerifier, process_launcher: Callable[[Mapping[str, Any], Path], Mapping[str, Any]], process_probe: Callable[[int, str], bool] | None = None, process_cancel: Callable[[int, str], None] | None = None, terminal_verifier: Callable[[Mapping[str, Any], Mapping[str, Any]], bool] | None = None, launch_reconciler: Callable[[Mapping[str, Any], Path], Mapping[str, Any] | None] | None = None, maximum_artifact_bytes: int = 10 * 1024**3) -> None:
         self.root = governed_root.resolve(strict=True)
         self.process_launcher = process_launcher
         self.process_probe = process_probe or self._probe_process
         self.process_cancel = process_cancel or self._cancel_process
         self.terminal_verifier = terminal_verifier or (lambda _terminal, _launch: False)
+        self.launch_reconciler = launch_reconciler or (lambda _fence, _attempt_dir: None)
         self.maximum_artifact_bytes = maximum_artifact_bytes
         self.trust = trust
 
@@ -45,10 +47,16 @@ class DurableSSHWrapper:
     def _attempt_dir(self, attempt_id: str) -> Path:
         if not _ID.fullmatch(attempt_id):
             raise ResearchError("research.remote_attempt_invalid", "attempt ID is invalid")
-        value = (self.root / "attempts" / attempt_id).resolve()
+        attempts = (self.root / "attempts").resolve()
+        if not attempts.exists():
+            attempts.mkdir()
+            self._fsync_directory(self.root)
+        value = (attempts / attempt_id).resolve()
         if self.root not in value.parents:
             raise ResearchError("research.remote_root_escape", "attempt path escapes governed root")
-        value.mkdir(parents=True, exist_ok=True)
+        if not value.exists():
+            value.mkdir()
+            self._fsync_directory(attempts)
         return value
 
     @staticmethod
@@ -68,12 +76,82 @@ class DurableSSHWrapper:
         descriptor = os.open(path, flags, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump(dict(value), handle, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        DurableSSHWrapper._fsync_directory(path.parent)
+
+    @staticmethod
+    def _fsync_directory(directory: Path) -> None:
+        descriptor = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
     @staticmethod
     def _replace(path: Path, value: Mapping[str, Any]) -> None:
-        temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
+        temporary = path.with_name(path.name + f".{os.getpid()}.{uuid.uuid4().hex}.tmp")
         DurableSSHWrapper._write_once(temporary, value)
         os.replace(temporary, path)
+        DurableSSHWrapper._fsync_directory(path.parent)
+
+    @staticmethod
+    def _atomic_create(path: Path, value: Mapping[str, Any]) -> None:
+        """Create a complete no-clobber marker; a crash cannot expose partial JSON."""
+        temporary = path.with_name(path.name + f".{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        DurableSSHWrapper._write_once(temporary, value)
+        try:
+            os.link(temporary, path)
+            DurableSSHWrapper._fsync_directory(path.parent)
+        finally:
+            try:
+                temporary.unlink()
+                DurableSSHWrapper._fsync_directory(path.parent)
+            except FileNotFoundError:
+                pass
+
+    @staticmethod
+    def _receipt_from_launch(fence: Mapping[str, Any], launched: Mapping[str, Any]) -> dict[str, Any]:
+        if launched.get("attempt_id") != fence["attempt_id"] or launched.get("request_hash") != fence["request_hash"]:
+            raise ResearchError("research.remote_launch_invalid", "launcher result does not bind the fenced attempt and request")
+        if not isinstance(launched.get("pid"), int) or launched["pid"] <= 1 or not isinstance(launched.get("process_start_identity"), str) or not launched["process_start_identity"]:
+            raise ResearchError("research.remote_launch_invalid", "launcher did not return a durable PID and start identity")
+        receipt = {
+            "attempt_id": fence["attempt_id"],
+            "operation": fence["operation"],
+            "pid": launched["pid"],
+            "process_start_identity": launched["process_start_identity"],
+            "state": "running",
+            "request_hash": fence["request_hash"],
+            "authorization_receipt_hash": fence["authorization_receipt_hash"],
+            "admission_receipt_hash": fence["admission_receipt_hash"],
+            "target_snapshot_hash": fence["target_snapshot_hash"],
+            "log_cursor": "0",
+        }
+        receipt["receipt_hash"] = canonical_hash(receipt)
+        return receipt
+
+    def _recover_fenced_launch(self, fence: Mapping[str, Any], attempt_dir: Path) -> dict[str, Any]:
+        observed = self.launch_reconciler(fence, attempt_dir)
+        if observed:
+            if observed.get("authority") != "remote_launch_registry" or observed.get("authoritative") is not True:
+                raise ResearchError("research.remote_reconcile_untrusted", "launch reconciliation lacks remote attempt authority")
+            receipt = self._receipt_from_launch(fence, observed)
+            self._atomic_create(attempt_dir / "receipt.json", receipt)
+            return receipt
+        unknown = {
+            "attempt_id": fence["attempt_id"],
+            "operation": fence["operation"],
+            "state": "remote_unknown",
+            "request_hash": fence["request_hash"],
+            "authorization_receipt_hash": fence["authorization_receipt_hash"],
+            "admission_receipt_hash": fence["admission_receipt_hash"],
+            "target_snapshot_hash": fence["target_snapshot_hash"],
+            "launch_fence_hash": fence["receipt_hash"],
+            "log_cursor": "0",
+        }
+        unknown["receipt_hash"] = canonical_hash(unknown)
+        return unknown
 
     def handle(self, *, operation: str, stdin_bytes: bytes) -> Mapping[str, Any]:
         if len(stdin_bytes) > 1024 * 1024:
@@ -91,18 +169,32 @@ class DurableSSHWrapper:
         attempt_id = str(request.get("attempt_id") or "")
         attempt_dir = self._attempt_dir(attempt_id)
         marker = attempt_dir / "receipt.json"
+        fence_path = attempt_dir / "launch-intent.json"
         if operation in {"submit", "resume"}:
             if marker.exists():
                 receipt = dict(self._read(marker))
                 if receipt.get("request_hash") != canonical_hash(request) or receipt.get("operation") != operation:
                     raise ResearchError("research.remote_replay_mismatch", "attempt replay does not match the durable request")
+            elif fence_path.exists():
+                fence = dict(self._read(fence_path))
+                if fence.get("attempt_id") != attempt_id or fence.get("operation") != operation or fence.get("request_hash") != canonical_hash(request):
+                    raise ResearchError("research.remote_replay_mismatch", "launch fence does not bind this exact attempt request")
+                receipt = self._recover_fenced_launch(fence, attempt_dir)
             else:
+                fence = {
+                    "attempt_id": attempt_id,
+                    "operation": operation,
+                    "request_hash": canonical_hash(request),
+                    "authorization_receipt_hash": request["authorization_receipt_hash"],
+                    "admission_receipt_hash": request["admission_receipt_hash"],
+                    "target_snapshot_hash": request["target_snapshot_hash"],
+                    "state": "launch_fenced",
+                }
+                fence["receipt_hash"] = canonical_hash(fence)
+                self._write_once(fence_path, fence)
                 launched = dict(self.process_launcher(request, attempt_dir))
-                if not isinstance(launched.get("pid"), int) or launched["pid"] <= 1 or not isinstance(launched.get("process_start_identity"), str) or not launched["process_start_identity"]:
-                    raise ResearchError("research.remote_launch_invalid", "launcher did not return a durable PID and start identity")
-                receipt = {"attempt_id": attempt_id, "operation": operation, "pid": launched["pid"], "process_start_identity": launched["process_start_identity"], "state": "running", "request_hash": canonical_hash(request), "authorization_receipt_hash": request["authorization_receipt_hash"], "admission_receipt_hash": request["admission_receipt_hash"], "target_snapshot_hash": request["target_snapshot_hash"], "log_cursor": "0"}
-                receipt["receipt_hash"] = canonical_hash(receipt)
-                self._write_once(marker, receipt)
+                receipt = self._receipt_from_launch(fence, launched)
+                self._atomic_create(marker, receipt)
             return receipt
         if not marker.exists():
             raise ResearchError("research.remote_attempt_missing", "remote attempt marker does not exist")

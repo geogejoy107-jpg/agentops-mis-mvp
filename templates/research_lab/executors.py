@@ -21,7 +21,7 @@ from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from .contracts import ResearchError, canonical_hash, require_sha256
 from .observability import redact_nested
-from .trust import CoreTrustStore, reject_untrusted_payload, require_core_receipt
+from .trust import CoreReceiptVerifier, reject_untrusted_payload, require_core_receipt
 
 _SAFE_ATOM = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$")
 _SAFE_REMOTE_PATH = re.compile(r"^/[A-Za-z0-9._/-]+$")
@@ -99,7 +99,7 @@ class SecretResolver(Protocol):
     def resolve_for_process(self, *, secret_ref: str, target_id: str) -> Mapping[str, str]: ...
 
 
-def _verify_authorization(receipt: Mapping[str, Any], *, trust: CoreTrustStore, request_hash: str, tool_id: str, prepared_action_id: str, approval_id: str) -> Mapping[str, Any]:
+def _verify_authorization(receipt: Mapping[str, Any], *, trust: CoreReceiptVerifier, request_hash: str, tool_id: str, prepared_action_id: str, approval_id: str) -> Mapping[str, Any]:
     receipt = require_core_receipt(receipt, trust=trust, purpose="research.execution-authorization/v1", bindings={"request_hash": request_hash, "tool_id": tool_id, "prepared_action_id": prepared_action_id, "approval_id": approval_id})
     if (
         receipt.get("decision") != "allow"
@@ -159,7 +159,7 @@ class ExecutionPolicy:
 class LocalProcessExecutor:
     """Process-group executor with heartbeat, cancellation, limits and adoption."""
 
-    def __init__(self, authority: ExecutionAuthorityPort, policy: ExecutionPolicy, trust: CoreTrustStore) -> None:
+    def __init__(self, authority: ExecutionAuthorityPort, policy: ExecutionPolicy, trust: CoreReceiptVerifier) -> None:
         self._authority = authority
         self._policy = policy
         self._trust = trust
@@ -268,7 +268,6 @@ class LocalProcessExecutor:
             "policy_snapshot_hash": canonical_hash(policy_snapshot),
         }
         return {**receipt, "receipt_hash": canonical_hash(receipt)}
-
     @staticmethod
     def _terminate_group(process: subprocess.Popen[bytes]) -> None:
         try:
@@ -346,7 +345,7 @@ class SSHComputeTarget:
 
 
 class SSHExecutor:
-    def __init__(self, runner: CommandRunner, *, secret_resolver: SecretResolver, authority: ExecutionAuthorityPort, trust: CoreTrustStore, workspace_id: str, dns_resolver: Callable[[str, int], Sequence[str]] | None = None) -> None:
+    def __init__(self, runner: CommandRunner, *, secret_resolver: SecretResolver, authority: ExecutionAuthorityPort, trust: CoreReceiptVerifier, workspace_id: str, dns_resolver: Callable[[str, int], Sequence[str]] | None = None) -> None:
         self._runner = runner
         self._secret_resolver = secret_resolver
         self._authority = authority
@@ -445,7 +444,7 @@ class SlurmRequest:
 
 
 class SlurmExecutor:
-    def __init__(self, runner: CommandRunner, *, authority: ExecutionAuthorityPort, trust: CoreTrustStore, workspace_id: str, redaction_values: Sequence[str] = ()) -> None:
+    def __init__(self, runner: CommandRunner, *, authority: ExecutionAuthorityPort, trust: CoreReceiptVerifier, workspace_id: str, redaction_values: Sequence[str] = ()) -> None:
         self._runner = runner
         self._authority = authority
         self._trust = trust
@@ -566,3 +565,8 @@ class SlurmExecutor:
             raise ResearchError("research.slurm_receipt_invalid", "resume did not return a scheduler job id")
         receipt = {"executor": "slurm", "operation": "resume", "state": "submitted", "attempt_id": resumed.attempt_id, "scheduler_job_id": job_id, "checkpoint_sha256": checkpoint_sha256, "resource_request_hash": canonical_hash(resource_request), "request_hash": authorization["request_hash"], "authorization_receipt_hash": authorization["receipt_hash"]}
         return {**receipt, "receipt_hash": canonical_hash(receipt)}
+
+
+local_process_executor = LocalProcessExecutor
+ssh_executor = SSHExecutor
+slurm_executor = SlurmExecutor
