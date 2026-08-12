@@ -21,6 +21,9 @@ COPY --chmod=0555 \
     deploy/byoc/node-healthcheck.mjs \
     deploy/byoc/node-secret-entrypoint.mjs \
     deploy/byoc/owner-bootstrap-entrypoint.mjs \
+    deploy/byoc/openclaw-provider-entrypoint.mjs \
+    deploy/byoc/openclaw-provider-healthcheck.mjs \
+    deploy/byoc/openclaw-provider-contract.mjs \
     deploy/byoc/worker-entrypoint.mjs \
     deploy/byoc/worker-healthcheck.mjs \
     deploy/byoc/worker-service-contract.mjs \
@@ -30,7 +33,10 @@ COPY --chmod=0555 \
     /usr/local/lib/agentops/
 WORKDIR /opt/agentops/ui/next-app
 RUN npm prune --omit=dev --ignore-scripts \
-    && chown -R node:node /opt/agentops
+    && chown -R node:node /opt/agentops \
+    && mkdir -p /run/agentops-openclaw \
+    && chown 1001:1000 /run/agentops-openclaw \
+    && chmod 0770 /run/agentops-openclaw
 ARG AGENTOPS_BUILD_IDENTITY=local
 ARG AGENTOPS_SOURCE_REVISION=unknown
 LABEL org.opencontainers.image.revision="${AGENTOPS_SOURCE_REVISION}" \
