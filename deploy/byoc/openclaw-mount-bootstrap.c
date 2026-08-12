@@ -293,12 +293,14 @@ static int mount_point_in_tree(const char *mount_point, const char *target, int 
             && mount_point[target_length] == '/');
 }
 
-static int inspect_mountinfo_line(
-    char *line,
-    const char *target,
-    int recursive,
-    unsigned long *root_mount_id
-) {
+struct mount_record {
+    unsigned long mount_id;
+    unsigned long parent_id;
+    char *mount_point;
+    char *mount_options;
+};
+
+static int parse_mountinfo_line(char *line, struct mount_record *record) {
     char *save_pointer = NULL;
     char *mount_id_text = strtok_r(line, " ", &save_pointer);
     char *parent_id_text = strtok_r(NULL, " ", &save_pointer);
@@ -318,9 +320,7 @@ static int inspect_mountinfo_line(
             mount_point_text,
             decoded_mount_point,
             sizeof(decoded_mount_point)
-        ) < 0 || !mount_point_in_tree(decoded_mount_point, target, recursive)) {
-        return 0;
-    }
+        ) < 0) return -1;
     errno = 0;
     mount_id = strtoul(mount_id_text, &end_pointer, 10);
     if (errno != 0 || end_pointer == mount_id_text || *end_pointer != '\0' || mount_id == 0UL) {
@@ -332,29 +332,91 @@ static int inspect_mountinfo_line(
         || parsed_parent_id == 0UL || mount_id == parsed_parent_id) {
         return -1;
     }
-    if (!option_present(mount_options, "ro") || !option_present(mount_options, "nosuid")
-        || !option_present(mount_options, "nodev") || !option_present(mount_options, "noexec")
-        || option_present(mount_options, "rw") || option_present(mount_options, "suid")
-        || option_present(mount_options, "dev") || option_present(mount_options, "exec")) {
-        return -1;
+    record->mount_id = mount_id;
+    record->parent_id = parsed_parent_id;
+    record->mount_point = strdup(decoded_mount_point);
+    record->mount_options = strdup(mount_options);
+    return record->mount_point != NULL && record->mount_options != NULL ? 0 : -1;
+}
+
+static const struct mount_record *find_mount_record(
+    const struct mount_record *records,
+    size_t count,
+    unsigned long mount_id
+) {
+    size_t index;
+    for (index = 0; index < count; index += 1) {
+        if (records[index].mount_id == mount_id) return &records[index];
     }
-    if (strcmp(decoded_mount_point, target) == 0) {
-        if (*root_mount_id != 0UL) {
-            return -1;
+    return NULL;
+}
+
+static int mount_descends_from(
+    const struct mount_record *records,
+    size_t count,
+    const struct mount_record *candidate,
+    unsigned long root_mount_id
+) {
+    unsigned long current = candidate->mount_id;
+    size_t depth;
+    for (depth = 0; depth <= count; depth += 1) {
+        const struct mount_record *record;
+        if (current == root_mount_id) return 1;
+        record = find_mount_record(records, count, current);
+        if (record == NULL || record->parent_id == current) return 0;
+        current = record->parent_id;
+    }
+    return 0;
+}
+
+static int mount_options_hardened(const char *mount_options) {
+    return option_present(mount_options, "ro") && option_present(mount_options, "nosuid")
+        && option_present(mount_options, "nodev") && option_present(mount_options, "noexec")
+        && !option_present(mount_options, "rw") && !option_present(mount_options, "suid")
+        && !option_present(mount_options, "dev") && !option_present(mount_options, "exec");
+}
+
+static unsigned long visible_mount_id(const char *target, int directory) {
+    int descriptor = open(target, O_PATH | O_CLOEXEC | O_NOFOLLOW | (directory ? O_DIRECTORY : 0));
+    char fdinfo_path[64];
+    FILE *fdinfo;
+    char *line = NULL;
+    size_t capacity = 0;
+    unsigned long mount_id = 0UL;
+    int fdinfo_path_length;
+    if (descriptor < 0) return 0UL;
+    fdinfo_path_length = snprintf(
+        fdinfo_path,
+        sizeof(fdinfo_path),
+        "/proc/self/fdinfo/%d",
+        descriptor
+    );
+    if (fdinfo_path_length <= 0 || (size_t)fdinfo_path_length >= sizeof(fdinfo_path)) {
+        if (descriptor >= 0) (void)close(descriptor);
+        return 0UL;
+    }
+    fdinfo = fopen(fdinfo_path, "re");
+    if (fdinfo != NULL) {
+        while (getline(&line, &capacity, fdinfo) >= 0) {
+            if (sscanf(line, "mnt_id:\t%lu", &mount_id) == 1 && mount_id != 0UL) break;
+            mount_id = 0UL;
         }
-        *root_mount_id = mount_id;
+        free(line);
+        if (fclose(fdinfo) != 0) mount_id = 0UL;
     }
-    return 1;
+    if (close(descriptor) < 0) return 0UL;
+    return mount_id;
 }
 
 static int verify_hardened_mounts(void) {
     int descriptor = open("/proc/self/mountinfo", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     char *contents;
     size_t used = 0;
-    int config_matches = 0;
-    int workspace_matches = 0;
-    unsigned long config_mount_id = 0UL;
-    unsigned long workspace_mount_id = 0UL;
+    struct mount_record *records = NULL;
+    size_t record_count = 0;
+    size_t record_capacity = 0;
+    unsigned long config_mount_id = visible_mount_id(CONFIG_TARGET, 0);
+    unsigned long workspace_mount_id = visible_mount_id(WORKSPACE_TARGET, 1);
     int result = -1;
 
     if (descriptor < 0) {
@@ -389,39 +451,54 @@ static int verify_hardened_mounts(void) {
         char *line_save_pointer = NULL;
         char *line = strtok_r(contents, "\n", &line_save_pointer);
         while (line != NULL) {
-            char *config_line = strdup(line);
-            char *workspace_line = strdup(line);
-            int config_result;
-            int workspace_result;
-            if (config_line == NULL || workspace_line == NULL) {
-                free(config_line);
-                free(workspace_line);
+            struct mount_record record = {0};
+            if (record_count == record_capacity) {
+                size_t next_capacity = record_capacity == 0U ? 64U : record_capacity * 2U;
+                struct mount_record *next_records;
+                if (next_capacity < record_capacity) goto cleanup;
+                next_records = realloc(records, next_capacity * sizeof(*records));
+                if (next_records == NULL) goto cleanup;
+                records = next_records;
+                record_capacity = next_capacity;
+            }
+            if (parse_mountinfo_line(line, &record) < 0) {
+                free(record.mount_point);
+                free(record.mount_options);
                 goto cleanup;
             }
-            config_result = inspect_mountinfo_line(config_line, CONFIG_TARGET, 0, &config_mount_id);
-            workspace_result = inspect_mountinfo_line(
-                workspace_line,
-                WORKSPACE_TARGET,
-                1,
-                &workspace_mount_id
-            );
-            free(config_line);
-            free(workspace_line);
-            if (config_result < 0 || workspace_result < 0) {
-                goto cleanup;
-            }
-            config_matches += config_result;
-            workspace_matches += workspace_result;
+            records[record_count] = record;
+            record_count += 1U;
             line = strtok_r(NULL, "\n", &line_save_pointer);
         }
     }
-    if (config_matches == 1 && workspace_matches >= 1
-        && config_mount_id != 0UL && workspace_mount_id != 0UL
+    if (config_mount_id != 0UL && workspace_mount_id != 0UL
         && config_mount_id != workspace_mount_id) {
+        size_t index;
+        int config_verified = 0;
+        int workspace_verified = 0;
         result = 0;
+        for (index = 0; index < record_count; index += 1) {
+            const struct mount_record *record = &records[index];
+            if (record->mount_id == config_mount_id) {
+                if (config_verified || strcmp(record->mount_point, CONFIG_TARGET) != 0
+                    || !mount_options_hardened(record->mount_options)) result = -1;
+                config_verified = 1;
+            }
+            if (mount_descends_from(records, record_count, record, workspace_mount_id)) {
+                if (!mount_point_in_tree(record->mount_point, WORKSPACE_TARGET, 1)
+                    || !mount_options_hardened(record->mount_options)) result = -1;
+                if (record->mount_id == workspace_mount_id) workspace_verified = 1;
+            }
+        }
+        if (!config_verified || !workspace_verified) result = -1;
     }
 
 cleanup:
+    for (size_t index = 0; index < record_count; index += 1) {
+        free(records[index].mount_point);
+        free(records[index].mount_options);
+    }
+    free(records);
     free(contents);
     if (close(descriptor) < 0) {
         return -1;
