@@ -757,8 +757,8 @@ async function main() {
     state.requests = [];
     const external = await worker.runOnce();
     const externalRequests = [...state.requests];
-    assert.equal(external.ok, true);
-    assert.equal(external.processed, false);
+    assert.equal(external.ok, false);
+    assert.equal(external.processed, true);
     assert.equal(
       external.reason,
       "external_write_prepared_action_owner_required",
@@ -781,6 +781,17 @@ async function main() {
       (externalTool.args as Record<string, unknown>)
         .external_write_runtime_execution_supported,
       false,
+    );
+    const externalRunHeartbeat = externalRequests.find((item) => (
+      item.path.startsWith("/api/mis/agent-gateway/runs/")
+      && item.path.endsWith("/heartbeat")
+    ));
+    assert.ok(externalRunHeartbeat);
+    assert.equal(externalRunHeartbeat.body.status, "blocked");
+    assert.equal(externalRunHeartbeat.body.cost_usd, "0.000000");
+    assert.equal(
+      externalRunHeartbeat.body.error_type,
+      "ExternalWritePreparedActionUnavailable",
     );
 
     state.scenario = "invalid_attestation";

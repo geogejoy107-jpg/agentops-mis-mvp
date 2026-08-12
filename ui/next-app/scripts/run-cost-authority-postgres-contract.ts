@@ -680,6 +680,29 @@ async function assertPrecisionReplayAndTerminal(client: Client) {
     stableSnapshot,
   );
 
+  failureStage = "precision_waiting_tool_fixture";
+  await client.query(
+    `INSERT INTO tool_calls(
+      tool_call_id,run_id,agent_id,tool_name,tool_version,tool_category,
+      normalized_args_json,target_resource,risk_level,status,result_summary,
+      side_effect_id,started_at,ended_at,created_at
+    ) VALUES(
+      'tc_run_cost_waiting',$1,$2,'contract.external_write','v1','custom',
+      '{}','contract://external-write','high','waiting_approval',
+      'External write is waiting for an unavailable owner.',NULL,
+      clock_timestamp(),NULL,clock_timestamp()
+    )`,
+    [runId, fixture.agentId],
+  );
+  await client.query(
+    "UPDATE runs SET status='waiting_approval',approval_required=1 WHERE run_id=$1 AND workspace_id=$2",
+    [runId, fixture.workspaceId],
+  );
+  await client.query(
+    "UPDATE tasks SET status='waiting_approval' WHERE task_id=$1 AND workspace_id=$2",
+    ["tsk_run_cost_main", fixture.workspaceId],
+  );
+
   failureStage = "precision_actual_terminal";
   const terminalBody = {
     workspace_id: fixture.workspaceId,
@@ -706,6 +729,28 @@ async function assertPrecisionReplayAndTerminal(client: Client) {
   assert.equal(settled.settled_cost_usd, "0.100002");
   assert.equal(settled.run_cost_usd, "0.100002");
   assert.equal(settled.run_status, "completed");
+  const terminalGraph = await client.query<{
+    run_approval_required: number;
+    task_status: string;
+    tool_status: string;
+    tool_ended_at: string | null;
+  }>(
+    `SELECT run.approval_required AS run_approval_required,
+      task.status AS task_status,tool.status AS tool_status,
+      tool.ended_at::text AS tool_ended_at
+    FROM runs run
+    JOIN tasks task ON task.task_id=run.task_id
+      AND task.workspace_id=run.workspace_id
+    JOIN tool_calls tool ON tool.run_id=run.run_id
+    WHERE run.run_id=$1 AND run.workspace_id=$2
+      AND tool.tool_call_id='tc_run_cost_waiting'`,
+    [runId, fixture.workspaceId],
+  );
+  assert.equal(terminalGraph.rowCount, 1);
+  assert.equal(Number(terminalGraph.rows[0]?.run_approval_required), 0);
+  assert.equal(terminalGraph.rows[0]?.task_status, "completed");
+  assert.equal(terminalGraph.rows[0]?.tool_status, "blocked");
+  assert.ok(terminalGraph.rows[0]?.tool_ended_at);
 
   failureStage = "precision_terminal_replay";
   const terminalReplay = await heartbeat(fixture, runId, terminalBody);
@@ -1178,6 +1223,8 @@ async function runContract() {
         running_heartbeat_renews_lease: true,
         decrease_and_overestimate_atomic: true,
         actual_and_estimate_terminal_settlement: true,
+        terminal_active_tool_closed: true,
+        terminal_approval_flag_cleared: true,
         exact_terminal_replay: true,
         expired_monthly_usage_retained: true,
         expired_reservation_heartbeat_recovered: true,

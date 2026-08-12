@@ -94,6 +94,13 @@ type RunRow = {
   created_at: string;
 };
 
+type ActiveToolCallRow = {
+  tool_call_id: string;
+  status: string;
+  result_summary: string | null;
+  ended_at: string | null;
+};
+
 function text(value: unknown, limit: number) {
   return String(value ?? "")
     .replace(/(bearer\s+)[a-z0-9._-]+/gi, "$1[REDACTED]")
@@ -268,6 +275,7 @@ function sameTimestamp(left: string | null, right: string | null) {
 
 function sameHeartbeatState(left: RunRow, right: RunRow) {
   return left.status === right.status
+    && Number(left.approval_required || 0) === Number(right.approval_required || 0)
     && sameTimestamp(left.ended_at, right.ended_at)
     && (left.duration_ms === null ? null : Number(left.duration_ms)) === right.duration_ms
     && left.output_summary === right.output_summary
@@ -826,6 +834,7 @@ export async function heartbeatAgentGatewayRun(request: Request, requestedRunId:
     const candidateAfter: RunRow = {
       ...before,
       status,
+      approval_required: terminal ? 0 : before.approval_required,
       ended_at: endedAt,
       duration_ms: durationMs,
       output_summary: outputSummary,
@@ -866,7 +875,8 @@ export async function heartbeatAgentGatewayRun(request: Request, requestedRunId:
 
     const updateResult = await client.query<RunRow>(
       `UPDATE runs SET status=$1,ended_at=$2,duration_ms=$3,output_summary=$4,error_type=$5,error_message=$6,
-        output_tokens=$7,cost_usd=$8 WHERE run_id=$9 AND workspace_id=$10 RETURNING *`,
+        output_tokens=$7,cost_usd=$8,approval_required=$9
+      WHERE run_id=$10 AND workspace_id=$11 RETURNING *`,
       [
         status,
         endedAt,
@@ -876,6 +886,7 @@ export async function heartbeatAgentGatewayRun(request: Request, requestedRunId:
         errorMessage,
         outputTokens,
         actualCostUsd,
+        terminal ? 0 : before.approval_required,
         runId,
         identity.workspaceId,
       ],
@@ -900,6 +911,32 @@ export async function heartbeatAgentGatewayRun(request: Request, requestedRunId:
     });
 
     if (terminal) {
+      const activeToolResult = await client.query<ActiveToolCallRow>(
+        `UPDATE tool_calls SET status='blocked',
+          result_summary='Agent terminalized the run before tool execution completed.',
+          ended_at=$1
+        WHERE run_id=$2 AND status IN ('running','waiting_approval')
+          AND side_effect_id IS NULL
+        RETURNING tool_call_id,status,result_summary,ended_at`,
+        [now, runId],
+      );
+      for (const tool of activeToolResult.rows) {
+        await appendAudit(client, {
+          workspaceId: identity.workspaceId,
+          actorType: "agent",
+          actorId: identity.agentId,
+          action: "agent_gateway.tool_call_run_terminalized",
+          entityType: "tool_calls",
+          entityId: tool.tool_call_id,
+          after: tool,
+          metadata: {
+            workspace_id: identity.workspaceId,
+            run_id: runId,
+            run_status: status,
+            raw_payload_omitted: true,
+          },
+        });
+      }
       await appendAudit(client, {
         workspaceId: identity.workspaceId,
         actorType: "agent",

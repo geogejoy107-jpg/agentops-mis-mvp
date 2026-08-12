@@ -447,14 +447,27 @@ export class CommercialWorker {
         ...secretBoundary(),
       },
     });
+    await this.#gateway.post(
+      `${API}/runs/${encodeURIComponent(runId)}/heartbeat`,
+      {
+        workspace_id: this.#config.workspaceId,
+        status: "blocked",
+        output_summary:
+          "External write was blocked before Hermes/OpenClaw provider execution.",
+        cost_usd: "0.000000",
+        error_type: "ExternalWritePreparedActionUnavailable",
+        error_message:
+          "A governed runtime-specific PreparedAction owner is not available.",
+      },
+    );
     await this.#safeHeartbeat(
       "paused",
       "External write requires a governed runtime-specific PreparedAction owner.",
     );
     return {
       ...receiptBase(this.#config),
-      ok: true,
-      processed: false,
+      ok: false,
+      processed: true,
       reason: "external_write_prepared_action_owner_required",
       task_id: task.task_id,
       run_id: runId,
