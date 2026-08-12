@@ -161,7 +161,8 @@ function assertStaticCustomerBoundary() {
     || !workerEntrypoint.includes("process.kill(-child.pid, signal)")
     || !workerEntrypoint.includes('signalChildGroup(child, "SIGKILL")')
     || !workerEntrypoint.includes("forcedStop = true")
-    || !workerEntrypoint.includes("result.signal && stopping && !forcedStop")
+    || !workerEntrypoint.includes("stopping && !forcedStop && result.code === 0")
+    || /result\.signal.*return 0/.test(workerEntrypoint)
     || !workerEntrypoint.includes("stopping && !forcedStop")
     || !workerEntrypoint.includes("worker_receipt_boundary_invalid")
     || !workerHealthcheck.includes("process.kill(payload.pid, 0)")
@@ -175,6 +176,8 @@ function assertStaticCustomerBoundary() {
     || !workerContainerAcceptance.includes("token_in_environment: false")
     || !workerContainerAcceptance.includes("acceptance_worker_environment_probe_failed")
     || !workerContainerAcceptance.includes("acceptance_worker_graceful_stop_failed")
+    || !workerContainerAcceptance.includes('activeCheck = "graceful_stop"')
+    || !workerContainerAcceptance.includes("assertion_failed")
     || !workerContainerAcceptance.includes("worker_init_reaper_verified: true")
     || !workerContainerAcceptance.includes("org.opencontainers.image.revision")
   ) {

@@ -54,7 +54,8 @@ try {
   assert.match(entrypoint, /process\.kill\(-child\.pid, signal\)/);
   assert.match(entrypoint, /signalChildGroup\(child, "SIGKILL"\)/);
   assert.match(entrypoint, /forcedStop = true/);
-  assert.match(entrypoint, /result\.signal && stopping && !forcedStop/);
+  assert.match(entrypoint, /stopping && !forcedStop && result\.code === 0/);
+  assert.doesNotMatch(entrypoint, /result\.signal.*return 0/);
   assert.match(entrypoint, /stopping && !forcedStop/);
 
   const tokenPath = join(root, "agent-token");
@@ -131,6 +132,7 @@ try {
     container_init_reaper_required: true,
     process_group_shutdown_bounded: true,
     forced_shutdown_reports_failure: true,
+    signal_terminated_child_reports_failure: true,
     docker_init_reaper_enabled: true,
     real_provider_execution_performed: false,
     token_omitted: true,

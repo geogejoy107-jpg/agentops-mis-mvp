@@ -67,6 +67,8 @@ function attestation(receiptDigest, overrides = {}) {
     source_commit: SHA,
     receipt_sha256: receiptDigest,
     contexts: CONTEXTS,
+    trust_model: "repository_owner_operator_attestation_v1",
+    provider_signed: false,
     ...overrides,
   });
 }
@@ -86,7 +88,6 @@ function fixtures(receiptDigest, options = {}) {
     return {
       context,
       state: "success",
-      sha: SHA,
       creator: { login: statusPublisher },
       description: `Real ${runtime} runtime receipt sha256:${statusDigest}`,
       target_url: index === 0 ? firstTarget : secondTarget,
@@ -146,6 +147,7 @@ process.stdout.write(response + "\\n");
   const valid = run(["validate", "--receipt", receiptPath, "--sha", SHA]);
   assert.equal(valid.status, 0);
   assert.equal(valid.payload.ok, true);
+  assert.equal(valid.payload.provider_signed_attestation, false);
   assert.equal(valid.payload.receipt_sha256,
     digest(JSON.stringify(receipt())));
   assert.equal(valid.payload.evidence.hermes.provider_call_performed, true);
@@ -213,6 +215,17 @@ process.stdout.write(response + "\\n");
   assert.equal(forgedDigest.status, 1);
   assert.equal(forgedDigest.payload.error, "runtime_status_comment_attestation_invalid");
 
+  const wrongCommitComment = run(
+    ["verify", "--sha", SHA, "--repo", REPOSITORY, "--publisher", PUBLISHER],
+    receipt(),
+    { commentCommit: "b".repeat(40) },
+  );
+  assert.equal(wrongCommitComment.status, 1);
+  assert.equal(
+    wrongCommitComment.payload.error,
+    "runtime_status_comment_attestation_invalid",
+  );
+
   const wrongSha = run(["validate", "--receipt", receiptPath, "--sha", "b".repeat(40)]);
   assert.equal(wrongSha.status, 1);
   assert.equal(wrongSha.payload.error, "runtime_status_receipt_shared_evidence_invalid");
@@ -236,6 +249,8 @@ process.stdout.write(response + "\\n");
     receipt_sha256_bound: true,
     publisher_bound: true,
     commit_comment_attestation_bound: true,
+    repository_owner_trust_model_explicit: true,
+    provider_signed_attestation_claimed: false,
     real_provider_required: true,
     typescript_worker_required: true,
     hermes_openclaw_contexts_required: true,

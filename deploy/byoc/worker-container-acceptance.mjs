@@ -127,7 +127,9 @@ net.createServer((socket) => {
 `;
 
 let receipt;
+let activeCheck = "initialization";
 try {
+  activeCheck = "release_manifest";
   const releaseRoot = resolve(option("--release-root"));
   const manifestPath = join(releaseRoot, "release-manifest.json");
   if (!existsSync(manifestPath)) fail("release_manifest_missing");
@@ -145,23 +147,25 @@ try {
     if (existsSync(join(releaseRoot, forbidden))) fail("release_source_checkout_present");
   }
 
+  activeCheck = "image_identity";
   const image = manifest.image;
   const imageInspection = JSON.parse(docker(
     ["image", "inspect", image],
     [0],
     "acceptance_image_inspect_failed",
   ))[0];
-  assert.equal(imageInspection.Os, "linux");
-  assert.equal(imageInspection.Architecture, "amd64");
-  assert.equal(
-    imageInspection.Config?.Labels?.["org.opencontainers.image.revision"],
-    manifest.source_revision,
-  );
+  if (imageInspection.Os !== "linux") fail("acceptance_image_os_invalid");
+  if (imageInspection.Architecture !== "amd64") fail("acceptance_image_architecture_invalid");
+  if (
+    imageInspection.Config?.Labels?.["org.opencontainers.image.revision"]
+    !== manifest.source_revision
+  ) fail("acceptance_image_revision_invalid");
 
   const tokenPath = join(root, "agent-token");
   writeFileSync(tokenPath, `${token}\n`, { encoding: "utf8", mode: 0o400, flag: "wx" });
   chmodSync(tokenPath, 0o444);
 
+  activeCheck = "stub_start";
   docker([
     "run", "--detach", "--name", stubName,
     "--platform", "linux/amd64",
@@ -180,6 +184,7 @@ try {
     return JSON.parse(output);
   }, 20_000);
 
+  activeCheck = "worker_start";
   docker([
     "run", "--detach", "--name", workerName,
     "--platform", "linux/amd64",
@@ -210,6 +215,7 @@ try {
     "/usr/local/lib/agentops/worker-entrypoint.mjs",
   ], [0], "acceptance_worker_start_failed");
 
+  activeCheck = "worker_receipt";
   receipt = waitFor(workerName, () => jsonLines(docker(
     ["logs", workerName],
     [0],
@@ -220,10 +226,11 @@ try {
     && item.processed === false
     && item.reason === "no_task"
   ), 60_000);
-  assert.equal(receipt.provider_call_performed, false);
-  assert.equal(receipt.dry_run, false);
-  assert.equal(receipt.token_omitted, true);
+  if (receipt.provider_call_performed !== false) fail("acceptance_unexpected_provider_call");
+  if (receipt.dry_run !== false) fail("acceptance_worker_dry_run_invalid");
+  if (receipt.token_omitted !== true) fail("acceptance_worker_receipt_token_boundary_invalid");
 
+  activeCheck = "worker_health";
   const health = waitFor(workerName, () => {
     const output = docker([
       "exec", workerName, "node", "-e",
@@ -233,13 +240,14 @@ try {
     return candidate.status === "ready" ? candidate : null;
   }, 60_000);
   const healthRaw = JSON.stringify(health);
-  assert.equal(health.token_omitted, true);
+  if (health.token_omitted !== true) fail("acceptance_worker_health_token_boundary_invalid");
   docker(
     ["exec", workerName, "node", "/usr/local/lib/agentops/worker-healthcheck.mjs"],
     [0],
     "acceptance_worker_healthcheck_failed",
   );
 
+  activeCheck = "worker_process_boundary";
   const processArgv = JSON.parse(docker([
     "exec", workerName, "node", "-e",
     "const f=require('node:fs');const rows=f.readdirSync('/proc').filter(x=>/^\\d+$/.test(x)).flatMap(x=>{try{return [f.readFileSync('/proc/'+x+'/cmdline').toString('utf8').split('\\0').filter(Boolean)]}catch{return []}});process.stdout.write(JSON.stringify(rows))",
@@ -248,14 +256,20 @@ try {
     "exec", workerName, "node", "-e",
     "const f=require('node:fs');process.stdout.write(JSON.stringify(f.readFileSync('/proc/1/cmdline').toString('utf8').split('\\0').filter(Boolean)))",
   ], [0], "acceptance_worker_init_probe_failed"));
-  assert.ok(initArgv.some((item) => /(?:docker-init|tini)$/.test(item)));
-  assert.ok(Number.isSafeInteger(health.pid) && health.pid > 1);
-  assert.ok(Number.isSafeInteger(health.child_pid) && health.child_pid >= 1);
+  if (!initArgv.some((item) => /(?:docker-init|tini)$/.test(item))) {
+    fail("acceptance_worker_init_reaper_missing");
+  }
+  if (!Number.isSafeInteger(health.pid) || health.pid <= 1) {
+    fail("acceptance_worker_supervisor_pid_invalid");
+  }
+  if (!Number.isSafeInteger(health.child_pid) || health.child_pid < 1) {
+    fail("acceptance_worker_child_pid_invalid");
+  }
   const processEnvironment = JSON.parse(docker([
     "exec", workerName, "node", "-e",
     `const f=require('node:fs');const pids=${JSON.stringify([health.pid, health.child_pid])};const rows=pids.map(pid=>({pid,environment:f.readFileSync('/proc/'+pid+'/environ').toString('utf8').split('\\0').filter(Boolean)}));process.stdout.write(JSON.stringify(rows))`,
   ], [0], "acceptance_worker_environment_probe_failed"));
-  assert.equal(processEnvironment.length, 2);
+  if (processEnvironment.length !== 2) fail("acceptance_worker_environment_count_invalid");
   const inspection = docker(
     ["inspect", workerName],
     [0],
@@ -276,22 +290,24 @@ try {
     if (exposed.includes(token)) fail("agent_token_exposed_by_container");
   }
 
+  activeCheck = "stub_state";
   const stubState = JSON.parse(docker([
     "exec", stubName, "node", "-e",
     "fetch('http://127.0.0.1:18765/__acceptance__').then(r=>r.text()).then(console.log)",
   ], [0], "acceptance_stub_state_read_failed"));
-  assert.equal(stubState.provider_connections, 0);
-  assert.ok(stubState.requests.some((item) =>
+  if (stubState.provider_connections !== 0) fail("acceptance_provider_connection_detected");
+  if (!stubState.requests.some((item) =>
     item.method === "GET"
     && item.path === "/api/mis/agent-gateway/tasks/pull"
     && item.authorization_matches === true
     && item.token_omitted === true
-  ));
-  assert.ok(stubState.requests.every((item) => [
+  )) fail("acceptance_agent_token_authorization_invalid");
+  if (!stubState.requests.every((item) => [
     "/api/mis/agent-gateway/tasks/pull",
     "/api/mis/agent-gateway/heartbeat",
-  ].includes(item.path)));
+  ].includes(item.path))) fail("acceptance_unexpected_gateway_route");
 
+  activeCheck = "graceful_stop";
   docker(
     ["stop", "--time", "10", workerName],
     [0],
@@ -302,8 +318,8 @@ try {
     [0],
     "acceptance_worker_stopped_inspect_failed",
   ))[0];
-  assert.equal(stoppedInspection.State?.Running, false);
-  assert.equal(stoppedInspection.State?.ExitCode, 0);
+  if (stoppedInspection.State?.Running !== false) fail("acceptance_worker_still_running");
+  if (stoppedInspection.State?.ExitCode !== 0) fail("acceptance_worker_stop_exit_invalid");
   const stoppedLogs = docker(
     ["logs", workerName],
     [0],
@@ -320,7 +336,7 @@ try {
     worker_container_started: true,
     worker_health_verified: true,
     worker_init_reaper_verified: true,
-    graceful_stop_verified: true,
+    idle_graceful_stop_verified: true,
     no_task_receipt_verified: true,
     network_egress_disabled: true,
     agent_token_authorization_verified: true,
@@ -335,7 +351,7 @@ try {
 } catch (error) {
   const code = typeof error?.code === "string" && /^[a-z][a-z0-9_]{2,80}$/.test(error.code)
     ? error.code
-    : "worker_container_acceptance_failed";
+    : `acceptance_${activeCheck}_assertion_failed`;
   process.stderr.write(`${code}\n`);
   process.exitCode = 1;
 } finally {

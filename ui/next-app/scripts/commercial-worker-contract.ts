@@ -546,6 +546,8 @@ async function sourceBoundaryContract() {
   );
   assert.match(orchestrator, /plan-evidence-manifests/);
   assert.match(cliSource, /readCommercialAgentToken/);
+  assert.match(cliSource, /if \(!receipt\.ok\) process\.exitCode = 1/);
+  assert.doesNotMatch(cliSource, /!receipt\.ok && !stopping/);
   assert.doesNotMatch(cliSource, /values\.get\("--(?:api-key|token)/);
   assert.match(realAcceptanceSource, /default="typescript"/);
   assert.match(realAcceptanceSource, /commercial-worker\.ts/);

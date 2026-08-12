@@ -254,3 +254,10 @@ as an exact-commit GitHub comment, and points both statuses to that comment. The
 promotion gate verifies the repository owner as publisher, the exact commit,
 shared receipt digest, status descriptions, target URL, and current attestation
 body. It does not trust same-named contexts from another publisher.
+
+This is an operator attestation whose trust root is the authorized repository
+owner. It proves exact-commit consistency, publisher identity, and receipt
+integrity after publication; it is not a provider-signed proof that makes a
+malicious repository owner unable to fabricate an input receipt. Independent
+provider-signed or fixed GitHub App evidence remains required before treating
+the status as third-party-verifiable execution provenance.

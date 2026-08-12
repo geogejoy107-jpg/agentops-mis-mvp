@@ -371,7 +371,7 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
   clearInterval(refresh);
   if (forceStop) clearTimeout(forceStop);
   for (const [signal, handler] of handlers) process.removeListener(signal, handler);
-  status = stopping && !forcedStop && (result.code === 0 || result.signal)
+  status = stopping && !forcedStop && result.code === 0
     ? "stopped"
     : "failed";
   writeState({
@@ -385,7 +385,6 @@ export async function runWorker({ statePath = STATE_PATH } = {}) {
     last_receipt: lastReceipt,
     token_omitted: true,
   }, statePath);
-  if (result.signal && stopping && !forcedStop) return 0;
   return result.code === 0 && status === "stopped" ? 0 : 1;
 }
 

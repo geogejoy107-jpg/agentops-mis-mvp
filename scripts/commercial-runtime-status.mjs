@@ -10,6 +10,7 @@ const CONTEXTS = Object.freeze({
   openclaw: "agentops/real-openclaw",
 });
 const CONTEXT_VALUES = Object.freeze(Object.values(CONTEXTS));
+const TRUST_MODEL = "repository_owner_operator_attestation_v1";
 
 function fail(code) {
   const error = new Error(code);
@@ -146,6 +147,8 @@ function attestation(sha, digest) {
     source_commit: sha,
     receipt_sha256: digest,
     contexts: CONTEXT_VALUES,
+    trust_model: TRUST_MODEL,
+    provider_signed: false,
   };
 }
 
@@ -221,9 +224,6 @@ function verify(repo, sha, expectedPublisher) {
     if (String(latest?.creator?.login || "").toLowerCase() !== publisher.toLowerCase()) {
       fail("runtime_status_publisher_mismatch");
     }
-    if (String(latest?.sha || "").toLowerCase() !== sha) {
-      fail("runtime_status_status_sha_mismatch");
-    }
     const description = String(latest?.description || "");
     const digestMatch = /^Real (hermes|openclaw) runtime receipt sha256:([a-f0-9]{64})$/.exec(description);
     if (!digestMatch || digestMatch[1] !== runtime) {
@@ -254,6 +254,8 @@ function output(value) {
     contract: CONTRACT,
     credentials_omitted: true,
     raw_runtime_output_omitted: true,
+    attestation_trust_model: TRUST_MODEL,
+    provider_signed_attestation: false,
     ...value,
   })}\n`);
 }

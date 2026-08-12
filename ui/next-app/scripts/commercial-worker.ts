@@ -272,7 +272,7 @@ async function main() {
     process.stdout.write(`${JSON.stringify(receipt)}\n`);
     if (receipt.processed) processed += 1;
     if (!options.daemon || stopping) {
-      if (!receipt.ok && !stopping) process.exitCode = 1;
+      if (!receipt.ok) process.exitCode = 1;
       break;
     }
     if (options.maxTasks > 0 && processed >= options.maxTasks) break;

@@ -245,7 +245,7 @@ jobs:
             and .worker_container_started == true
             and .worker_health_verified == true
             and .worker_init_reaper_verified == true
-            and .graceful_stop_verified == true
+            and .idle_graceful_stop_verified == true
             and .no_task_receipt_verified == true
             and .network_egress_disabled == true
             and .agent_token_authorization_verified == true
