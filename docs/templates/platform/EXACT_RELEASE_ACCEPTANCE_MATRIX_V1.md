@@ -15,10 +15,10 @@ receipts.
 
 | Lane | Current exact object | Author tests | Independent decision | Integration admission |
 | --- | --- | --- | --- | --- |
-| C0 Shared Runtime | `aa667fcc012a5eed4a6e823741d8867f750417a1` | Schema-enabled Python 3.11 94/94; Python 3.14 93 pass plus expected missing-`jsonschema` skip; UI build previously passed and is being reconfirmed | RUNNING | DENIED until exact non-author PASS |
-| C1 Research | `343cae665e2634d5a990920e8cffa9595cbac152` | Python 3.11/3.14 87/87 reported by author | RUNNING | DENIED until exact non-author PASS |
-| C2 Career | failed candidate `2eb0d6699aedb83ab8fb67658aebdbaf2ed3b422`; replacement in progress | PENDING on replacement | prior exact review FAIL | DENIED |
-| C3 Quant | `3361ed4063208e0044cdf621db45884a017e9e38` | Python 3.11/3.14 63/63 and shared schema 26/26; domain security fix independently passed | FAIL: exact C0 mount/handoff not reproducible | DENIED; replacement commit required |
+| C0 Shared Runtime | failed candidate `aa667fcc012a5eed4a6e823741d8867f750417a1`; replacement in progress | Prior candidate: schema-enabled Python 3.11 94/94, Python 3.14 94 with schema dependency unavailable | FAIL: P0=0, P1=1, P2=2 | DENIED; durable-resume/UI/SBOM replacement and fresh review required |
+| C1 Research | failed candidate `343cae665e2634d5a990920e8cffa9595cbac152`; replacement in progress | Prior candidate: Python 3.11/3.14 87/87 | FAIL: P0=0, P1=4, P2=1 | DENIED; exact C0/production composition/signed reconciliation replacement and fresh review required |
+| C2 Career | failed candidate `80b2a2dac8299590baab3aff76e3bf099f009d02`; replacement pending | Prior candidate: Python 3.11/3.14 73/73; shared schema 26/26 | FAIL: caller-forgeable Core boolean callbacks can promote official output | DENIED; concrete C0 cryptographic receipt verification and fresh review required |
+| C3 Quant | `b3828a2e0eb933d5211737a53f4b8cfca3e750d5` | Author reports Python 3.11/3.14 63/63, schema 21/21, secret/compile/scope PASS | fresh non-author review RUNNING | DENIED until exact non-author PASS |
 
 No implementation candidate is currently eligible to merge into integration.
 
