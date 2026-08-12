@@ -20,7 +20,10 @@ receipts.
 | C2 Career | failed candidate `80b2a2dac8299590baab3aff76e3bf099f009d02`; replacement pending | Prior candidate: Python 3.11/3.14 73/73; shared schema 26/26 | FAIL: caller-forgeable Core boolean callbacks can promote official output | DENIED; concrete C0 cryptographic receipt verification and fresh review required |
 | C3 Quant | failed candidate `b3828a2e0eb933d5211737a53f4b8cfca3e750d5`; replacement in progress | Exact C0 archive/security gates and Python 3.11/3.14 63/63 independently passed | FAIL: P0=0, P1=1, P2=1 | DENIED; Core trust-envelope/handoff replacement and fresh review required |
 
-No implementation candidate is currently eligible to merge into integration.
+C1 is integrated as a domain candidate. C0, C2 and C3 remain in corrective
+implementation. The combined head also has open internal P1s INT-001/INT-002:
+real Core port/signing composition and shared server/AppShell/CLI mounting are
+not yet implemented, so C1 candidate admission is not product availability.
 
 ## Exact integration gates
 
