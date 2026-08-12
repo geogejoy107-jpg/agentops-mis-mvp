@@ -152,6 +152,12 @@ try {
       "--provenance-output", path.join(pathValidationBase, "flag-receipt.json"),
       "--allow-insecure-loopback-registry-contract", "1",
     ], "runtime_oci_export_arguments_invalid"],
+    ["localhost-insecure-registry", [
+      "--oci", `localhost:5000/agentops/openclaw@sha256:${digest}`,
+      "--output", path.join(pathValidationBase, "localhost-guest"),
+      "--provenance-output", path.join(pathValidationBase, "localhost-receipt.json"),
+      "--allow-insecure-loopback-registry-contract", "true",
+    ], "runtime_oci_export_insecure_registry_forbidden"],
     ["noncanonical-guest", [
       "--oci", `registry.invalid/agentops/openclaw@sha256:${digest}`,
       "--output", `${pathValidationBase}/nested/../guest`,
@@ -456,11 +462,18 @@ function createImageContext(context) {
 
 function createExtensionRequiredContext(context) {
   const root = path.join(context, "rootfs");
+  mkdirSync(path.join(root, "bin"), { recursive: true, mode: 0o555 });
+  writeFileSync(path.join(root, "bin/runtime"), "extension-contract-v1\n", { mode: 0o555 });
+  chmodSync(path.join(root, "bin/runtime"), 0o555);
   const longPath = path.join(root, ...Array.from({ length: 24 }, () => "segment1234"));
   mkdirSync(longPath, { recursive: true, mode: 0o555 });
   writeFileSync(path.join(longPath, "beyond-ustar.txt"), "extension-required\n", { mode: 0o444 });
   chmodSync(path.join(longPath, "beyond-ustar.txt"), 0o444);
-  writeFileSync(path.join(context, "Dockerfile"), "FROM scratch\nCOPY rootfs /\n", { mode: 0o444 });
+  writeFileSync(
+    path.join(context, "Dockerfile"),
+    'FROM scratch\nCOPY rootfs /\nCMD ["/bin/runtime"]\n',
+    { mode: 0o444 },
+  );
 }
 
 function pushedDigest(reference) {
@@ -495,7 +508,8 @@ async function realOciContract() {
   try {
     mustCommand(DOCKER, [
       "run", "--detach", "--rm", "--name", registryName,
-      "--publish", `127.0.0.1:${port}:5000`, "registry:2",
+      "--publish", `127.0.0.1:${port}:5000`,
+      "registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373",
     ], { stdio: ["ignore", "ignore", "ignore"] });
     await waitForRegistry(port);
     const context = path.join(working, "image");

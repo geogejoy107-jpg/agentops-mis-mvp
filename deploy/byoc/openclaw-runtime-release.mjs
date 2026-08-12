@@ -169,7 +169,7 @@ function validateReceipt(value, manifestBytes, provenanceBytes, trustRootBytes) 
   } catch {
     fail("runtime_release_manifest_invalid");
   }
-  if (/^(?:127\.0\.0\.1|localhost):[1-9][0-9]{0,4}\//.test(source.oci.name)) {
+  if (/^127\.0\.0\.1:[1-9][0-9]{0,4}\//.test(source.oci.name)) {
     fail("runtime_release_insecure_registry_provenance_rejected");
   }
   if (

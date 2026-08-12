@@ -77,7 +77,7 @@ function exactOciReference(value) {
 
 function loopbackRegistry(reference) {
   const registry = reference.name.split("/", 1)[0];
-  if (!/^(?:127\.0\.0\.1|localhost):[1-9][0-9]{0,4}$/.test(registry)) return false;
+  if (!/^127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(registry)) return false;
   return Number(registry.slice(registry.lastIndexOf(":") + 1)) <= 65_535;
 }
 

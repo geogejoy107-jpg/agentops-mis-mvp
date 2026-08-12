@@ -18,6 +18,8 @@ on:
       - "deploy/byoc/openclaw-runtime-real-runner-contract.mjs"
       - "deploy/byoc/openclaw-runtime-artifact/**"
       - "deploy/byoc/openclaw-runtime-manifest*.mjs"
+      - "deploy/byoc/openclaw-runtime-oci-export*.mjs"
+      - "deploy/byoc/openclaw-runtime-release*.mjs"
       - "deploy/byoc/openclaw-stdin-provider*.mjs"
       - "deploy/byoc/worker-entrypoint.mjs"
       - "ui/next-app/scripts/commercial-worker*.ts"
