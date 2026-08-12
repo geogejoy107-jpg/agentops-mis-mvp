@@ -52,6 +52,7 @@ jobs:
           node deploy/byoc/openclaw-executor-request-contract.mjs
           node deploy/byoc/openclaw-runtime-manifest-contract.mjs
           node deploy/byoc/openclaw-runtime-manifest-v2-contract.mjs
+          node deploy/byoc/openclaw-runtime-manifest-v2-release-contract.mjs
           node deploy/byoc/openclaw-runtime-rootfs-merkle-contract.mjs
           node deploy/byoc/openclaw-runtime-mount-policy-contract.mjs
           node deploy/byoc/openclaw-runtime-artifact/contract.mjs
@@ -220,7 +221,7 @@ jobs:
             --entrypoint /bin/sh \
             "${launcher_image}" -ec '
               stage=overlay_mount
-              trap '\''printf "a07_real_runner_stage=%s\n" "${stage}" >&2'\'' ERR
+              trap '\''status=$?; trap - 0; if [ "${status}" -ne 0 ]; then printf "a07_real_runner_stage=%s\n" "${stage}" >&2; fi; exit "${status}"'\'' 0
               mount -t overlay overlay -o lowerdir=/contract/lower,upperdir=/contract/upper,workdir=/contract/work /contract/merged
               stage=guest_mounts
               mkdir -p \
