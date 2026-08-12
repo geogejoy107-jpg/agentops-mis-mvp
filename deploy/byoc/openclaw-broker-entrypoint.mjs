@@ -216,7 +216,7 @@ function inspectDirectory(path, expectedUid, expectedGid, label) {
     || metadata.isSymbolicLink()
     || metadata.uid !== expectedUid
     || metadata.gid !== expectedGid
-    || (metadata.mode & 0o777) !== 0o750
+    || !new Set([0o700, 0o750]).has(metadata.mode & 0o777)
   ) {
     fail(`${label}_directory_permissions_invalid`);
   }

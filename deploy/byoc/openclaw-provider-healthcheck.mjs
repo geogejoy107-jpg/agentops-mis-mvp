@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { lstatSync, readFileSync } from "node:fs";
 import { request } from "node:http";
 import { isAbsolute, resolve } from "node:path";
 
@@ -7,8 +8,36 @@ const socketPath = process.env.OPENCLAW_PROVIDER_SOCKET
   || "/run/agentops-openclaw-provider/provider.sock";
 const expectedSchema = "agentops_openclaw_provider_health_v1";
 const maxResponseBytes = 8 * 1024;
+const boundaryStatePath = process.env.AGENTOPS_OPENCLAW_BOUNDARY_STATE_PATH || "";
 
 if (!isAbsolute(socketPath) || resolve(socketPath) !== socketPath) process.exit(1);
+if (boundaryStatePath) {
+  if (!isAbsolute(boundaryStatePath) || resolve(boundaryStatePath) !== boundaryStatePath) {
+    process.exit(1);
+  }
+  try {
+    const metadata = lstatSync(boundaryStatePath);
+    const state = JSON.parse(readFileSync(boundaryStatePath, "utf8"));
+    if (
+      !metadata.isFile()
+      || metadata.isSymbolicLink()
+      || metadata.uid !== process.getuid?.()
+      || metadata.gid !== process.getgid?.()
+      || (metadata.mode & 0o777) !== 0o600
+      || metadata.size < 2
+      || metadata.size > maxResponseBytes
+      || state?.schema !== "agentops_openclaw_boundary_supervisor_state_v1"
+      || state.ready !== true
+      || state.role !== "executor"
+      || state.backend_health_verified !== true
+      || state.external_gate_health_verified !== false
+      || state.external_gate_listener_metadata_verified !== true
+      || state.peercred_gate_process_started !== true
+    ) process.exit(1);
+  } catch {
+    process.exit(1);
+  }
+}
 
 const check = request({
   socketPath,

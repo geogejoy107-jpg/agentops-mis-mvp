@@ -107,7 +107,10 @@ try {
   assert.match(providerEntrypoint, /state\.activeRequest = requestSlot/);
   assert.match(providerEntrypoint, /provider_socket_directory_unavailable/);
   assert.match(providerEntrypoint, /provider_socket_directory_permissions_invalid/);
-  assert.match(providerEntrypoint, /\(directory\.mode & 0o777\) !== 0o750/);
+  assert.match(
+    providerEntrypoint,
+    /new Set\(\[0o700, 0o750\]\)\.has\(directory\.mode & 0o777\)/,
+  );
   assert.match(providerEntrypoint, /error\?\.code === "ECONNRESET"/);
   assert.doesNotMatch(providerEntrypoint, /O_NOFOLLOW\s*\|\|\s*0/);
   const entrypoint = readFileSync(join(moduleDirectory, "worker-entrypoint.mjs"), "utf8");

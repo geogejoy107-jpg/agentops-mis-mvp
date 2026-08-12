@@ -51,6 +51,7 @@ assert.doesNotMatch(broker, /agentops-provider\/openclaw|openclaw_config|signing
 assert.match(executor, /user: "1001:1000"/);
 assert.match(executor, /AGENTOPS_OPENCLAW_BOUNDARY_ROLE: executor/);
 assert.match(executor, /agentops-openclaw-provider-backend:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=1001,gid=1000/);
+assert.match(executor, /AGENTOPS_OPENCLAW_BOUNDARY_STATE_PATH=\/run\/agentops-openclaw-provider-backend\/supervisor-state\.json/);
 assert.doesNotMatch(executor, /agentops-openclaw-public|control_plane/);
 
 for (const boundary of [

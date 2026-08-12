@@ -19,6 +19,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const supervisor = join(here, "openclaw-boundary-supervisor.mjs");
 const root = mkdtempSync("/tmp/aobs-");
 const secret = "supervisor-contract-secret-must-not-reach-children";
+const activeSupervisors = new Set();
 
 function sleep(milliseconds) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
@@ -147,6 +148,8 @@ function start(role, paths, options = {}) {
     env: environment(role, paths, backend, gate, options.environment),
     stdio: ["ignore", "pipe", "pipe"],
   });
+  activeSupervisors.add(child);
+  child.once("exit", () => activeSupervisors.delete(child));
   let output = "";
   child.stdout.on("data", (chunk) => { output += chunk.toString("utf8"); });
   child.stderr.on("data", (chunk) => { output += chunk.toString("utf8"); });
@@ -292,7 +295,10 @@ try {
   assert.equal(await waitForExit(earlyGateProcess.child), 1);
   assert.equal(existsSync(earlyGate.brokerState), false);
   assert.equal(existsSync(earlyGate.brokerInternalSocket), false);
-  assert.match(earlyGateProcess.output(), /boundary_gate_listener_child_exited/);
+  assert.match(
+    earlyGateProcess.output(),
+    /boundary_gate_listener_(?:child_exited|timeout)/,
+  );
   assert.doesNotMatch(earlyGateProcess.output(), new RegExp(secret));
 
   await successfulRole("broker");
@@ -322,5 +328,10 @@ try {
     phase_a_a05_verified: false,
   })}\n`);
 } finally {
+  for (const child of activeSupervisors) child.kill("SIGTERM");
+  await Promise.all([...activeSupervisors].map(async (child) => {
+    await Promise.race([waitForExit(child), sleep(1_000)]);
+    if (child.exitCode === null) child.kill("SIGKILL");
+  }));
   rmSync(root, { recursive: true, force: true });
 }

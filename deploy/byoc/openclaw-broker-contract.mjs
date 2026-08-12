@@ -67,6 +67,7 @@ function executionRequest(prompt, timeoutSeconds = 5) {
 function startExecutor() {
   return new Promise((resolveStart, rejectStart) => {
     executor = createServer((incoming, response) => {
+      response.once("error", () => {});
       privateCalls += 1;
       const chunks = [];
       incoming.on("data", (chunk) => chunks.push(chunk));
@@ -96,6 +97,8 @@ function startExecutor() {
         });
       });
     });
+    executor.on("connection", (socket) => socket.on("error", () => {}));
+    executor.on("clientError", (_error, socket) => socket.destroy());
     executor.once("error", rejectStart);
     executor.listen(privateSocket, () => {
       executor.off("error", rejectStart);
@@ -197,6 +200,7 @@ try {
   assert.doesNotMatch(source, /execFile|spawn\(|fork\(/);
   assert.doesNotMatch(source, /createConnection\(\{\s*host|listen\([^)]*,\s*["'](?:0\.0\.0\.0|127\.0\.0\.1|localhost)/);
   assert.equal((source.match(/publicResponse\.once\("close", cancel\)/g) || []).length, 1);
+  assert.match(source, /new Set\(\[0o700, 0o750\]\)\.has\(metadata\.mode & 0o777\)/);
 
   await startExecutor();
   broker = spawnBroker();
@@ -322,6 +326,15 @@ try {
   assert.equal(existsSync(publicSocket), false);
   assert.doesNotMatch(brokerOutput, new RegExp(secretCanary));
 
+  chmodSync(publicRoot, 0o700);
+  brokerOutput = "";
+  broker = spawnBroker();
+  await waitForBrokerReady();
+  broker.kill("SIGTERM");
+  assert.equal(await waitForExit(broker), 0);
+  assert.equal(existsSync(publicSocket), false);
+  chmodSync(publicRoot, 0o750);
+
   chmodSync(privateSocket, 0o666);
   brokerOutput = "";
   const badPrivateMode = spawnBroker();
@@ -362,6 +375,7 @@ try {
     broker_shutdown_cancellation_forwarded: true,
     public_socket_mode_0660_verified: true,
     public_directory_mode_0750_verified: true,
+    private_backend_directory_mode_0700_supported: true,
     private_socket_mode_0660_verified: true,
     private_directory_mode_0750_verified: true,
     private_socket_metadata_checked_before_connect: true,

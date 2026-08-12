@@ -204,7 +204,9 @@ function assertStaticCustomerBoundary() {
     || !openClawProviderEntrypoint.includes("state.activeRequest = requestSlot")
     || !openClawProviderEntrypoint.includes("provider_socket_directory_unavailable")
     || !openClawProviderEntrypoint.includes("provider_socket_directory_permissions_invalid")
-    || !openClawProviderEntrypoint.includes("(directory.mode & 0o777) !== 0o750")
+    || !openClawProviderEntrypoint.includes(
+      "new Set([0o700, 0o750]).has(directory.mode & 0o777)",
+    )
     || !openClawProviderEntrypoint.includes('error?.code === "ECONNRESET"')
     || /O_NOFOLLOW\s*\|\|\s*0/.test(openClawProviderEntrypoint)
     || openClawProvider.includes("AGENTOPS_AGENT_TOKEN")

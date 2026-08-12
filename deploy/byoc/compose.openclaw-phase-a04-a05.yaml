@@ -102,7 +102,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - OPENCLAW_PROVIDER_SOCKET=/run/agentops-openclaw-provider-backend/provider.sock node /usr/local/lib/agentops/openclaw-provider-healthcheck.mjs
+        - OPENCLAW_PROVIDER_SOCKET=/run/agentops-openclaw-provider-backend/provider.sock AGENTOPS_OPENCLAW_BOUNDARY_STATE_PATH=/run/agentops-openclaw-provider-backend/supervisor-state.json node /usr/local/lib/agentops/openclaw-provider-healthcheck.mjs
       interval: 1s
       timeout: 2s
       retries: 30

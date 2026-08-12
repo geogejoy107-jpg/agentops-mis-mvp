@@ -596,7 +596,7 @@ async function prepareSocket(configuration) {
     || directory.isSymbolicLink()
     || directory.uid !== process.getuid()
     || directory.gid !== configuration.socketGid
-    || (directory.mode & 0o777) !== 0o750
+    || !new Set([0o700, 0o750]).has(directory.mode & 0o777)
   ) {
     fail("provider_socket_directory_permissions_invalid");
   }

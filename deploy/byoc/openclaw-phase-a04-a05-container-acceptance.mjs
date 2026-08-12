@@ -71,7 +71,10 @@ const SUPERVISOR_STARTUP_ERROR_CODES = new Set([
   "boundary_backend_health_child_exited",
   "boundary_backend_health_spawn_failed",
   "boundary_backend_health_timeout",
+  "boundary_backend_exit",
+  "boundary_child_groups_not_empty",
   "boundary_environment_unknown",
+  "boundary_gate_exit",
   "boundary_gate_listener_child_exited",
   "boundary_gate_listener_spawn_failed",
   "boundary_gate_listener_timeout",
@@ -81,6 +84,8 @@ const SUPERVISOR_STARTUP_ERROR_CODES = new Set([
   "boundary_internal_state_not_clean",
   "boundary_role_invalid",
   "boundary_shutdown_requested_during_startup",
+  "boundary_shutdown_grace_ms_invalid",
+  "boundary_startup_timeout_ms_invalid",
   "boundary_test_override_forbidden",
   "openclaw_boundary_supervisor_failed",
 ]);
@@ -95,11 +100,20 @@ function boundedComposeStartupDiagnostics(composeFiles, project, environment) {
       ["ps", "--all", "--format", "json"],
       { accepted: [0, 1], code: "compose_diagnostics_unavailable" },
     ).trim();
-    const parsed = output
-      ? (output.startsWith("[")
-          ? JSON.parse(output)
-          : output.split("\n").map((line) => JSON.parse(line)))
-      : [];
+    let parsed = [];
+    if (output.startsWith("[")) {
+      const value = JSON.parse(output);
+      parsed = Array.isArray(value) ? value : [];
+    } else if (output) {
+      parsed = output.split("\n").flatMap((line) => {
+        try {
+          const value = JSON.parse(line);
+          return value && typeof value === "object" && !Array.isArray(value) ? [value] : [];
+        } catch {
+          return [];
+        }
+      });
+    }
     rows = parsed.slice(0, 3).map((value) => {
       const id = String(value.ID || "");
       let fixedCodes = [];
@@ -115,11 +129,15 @@ function boundedComposeStartupDiagnostics(composeFiles, project, environment) {
           .filter((line) => SUPERVISOR_STARTUP_ERROR_CODES.has(line))
           .slice(-3);
       }
+      const rawExitCode = value.ExitCode;
+      const exitCode = rawExitCode === undefined || rawExitCode === null || rawExitCode === ""
+        ? null
+        : Number(rawExitCode);
       return {
         service: String(value.Service || "").slice(0, 40),
         state: String(value.State || "").slice(0, 20),
         health: String(value.Health || "").slice(0, 20),
-        exit_code: Number.isSafeInteger(Number(value.ExitCode)) ? Number(value.ExitCode) : null,
+        exit_code: Number.isSafeInteger(exitCode) ? exitCode : null,
         fixed_error_codes: fixedCodes,
       };
     });
@@ -426,6 +444,9 @@ async function main() {
         !== "service_healthy"
       || !composeConfiguration.services?.executor?.healthcheck
     ) fail("production_compose_health_ordering_invalid");
+    let worker;
+    let broker;
+    let executor;
     try {
       compose(
         composeFiles,
@@ -434,27 +455,27 @@ async function main() {
         ["up", "--detach", "--no-build"],
         { timeout: 120_000, code: "production_compose_start_failed" },
       );
+      worker = serviceContainer(composeFiles, project, environment, "worker");
+      broker = serviceContainer(composeFiles, project, environment, "broker");
+      executor = serviceContainer(composeFiles, project, environment, "executor");
+      waitFor("services_running", () => [worker, broker, executor].every((id) => (
+        inspectContainer(id).State.Running === true
+      )));
+      waitFor("peercred_gate_sockets_ready", () => {
+        docker([
+          "exec", worker, "node", "-e", socketMetadataProbe,
+          PUBLIC_SOCKET, "1100", "2100",
+        ], { timeout: 5_000, code: "public_gate_socket_not_ready" });
+        docker([
+          "exec", broker, "node", "-e", socketMetadataProbe,
+          PRIVATE_SOCKET, "1001", "2200",
+        ], { timeout: 5_000, code: "private_gate_socket_not_ready" });
+        return true;
+      });
     } catch {
       boundedComposeStartupDiagnostics(composeFiles, project, environment);
       fail("production_compose_start_failed");
     }
-    const worker = serviceContainer(composeFiles, project, environment, "worker");
-    const broker = serviceContainer(composeFiles, project, environment, "broker");
-    const executor = serviceContainer(composeFiles, project, environment, "executor");
-    waitFor("services_running", () => [worker, broker, executor].every((id) => (
-      inspectContainer(id).State.Running === true
-    )));
-    waitFor("peercred_gate_sockets_ready", () => {
-      docker([
-        "exec", worker, "node", "-e", socketMetadataProbe,
-        PUBLIC_SOCKET, "1100", "2100",
-      ], { timeout: 5_000, code: "public_gate_socket_not_ready" });
-      docker([
-        "exec", broker, "node", "-e", socketMetadataProbe,
-        PRIVATE_SOCKET, "1001", "2200",
-      ], { timeout: 5_000, code: "private_gate_socket_not_ready" });
-      return true;
-    });
     if (docker(["exec", worker, "uname", "-s"]).trim() !== "Linux") {
       fail("linux_container_kernel_required");
     }
