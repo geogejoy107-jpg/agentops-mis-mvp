@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
+ARG COMMERCIAL_BASE_IMAGE
 FROM --platform=linux/amd64 node:22.23.2-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066 AS openclaw-guest-root
 WORKDIR /opt/openclaw
 COPY deploy/byoc/openclaw-runtime-artifact/package.json \
@@ -24,10 +25,17 @@ RUN find /opt/openclaw /opt/agentops -xdev -type d -exec chmod 0555 {} + \
       /opt/agentops-worker /opt/agentops-worker/workspace \
     && install -o 0 -g 0 -m 0400 /dev/null /run/secrets/openclaw_config \
     && find / -xdev -type f -perm /6000 -exec chmod a-s {} + \
+    && find / -xdev -type f -links +1 -exec sh -ec '\
+      for file do \
+        temporary="$(mktemp --tmpdir="$(dirname "$file")" .agentops-unlink.XXXXXX)"; \
+        cp --reflink=never --preserve=mode,ownership,timestamps -- "$file" "$temporary"; \
+        mv -fT -- "$temporary" "$file"; \
+      done \
+    ' sh {} + \
     && test -z "$(find / -xdev -type f -perm /6000 -print -quit)" \
+    && test -z "$(find / -xdev -type f -links +1 -print -quit)" \
     && test -f /opt/openclaw/node_modules/openclaw/dist/plugin-sdk/agent-runtime.js
 
-ARG COMMERCIAL_BASE_IMAGE
 FROM ${COMMERCIAL_BASE_IMAGE} AS runtime
 ARG TARGETPLATFORM
 USER root

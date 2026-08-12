@@ -602,15 +602,27 @@ async function startExecutorServiceWithDependencies(configuration, preflight, de
     request.resume();
     writeJson(response, 404, { schema: "agentops_openclaw_executor_error_v1", error: "RouteNotFound" });
   });
-  await new Promise((resolveListen, rejectListen) => {
-    server.once("error", rejectListen);
-    server.listen(configuration.socketPath, () => {
-      server.off("error", rejectListen);
-      resolveListen();
+  let listening = false;
+  try {
+    await new Promise((resolveListen, rejectListen) => {
+      server.once("error", rejectListen);
+      server.listen(configuration.socketPath, () => {
+        server.off("error", rejectListen);
+        listening = true;
+        resolveListen();
+      });
     });
-  });
-  chmodSync(configuration.socketPath, 0o660);
-  chownSync(configuration.socketPath, socketOwner.uid, socketOwner.gid);
+    chmodSync(configuration.socketPath, 0o660);
+    chownSync(configuration.socketPath, socketOwner.uid, socketOwner.gid);
+  } catch (error) {
+    if (listening) {
+      await new Promise((resolveClose) => server.close(() => resolveClose()));
+    }
+    try { unlinkSync(configuration.socketPath); } catch (cleanupError) {
+      if (cleanupError?.code !== "ENOENT") error.cleanupError = cleanupError;
+    }
+    throw error;
+  }
   let shutdownPromise = null;
   const shutdown = () => {
     if (shutdownPromise) return shutdownPromise;

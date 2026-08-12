@@ -157,6 +157,8 @@ assert.match(source, /verifyRuntimeRootBinding\(rootFd, configuration\.runtimeRo
 assert.match(source, /argv_template: Object\.freeze\(manifestBody\.argv\.map/);
 assert.match(source, /runtimeHandles: Object\.freeze\(\{ execFd, rootFd \}\)/);
 assert.match(source, /closePreflightRuntimeHandles\(preflight\)/);
+assert.match(source, /if \(listening\) \{\s*await new Promise\(\(resolveClose\) => server\.close/);
+assert.match(source, /try \{ unlinkSync\(configuration\.socketPath\); \} catch \(cleanupError\)/);
 assert.match(source, /catch \(error\) \{\s*closeSync\(execFd\);\s*closeSync\(rootFd\);/);
 assert.match(source, /inspectDelegatedCgroupRoot/);
 assert.match(source, /ExecutorReplayJournal\.open/);
@@ -363,6 +365,7 @@ console.log(JSON.stringify({
   shutdown_cancels_active_dispatch: true,
   failure_response_redacted: true,
   socket_shutdown_cleanup_verified: true,
+  startup_socket_failure_cleanup_present: true,
   health_ready: true,
   injected_runner_success_state_transition_verified: true,
   real_runtime_process_spawned: false,

@@ -54,12 +54,18 @@ assert.match(
   /FROM --platform=linux\/amd64 node:22\.23\.2-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066 AS openclaw-guest-root/,
 );
 assert.match(a07Dockerfile, /ARG COMMERCIAL_BASE_IMAGE/);
+assert.ok(
+  a07Dockerfile.indexOf("ARG COMMERCIAL_BASE_IMAGE") < a07Dockerfile.indexOf("FROM --platform=linux/amd64"),
+  "commercial_base_arg_must_be_global_before_first_from",
+);
 assert.match(a07Dockerfile, /FROM \$\{COMMERCIAL_BASE_IMAGE\} AS runtime/);
 assert.match(a07Dockerfile, /ARG TARGETPLATFORM/);
 assert.match(a07Dockerfile, /test "\$\{TARGETPLATFORM\}" = "linux\/amd64"/);
 assert.match(a07Dockerfile, /openclaw-runtime-artifact\/package-lock\.json \.\//);
 assert.match(a07Dockerfile, /npm ci --ignore-scripts --omit=dev --no-audit --no-fund/);
 assert.match(a07Dockerfile, /test "\$\(node --version\)" = "v22\.23\.2"/);
+assert.match(a07Dockerfile, /find \/ -xdev -type f -links \+1 -exec sh -ec/);
+assert.match(a07Dockerfile, /test -z "\$\(find \/ -xdev -type f -links \+1 -print -quit\)"/);
 assert.match(a07Dockerfile, /\.version'\)" = "2026\.5\.4"/);
 assert.match(
   a07Dockerfile,
