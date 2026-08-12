@@ -67,10 +67,11 @@ function fail(code, cause) {
 function stableRuntimeErrorCode(error, depth = 0, seen = new Set()) {
   if (!error || depth > 8 || seen.has(error)) return undefined;
   if (typeof error === "object" || typeof error === "function") seen.add(error);
-  if (
-    typeof error?.code === "string"
-    && /^runtime_oci_export_[a-z0-9_]+$/.test(error.code)
-  ) return error.code;
+  if (typeof error?.code === "string") {
+    if (/^runtime_oci_export_[a-z0-9_]+$/.test(error.code)) return error.code;
+    const rootfs = /^runtime_rootfs_merkle_([a-z0-9_]+)$/.exec(error.code);
+    if (rootfs) return `runtime_oci_export_rootfs_merkle_${rootfs[1]}`;
+  }
   const causeCode = stableRuntimeErrorCode(error?.cause, depth + 1, seen);
   if (causeCode) return causeCode;
   if (Array.isArray(error?.errors)) {
@@ -1248,6 +1249,7 @@ export async function exportOpenClawRuntimeOciRootfs(input) {
   let working;
   let guestPublished = false;
   let provenancePublished = false;
+  let stage = "tool_preflight";
   try {
     docker = pinExecutable(DOCKER_PATH, "docker");
     tar = pinExecutable(TAR_PATH, "tar");
@@ -1256,8 +1258,11 @@ export async function exportOpenClawRuntimeOciRootfs(input) {
     if (!tarVersion.startsWith("tar (GNU tar) ")) fail("runtime_oci_export_gnu_tar_required");
     const mvVersion = runPinned(mv, "mv", ["--version"]).stdout;
     if (!mvVersion.startsWith("mv (GNU coreutils) ")) fail("runtime_oci_export_gnu_mv_required");
+    stage = "image_inspect";
     const image = inspectImage(docker, reference, allowInsecureLoopback);
+    stage = "container_create";
     containerId = createContainer(docker, reference, image.image_id);
+    stage = "working_root_prepare";
     working = mkdtempSync(path.join(
       destinations.guest.parent,
       `.${path.basename(destinations.guest.path)}.oci-export-`,
@@ -1269,23 +1274,32 @@ export async function exportOpenClawRuntimeOciRootfs(input) {
     // The first complete export is only inspected. A second export from the same
     // never-started container is validated before each header reaches tar, and
     // its full hash must match. Any late drift can only touch this reserved 0700 root.
+    stage = "first_export";
     await exportToArchive(docker, containerId, archive);
+    stage = "first_validate";
     const firstPass = inspectOpenClawRuntimeTarArchive(archive);
+    stage = "second_extract";
     const exportSha256 = await exportDirectlyToTar(
       docker, tar, containerId, stagingRoot, firstPass,
     );
+    stage = "root_metadata";
     rmSync(archive, { force: true });
     chownSync(stagingRoot, 0, 0);
     chmodSync(stagingRoot, 0o555);
+    stage = "sync_before_merkle";
     syncTree(stagingRoot);
+    stage = "rootfs_merkle";
     const rootfs = computeOpenClawRuntimeRootfsMerkle(
       stagingRoot,
       OPENCLAW_RUNTIME_CANONICAL_GUEST_MOUNT_PATHS,
     );
+    stage = "sync_after_merkle";
     syncTree(stagingRoot);
+    stage = "guest_publish";
     publishGuestRoot(mv, stagingRoot, destinations.guest.path);
     guestPublished = true;
     syncDirectory(destinations.guest.parent);
+    stage = "published_identity";
     const publishedGuestMetadata = lstatSync(destinations.guest.path, { bigint: true });
     const publishedGuestDescriptor = openSync(
       destinations.guest.path,
@@ -1324,6 +1338,7 @@ export async function exportOpenClawRuntimeOciRootfs(input) {
         schema: OPENCLAW_RUNTIME_OCI_EXPORT_PROVENANCE_SCHEMA,
         source_image_id: image.image_id,
       });
+      stage = "provenance_publish";
       receipt = publishProvenanceReceipt(
         working,
         destinations.provenance.path,
@@ -1353,7 +1368,7 @@ export async function exportOpenClawRuntimeOciRootfs(input) {
     }
     const stableCode = stableRuntimeErrorCode(error);
     if (stableCode) fail(stableCode, error);
-    fail("runtime_oci_export_failed", error);
+    fail(`runtime_oci_export_stage_${stage}_failed`, error);
   } finally {
     if (docker) removeContainer(docker, containerId);
     if (working) rmSync(working, { recursive: true, force: true });

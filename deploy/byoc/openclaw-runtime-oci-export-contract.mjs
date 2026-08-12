@@ -131,7 +131,9 @@ for (const required of [
   'const MAX_LOCAL_PAX_BYTES = 16 * 1024',
   'const MAX_LOCAL_PAX_RECORDS = 2',
   'function stableRuntimeErrorCode(error, depth = 0, seen = new Set())',
+  'return `runtime_oci_export_rootfs_merkle_${rootfs[1]}`',
   'const stableCode = stableRuntimeErrorCode(error)',
+  'fail(`runtime_oci_export_stage_${stage}_failed`, error)',
   'expected.local_pax_header_sha256 !== header.local_pax_header_sha256',
   'expected.local_pax_payload_sha256 !== header.local_pax_payload_sha256',
 ]) assert.ok(source.includes(required), `missing static boundary: ${required}`);
