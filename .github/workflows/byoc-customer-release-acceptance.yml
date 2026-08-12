@@ -229,6 +229,30 @@ jobs:
             and .credentials_omitted == true
           ' "${receipt}" >/dev/null
 
+      - name: Exercise source-free TypeScript Worker container without provider execution
+        run: |
+          set -euo pipefail
+          receipt="${RUNNER_TEMP}/customer-worker-container.json"
+          timeout 90s node \
+            "${AGENTOPS_CUSTOMER_RELEASE_ROOT}/deploy/byoc/worker-container-acceptance.mjs" \
+            --release-root "${AGENTOPS_CUSTOMER_RELEASE_ROOT}" > "${receipt}"
+          jq -e --arg source "${GITHUB_SHA}" '
+            .ok == true
+            and .contract == "agentops_byoc_typescript_worker_container_v1"
+            and .source_revision == $source
+            and .image_digest_verified == true
+            and .source_checkout_required == false
+            and .worker_container_started == true
+            and .worker_health_verified == true
+            and .no_task_receipt_verified == true
+            and .provider_connections == 0
+            and .provider_call_performed == false
+            and .token_in_argv == false
+            and .token_in_receipt == false
+            and .token_in_health == false
+            and .token_omitted == true
+          ' "${receipt}" >/dev/null
+
       - name: Initialize first Owner through the source-free customer command
         run: |
           set -euo pipefail

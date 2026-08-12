@@ -114,8 +114,16 @@ function assertStaticCustomerBoundary() {
     join(moduleDirectory, "owner-bootstrap-entrypoint.mjs"),
     "utf8",
   );
+  const ownerBootstrap = readFileSync(
+    join(sourceRepository, "ui/next-app/scripts/bootstrap-owner.ts"),
+    "utf8",
+  );
   const workerEntrypoint = readFileSync(join(moduleDirectory, "worker-entrypoint.mjs"), "utf8");
   const workerHealthcheck = readFileSync(join(moduleDirectory, "worker-healthcheck.mjs"), "utf8");
+  const workerContainerAcceptance = readFileSync(
+    join(moduleDirectory, "worker-container-acceptance.mjs"),
+    "utf8",
+  );
   if (
     !ownerService.includes("profiles: [owner-bootstrap]")
     || !ownerService.includes("--postgres-migrator")
@@ -134,6 +142,8 @@ function assertStaticCustomerBoundary() {
     || !ownerEntrypoint.includes('["--import", "tsx", "scripts/bootstrap-owner.ts"')
     || /spawn\(\s*"npm"/.test(ownerEntrypoint)
     || ownerEntrypoint.includes("childEnvironment.PGPASSWORD =")
+    || !ownerBootstrap.includes("enforceMigrationAuthority: true")
+    || ownerBootstrap.includes("enforceRuntimeBoundary: false")
   ) {
     fail("release_owner_bootstrap_boundary_invalid");
   }
@@ -147,6 +157,10 @@ function assertStaticCustomerBoundary() {
     || !workerEntrypoint.includes("direct_agent_token_environment_forbidden")
     || !workerEntrypoint.includes("worker_receipt_boundary_invalid")
     || !workerHealthcheck.includes("process.kill(payload.pid, 0)")
+    || !workerContainerAcceptance.includes("agentops_byoc_typescript_worker_container_v1")
+    || !workerContainerAcceptance.includes("provider_connections")
+    || !workerContainerAcceptance.includes("agent_token_exposed_by_container")
+    || !workerContainerAcceptance.includes("org.opencontainers.image.revision")
   ) {
     fail("release_worker_boundary_invalid");
   }
@@ -208,6 +222,10 @@ function assertStaticCustomerBoundary() {
     || !consumer.includes('and .operation == "commercial_owner_bootstrap"')
     || !consumer.includes('and .error == "owner_already_initialized"')
     || !consumer.includes("human_auth.owner_bootstrap")
+    || !consumer.includes("/deploy/byoc/worker-container-acceptance.mjs")
+    || !consumer.includes('and .contract == "agentops_byoc_typescript_worker_container_v1"')
+    || !consumer.includes("and .provider_connections == 0")
+    || !consumer.includes("and .token_in_argv == false")
   ) {
     fail("release_consumer_contract_missing");
   }
@@ -354,6 +372,14 @@ try {
   if (forbidden.length) fail("release_source_or_build_input_present");
   if ((readFileSync(join(output, "owner-init.sh")).length || 0) < 1) {
     fail("release_owner_bootstrap_operator_missing");
+  }
+  if (
+    (readFileSync(
+      join(output, "deploy/byoc/worker-container-acceptance.mjs"),
+      "utf8",
+    ).length || 0) < 1
+  ) {
+    fail("release_worker_container_acceptance_missing");
   }
 
   writeFileSync(join(output, "compose.override.yaml"), "services: {}\n", "utf8");
@@ -518,6 +544,7 @@ exit 0
     owner_bootstrap_entitlement_boundary_unchanged: true,
     source_free_typescript_worker_profiles_packaged: true,
     worker_file_secret_and_health_lease_verified: true,
+    worker_container_customer_acceptance_required: true,
     real_provider_execution_performed: false,
     failed_health_stack_stopped: true,
     tamper_refused: true,

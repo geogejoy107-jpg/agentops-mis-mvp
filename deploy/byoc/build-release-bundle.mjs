@@ -33,6 +33,7 @@ const INPUTS = [
   ["deploy/byoc/RELEASE_BUNDLE.md", "README.md", 0o600],
   ["deploy/byoc/install.sh", "install.sh", 0o700],
   ["deploy/byoc/owner-init.sh", "owner-init.sh", 0o700],
+  ["deploy/byoc/worker-container-acceptance.mjs", "deploy/byoc/worker-container-acceptance.mjs", 0o700],
   ["deploy/byoc/backup.sh", "deploy/byoc/backup.sh", 0o700],
   ["deploy/byoc/restore-drill.sh", "deploy/byoc/restore-drill.sh", 0o700],
   ["deploy/byoc/postgres-destructive-database.sh", "deploy/byoc/postgres-destructive-database.sh", 0o700],

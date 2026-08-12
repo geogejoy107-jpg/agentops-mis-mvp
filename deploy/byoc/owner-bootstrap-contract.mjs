@@ -28,6 +28,10 @@ try {
     join(moduleDirectory, "owner-bootstrap-entrypoint.mjs"),
     "utf8",
   );
+  const bootstrap = readFileSync(
+    join(repositoryRoot, "ui/next-app/scripts/bootstrap-owner.ts"),
+    "utf8",
+  );
   const packageManifest = JSON.parse(
     readFileSync(join(repositoryRoot, "ui/next-app/package.json"), "utf8"),
   );
@@ -50,6 +54,8 @@ try {
   assert.doesNotMatch(helper, /spawn\(\s*"npm"/);
   assert.equal(typeof packageManifest.dependencies?.tsx, "string");
   assert.doesNotMatch(helper, /childEnvironment\.PGPASSWORD\s*=/);
+  assert.match(bootstrap, /enforceMigrationAuthority:\s*true/);
+  assert.doesNotMatch(bootstrap, /enforceRuntimeBoundary:\s*false/);
   assert.match(helper, /delete childEnvironment\.AGENTOPS_POSTGRES_MIGRATOR_PASSWORD_FILE/);
   assert.match(operator, /set \+x/);
   assert.match(operator, /--password-stdin/);
@@ -160,6 +166,7 @@ printf '%s\n' '{"ok":true,"operation":"commercial_owner_bootstrap","user":{"user
     password_environment_omitted: true,
     password_receipt_omitted: true,
     migrator_secret_only: true,
+    migration_authority_required: true,
     entitlement_boundary_unchanged: true,
     safe_owner_receipt_fields_preserved: true,
   })}\n`);

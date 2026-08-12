@@ -112,6 +112,7 @@ export type SchemaCommandOptions = Readonly<{
   runtimePassword?: string;
   entitlementAdminRole?: string;
   entitlementAdminPassword?: string;
+  enforceMigrationAuthority?: boolean;
   enforceRuntimeBoundary?: boolean;
   provisionRoleBoundary?: boolean;
 }>;
@@ -3033,6 +3034,9 @@ export async function runPostgresSchemaCommand(
             roleProvisioningContext,
           );
         }
+      } else if (options.enforceMigrationAuthority) {
+        failurePhase = "migration_authority";
+        await assertMigrationAuthority(client, applicationSchema);
       } else if (
         options.enforceRuntimeBoundary ?? isProductionDeployment()
       ) {

@@ -32,7 +32,7 @@ SECRET_PATTERNS = [
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+"),
     re.compile(r"agtok_[A-Za-z0-9_]+"),
     re.compile(r"agtsess_[A-Za-z0-9_]+"),
-    re.compile(r"sk-[A-Za-z0-9]{8,}"),
+    re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9]{8,}"),
     re.compile(r"ntn_[A-Za-z0-9]{8,}"),
     re.compile(r"github_pat_[A-Za-z0-9_]+"),
     re.compile(r"gh[opsu]_[A-Za-z0-9_]+"),

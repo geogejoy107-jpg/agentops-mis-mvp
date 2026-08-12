@@ -82,12 +82,13 @@ async function main() {
     "owner_bootstrap",
   );
   try {
-    const dsn = roleFixture.runtimeDsn;
+    const ownerDsn = roleFixture.ownerDsn;
+    const runtimeDsn = roleFixture.runtimeDsn;
     const migration = roleFixture.migration;
     assert.equal(migration.schema_contract, SCHEMA_CONTRACT);
     assert.equal(migration.applied_count, POSTGRES_MIGRATION_MANIFEST.length);
 
-    const forbiddenArg = await runBootstrap(dsn, [
+    const forbiddenArg = await runBootstrap(ownerDsn, [
       "--workspace-id",
       "ws_bootstrap_contract",
       "--username",
@@ -98,7 +99,7 @@ async function main() {
     assert.equal(forbiddenArg.payload.error, "password_argv_forbidden");
 
     const weakPassword = await runBootstrap(
-      dsn,
+      ownerDsn,
       [
         "--workspace-id",
         "ws_bootstrap_contract",
@@ -113,8 +114,26 @@ async function main() {
     assert.equal(weakPassword.payload.error, "password_length_invalid");
 
     const password = `Owner-${randomBytes(24).toString("base64url")}Aa1!`;
+    const runtimeDenied = await runBootstrap(
+      runtimeDsn,
+      [
+        "--workspace-id",
+        "ws_runtime_owner_forbidden",
+        "--username",
+        "runtime-owner-forbidden",
+        "--password-stdin",
+      ],
+      password,
+      roleFixture,
+    );
+    assert.equal(runtimeDenied.code, 1);
+    assert.equal(
+      runtimeDenied.payload.error,
+      "postgres_migration_role_not_owner",
+    );
+
     const created = await runBootstrap(
-      dsn,
+      ownerDsn,
       [
         "--workspace-id",
         "ws_bootstrap_contract",
@@ -163,7 +182,7 @@ async function main() {
     assert.equal(JSON.stringify(rows.rows).includes(password), false);
 
     const duplicate = await runBootstrap(
-      dsn,
+      ownerDsn,
       [
         "--workspace-id",
         "ws_bootstrap_contract",
@@ -184,6 +203,7 @@ async function main() {
       schema_fresh: true,
       password_argv_rejected: true,
       weak_password_rejected: true,
+      runtime_owner_bootstrap_rejected: true,
       owner_created_once: true,
       duplicate_owner_rejected: true,
       scrypt_hash_only: true,

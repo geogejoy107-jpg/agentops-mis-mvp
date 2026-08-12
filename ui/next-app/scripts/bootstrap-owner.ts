@@ -220,6 +220,7 @@ async function bootstrap() {
   try {
     const readiness = await runPostgresSchemaCommand("check", {
       connectionString: dsn,
+      enforceMigrationAuthority: true,
     });
     client = new Client({
       connectionString: dsn,
