@@ -106,8 +106,9 @@ jobs:
             and .public_backend_process_identity_unchanged == true
             and .private_backend_process_identity_unchanged == true
             and .peercred_check_precedes_upstream_connect_contract_verified == true
-            and .production_executor_healthcheck_verified == true
-            and .production_executor_before_broker_ordering_verified == true
+            and .production_executor_operational_healthcheck_verified == true
+            and .production_executor_operational_startup_ordering_verified == true
+            and .healthcheck_security_boundary_verified == false
             and .kernel_so_peercred_verified == true
             and .candidate_source_only == true
             and .interim_provider_identity == true

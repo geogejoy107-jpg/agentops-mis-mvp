@@ -229,6 +229,7 @@ export function backendEnvironment(configuration, environment = process.env) {
       AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_PATH: configuration.internalSocket,
       AGENTOPS_OPENCLAW_BROKER_PRIVATE_SOCKET_PATH: configuration.privateSocket,
       AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_GID: String(process.getgid?.()),
+      AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_DIRECTORY_MODE: String(0o700),
     };
   }
   return {
@@ -236,6 +237,7 @@ export function backendEnvironment(configuration, environment = process.env) {
     ...copyAllowed(environment, EXECUTOR_BACKEND_ENVIRONMENT),
     OPENCLAW_PROVIDER_SOCKET: configuration.internalSocket,
     OPENCLAW_PROVIDER_SOCKET_GID: String(process.getgid?.()),
+    OPENCLAW_PROVIDER_SOCKET_DIRECTORY_MODE: String(0o700),
   };
 }
 

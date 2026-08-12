@@ -199,7 +199,10 @@ try {
   assert.doesNotMatch(entrypointSource, /O_NOFOLLOW\s*\|\|\s*0/);
   assert.match(entrypointSource, /provider_socket_directory_unavailable/);
   assert.match(entrypointSource, /provider_socket_directory_permissions_invalid/);
-  assert.match(entrypointSource, /new Set\(\[0o700, 0o750\]\)\.has\(directory\.mode & 0o777\)/);
+  assert.match(
+    entrypointSource,
+    /\(directory\.mode & 0o777\) !== configuration\.socketDirectoryMode/,
+  );
   assert.match(entrypointSource, /error\?\.code === "ECONNRESET"/);
   const fakeSource = `#!/usr/bin/env node
 import { spawn } from "node:child_process";
@@ -290,9 +293,15 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
   chmodSync(root, 0o750);
 
   chmodSync(root, 0o700);
+  const privateDirectoryWithoutOverride = spawnSync(process.execPath, [entrypoint], {
+    cwd: root,
+    encoding: "utf8",
+    env: environment,
+  });
+  assert.equal(privateDirectoryWithoutOverride.status, 78);
   const privateDirectoryProvider = spawn(process.execPath, [entrypoint], {
     cwd: root,
-    env: environment,
+    env: { ...environment, OPENCLAW_PROVIDER_SOCKET_DIRECTORY_MODE: "448" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   await waitForSocket(privateDirectoryProvider);
@@ -385,6 +394,8 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
     external_gate_health_verified: false,
     external_gate_listener_metadata_verified: true,
     peercred_gate_process_started: true,
+    peercred_runtime_verified: false,
+    linux_peercred_gate_contract_verified: false,
   })}\n`, { mode: 0o600 });
   chmodSync(boundaryStatePath, 0o600);
   const boundaryHealthResult = spawnSync(process.execPath, [healthcheck], {
@@ -395,6 +406,10 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
     },
   });
   assert.equal(boundaryHealthResult.status, 0);
+  assert.match(
+    readFileSync(healthcheck, "utf8"),
+    /constants\.O_RDONLY \| constants\.O_NOFOLLOW \| constants\.O_NONBLOCK/,
+  );
   writeFileSync(boundaryStatePath, `${JSON.stringify({ ready: false })}\n`, { mode: 0o600 });
   const unreadyBoundaryHealthResult = spawnSync(process.execPath, [healthcheck], {
     env: {
@@ -404,6 +419,20 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
     },
   });
   assert.notEqual(unreadyBoundaryHealthResult.status, 0);
+  const boundaryStateFifo = join(root, "supervisor-state.fifo");
+  const fifoCreated = spawnSync("mkfifo", [boundaryStateFifo]);
+  assert.equal(fifoCreated.status, 0);
+  const fifoBoundaryHealthResult = spawnSync(process.execPath, [healthcheck], {
+    timeout: 1_000,
+    env: {
+      PATH: process.env.PATH,
+      OPENCLAW_PROVIDER_SOCKET: socketPath,
+      AGENTOPS_OPENCLAW_BOUNDARY_STATE_PATH: boundaryStateFifo,
+    },
+  });
+  assert.equal(fifoBoundaryHealthResult.signal, null);
+  assert.notEqual(fifoBoundaryHealthResult.status, 0);
+  rmSync(boundaryStateFifo, { force: true });
 
   const slowBody = beginSlowCall(executionRequest("single-flight slow body"));
   let busyHealth;
@@ -586,12 +615,15 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
     runtime_nofollow_fail_closed_verified: true,
     socket_directory_mode_0750_verified: true,
     private_socket_directory_mode_0700_verified: true,
+    external_socket_directory_mode_0700_rejected_without_supervisor_override: true,
     writable_socket_directory_rejected: true,
     pre_execution_shutdown_verified: true,
     interrupted_request_slot_release_verified: true,
     reset_client_error_health_verified: true,
     healthcheck_verified: true,
-    boundary_supervisor_ready_healthcheck_verified: true,
+    boundary_supervisor_state_shape_healthcheck_verified: true,
+    boundary_state_nonblocking_nofollow_read_verified: true,
+    boundary_state_fifo_rejected_without_blocking: true,
     process_group_signal_verified: true,
     client_disconnect_cancellation_verified: true,
     raw_prompt_omitted: true,

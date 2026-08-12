@@ -216,7 +216,7 @@ const fs=require("node:fs");let code="success";try{fs.writeFileSync("/run/agento
 
 const backendProcessProbe = String.raw`
 const fs=require("node:fs");const marker=process.argv[1];let matches=[];
-for(const name of fs.readdirSync("/proc")){if(!/^\d+$/.test(name))continue;try{const command=fs.readFileSync("/proc/"+name+"/cmdline").toString("utf8");if(command.includes(marker)){matches.push({pid:Number(name),fds:fs.readdirSync("/proc/"+name+"/fd").length})}}catch{}}
+for(const name of fs.readdirSync("/proc")){if(!/^\d+$/.test(name)||Number(name)===process.pid)continue;try{const command=fs.readFileSync("/proc/"+name+"/cmdline").toString("utf8");if(command.includes(marker)){matches.push({pid:Number(name),fds:fs.readdirSync("/proc/"+name+"/fd").length})}}catch{}}
 if(matches.length!==1)process.exit(3);process.stdout.write(JSON.stringify(matches[0]));
 `;
 
@@ -585,8 +585,9 @@ async function main() {
       real_linux_docker_execution: true,
       real_linux_docker_compose_execution: true,
       peercred_gate_socket_metadata_ready_before_attacks: true,
-      production_executor_healthcheck_verified: true,
-      production_executor_before_broker_ordering_verified: true,
+      production_executor_operational_healthcheck_verified: true,
+      production_executor_operational_startup_ordering_verified: true,
+      healthcheck_security_boundary_verified: false,
       phase_a04_public_peercred_verified: true,
       phase_a05_private_peercred_verified: true,
       so_peercred_verified: true,

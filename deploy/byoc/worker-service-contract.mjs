@@ -109,7 +109,7 @@ try {
   assert.match(providerEntrypoint, /provider_socket_directory_permissions_invalid/);
   assert.match(
     providerEntrypoint,
-    /new Set\(\[0o700, 0o750\]\)\.has\(directory\.mode & 0o777\)/,
+    /\(directory\.mode & 0o777\) !== configuration\.socketDirectoryMode/,
   );
   assert.match(providerEntrypoint, /error\?\.code === "ECONNRESET"/);
   assert.doesNotMatch(providerEntrypoint, /O_NOFOLLOW\s*\|\|\s*0/);

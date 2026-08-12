@@ -228,6 +228,12 @@ async function successfulRole(role) {
       : "OPENCLAW_PROVIDER_SOCKET"],
     internalSocket,
   );
+  assert.equal(
+    backend.env[role === "broker"
+      ? "AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_DIRECTORY_MODE"
+      : "OPENCLAW_PROVIDER_SOCKET_DIRECTORY_MODE"],
+    "448",
+  );
   const backendDescendant = Number(readFileSync(paths.backendPid, "utf8"));
   const gateDescendant = Number(readFileSync(paths.gatePid, "utf8"));
   process.child.kill("SIGTERM");
@@ -331,7 +337,10 @@ try {
   for (const child of activeSupervisors) child.kill("SIGTERM");
   await Promise.all([...activeSupervisors].map(async (child) => {
     await Promise.race([waitForExit(child), sleep(1_000)]);
-    if (child.exitCode === null) child.kill("SIGKILL");
+    if (child.exitCode === null) {
+      child.kill("SIGKILL");
+      await Promise.race([waitForExit(child), sleep(1_000)]);
+    }
   }));
   rmSync(root, { recursive: true, force: true });
 }

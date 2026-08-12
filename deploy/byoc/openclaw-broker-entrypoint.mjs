@@ -60,6 +60,7 @@ const ALLOWED_BROKER_ENVIRONMENT = new Set([
   "AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_PATH",
   "AGENTOPS_OPENCLAW_BROKER_PRIVATE_SOCKET_PATH",
   "AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_GID",
+  "AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_DIRECTORY_MODE",
   "AGENTOPS_OPENCLAW_BROKER_PRIVATE_SOCKET_GID",
   "AGENTOPS_OPENCLAW_BROKER_PRIVATE_SOCKET_UID",
   "AGENTOPS_OPENCLAW_BROKER_REQUEST_TIMEOUT_MS",
@@ -120,6 +121,16 @@ export function loadConfiguration(environment = process.env) {
   if (publicSocketPath === privateSocketPath || dirname(publicSocketPath) === dirname(privateSocketPath)) {
     fail("broker_public_private_socket_separation_required");
   }
+  const publicSocketDirectoryMode = integerValue(
+    environment.AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_DIRECTORY_MODE,
+    0o750,
+    0o700,
+    0o750,
+    "broker_public_socket_directory_mode",
+  );
+  if (![0o700, 0o750].includes(publicSocketDirectoryMode)) {
+    fail("broker_public_socket_directory_mode_invalid");
+  }
   return {
     publicSocketPath,
     privateSocketPath,
@@ -130,6 +141,7 @@ export function loadConfiguration(environment = process.env) {
       2 ** 31 - 1,
       "broker_public_socket_gid",
     ),
+    publicSocketDirectoryMode,
     privateSocketGid: integerValue(
       environment.AGENTOPS_OPENCLAW_BROKER_PRIVATE_SOCKET_GID,
       DEFAULT_PRIVATE_GID,
@@ -204,7 +216,7 @@ function validatePublicRequest(value) {
   return true;
 }
 
-function inspectDirectory(path, expectedUid, expectedGid, label) {
+function inspectDirectory(path, expectedUid, expectedGid, expectedMode, label) {
   let metadata;
   try {
     metadata = lstatSync(path, { bigint: false });
@@ -216,7 +228,7 @@ function inspectDirectory(path, expectedUid, expectedGid, label) {
     || metadata.isSymbolicLink()
     || metadata.uid !== expectedUid
     || metadata.gid !== expectedGid
-    || !new Set([0o700, 0o750]).has(metadata.mode & 0o777)
+    || (metadata.mode & 0o777) !== expectedMode
   ) {
     fail(`${label}_directory_permissions_invalid`);
   }
@@ -228,6 +240,7 @@ function inspectPrivateSocket(configuration, expectedIdentity = null) {
     dirname(configuration.privateSocketPath),
     configuration.privateSocketUid,
     configuration.privateSocketGid,
+    0o750,
     "broker_private_socket",
   );
   let metadata;
@@ -275,6 +288,7 @@ async function preparePublicSocket(configuration) {
     dirname(configuration.publicSocketPath),
     process.getuid(),
     configuration.publicSocketGid,
+    configuration.publicSocketDirectoryMode,
     "broker_public_socket",
   );
   try {

@@ -205,7 +205,7 @@ function assertStaticCustomerBoundary() {
     || !openClawProviderEntrypoint.includes("provider_socket_directory_unavailable")
     || !openClawProviderEntrypoint.includes("provider_socket_directory_permissions_invalid")
     || !openClawProviderEntrypoint.includes(
-      "new Set([0o700, 0o750]).has(directory.mode & 0o777)",
+      "(directory.mode & 0o777) !== configuration.socketDirectoryMode",
     )
     || !openClawProviderEntrypoint.includes('error?.code === "ECONNRESET"')
     || /O_NOFOLLOW\s*\|\|\s*0/.test(openClawProviderEntrypoint)

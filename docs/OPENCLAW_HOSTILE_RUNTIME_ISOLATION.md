@@ -40,6 +40,12 @@ individual public and private peer-credential fields only after active Linux
 wrong-uid probes pass. Both candidates must keep
 `runtime_receipt_verified=false` and `hostile_runtime_isolation_verified=false`.
 The A03 receipt must additionally keep `so_peercred_verified=false`.
+The A04/A05 Compose healthcheck is an operational startup-ordering check only.
+Its Supervisor state file and internal Provider socket share the Executor uid in
+this interim topology, so the check is not an independent security authority
+against a runtime that has already compromised that uid. Receipts must keep
+`healthcheck_security_boundary_verified=false`; A06 and later identity/runtime
+separation must close that gap before any complete hostile-runtime claim.
 Even after Phase A passes, the release metadata must state:
 
 ```text

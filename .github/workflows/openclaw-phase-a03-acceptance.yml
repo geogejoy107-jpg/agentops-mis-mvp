@@ -53,6 +53,7 @@ jobs:
             --publish 127.0.0.1:5000:5000 \
             registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
           printf 'registry_name=%s\n' "${registry_name}" >> "${GITHUB_OUTPUT}"
+          printf 'image_tag=%s\n' "${image_tag}" >> "${GITHUB_OUTPUT}"
           curl --fail --silent --show-error \
             --retry 20 --retry-all-errors --retry-delay 1 \
             http://127.0.0.1:5000/v2/ >/dev/null
@@ -111,10 +112,14 @@ jobs:
         run: |
           set +e
           registry_name="${{ steps.image.outputs.registry_name }}"
+          image_tag="${{ steps.image.outputs.image_tag }}"
           digest="${{ steps.image.outputs.digest }}"
           if [ -n "${registry_name}" ]; then
             docker rm --force "${registry_name}" >/dev/null 2>&1 || true
           fi
           if [ -n "${digest}" ]; then
             docker image rm "${digest}" >/dev/null 2>&1 || true
+          fi
+          if [ -n "${image_tag}" ]; then
+            docker image rm "${image_tag}" >/dev/null 2>&1 || true
           fi
