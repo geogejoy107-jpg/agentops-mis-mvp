@@ -273,7 +273,15 @@ try {
   const envelope = parseCanonicalRuntimeManifestV2Envelope(manifestBytes);
   const receipt = JSON.parse(receiptBytes.toString("utf8"));
   assert.deepEqual(envelope.body.oci_image, { digest: OCI_DIGEST, name: OCI_NAME });
-  assert.deepEqual(envelope.body.rootfs, provenance.rootfs);
+  assert.deepEqual(envelope.body.rootfs, {
+    byte_count: provenance.rootfs.byte_count,
+    file_count: provenance.rootfs.file_count,
+    merkle_sha256: provenance.rootfs.merkle_sha256,
+  });
+  assert.equal(
+    provenance.rootfs.schema,
+    "agentops_openclaw_runtime_rootfs_merkle_v1",
+  );
   assert.equal(receipt.oci_export_provenance.schema, OPENCLAW_RUNTIME_OCI_EXPORT_PROVENANCE_SCHEMA);
   assert.equal(receipt.oci_export_provenance.sha256, sha256(provenance.bytes));
   assert.deepEqual(
