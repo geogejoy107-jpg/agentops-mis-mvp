@@ -1,0 +1,68 @@
+line: research
+LINE_COMPLETE: false
+LINE_STATE: IN_PROGRESS
+repository: geogejoy107-jpg/agentops-mis-mvp
+branch: feature/template-research-lab-v1
+base_commit: 1bce8f9e0312df9a29635a6988b62cd297b1ab14
+head_commit: pending_commit
+pr: not_created_by_c1
+target_branch: integration/template-platform-v1
+manifest_version: template-manifest/v1
+profile_versions:
+  - bdci_2026_research/1.0.0
+  - research_lab_full/1.0.0
+shared_contract_versions:
+  api: template-platform-api/v1
+  event: template-event/v1
+  runtime: openjiuwen-runtime/v1
+  migration: template-migration/v1
+  profile: product-profile/v1
+mis_task_id: tsk_tpl_v1_research_20260810
+real_integrations:
+  - name: local_process_executor
+    status: verified_local
+    receipt: covered by test_executors_security.py
+  - name: openjiuwen_runtime
+    status: unavailable
+    receipt: no pinned upstream installed in target environment
+  - name: ssh_gpu
+    status: unavailable
+    receipt: no authorized target or secret reference supplied
+  - name: slurm
+    status: boundary_unknown
+    receipt: target infrastructure not selected
+tests:
+  passed:
+    - 80 Research unit/contract/security/API/AppShell/BDCI/runtime/migration/remote-wrapper tests on Python 3.11 and 3.14 using `python -m unittest discover -s tests/templates/research_lab -t . -p test_*.py`
+    - Python 3.14 suite passes with warnings promoted to errors
+    - ResearchLabExtension.tsx bundles with esbuild (browser E2E remains a C0 mount gate)
+    - manifest generated JSON exact readback
+    - Python compileall and git diff check
+  failed: []
+  skipped:
+    - live MIS ledger write chain blocked by Human worker-status session
+    - real openJiuwen/SSH GPU/Slurm acceptance unavailable
+security_review: internal contract tests cover purpose-separated cryptographic Core receipts with key revocation and exact field/document bindings; exact executable/root/hash/cwd/env/resource approval binding; signed private-target registration; resolved-IP SSH with HostKeyAlias; request/target/authorization-bound remote receipts; rejection of caller booleans, self-hashed terminal success, generic credential-shaped payloads and Slurm substring states; socket-only secret transport and nested redaction; real infrastructure penetration acceptance remains external
+concurrency_recovery_review: internal tests cover project-scoped atomic records+outbox with per-record signed receipt verification, Core admission, concurrent reservation, deterministic migration replay, a WAL/FULL restart journal, durable request/PID identity marker, cancel and identity-bound adoption; real restart/disconnect/preemption acceptance remains external
+domain_review: Claim stage is derived from frozen Protocol and requires current Core Run plus completed Protocol/Trial/JobAttempt, metric and figure/table Artifacts, Claim/statement/metric-direction/support-strength-bound Evaluation and independent reviewer Identity/Permission; full chain is persisted atomically
+open_defects:
+  p0: []
+  p1: []
+  p2:
+    - no internal P2 is asserted closed until C0 mounts and cross-template/browser regression completes
+  p3: []
+known_product_boundaries:
+  - candidate and canonical=false
+  - manifest provenance source_commit is all-zero candidate placeholder and must be stamped to the exact reviewed commit by governed packaging before signature/promotion
+  - fixtures do not satisfy real integration gates
+  - HMAC is the initial private-host verifier and the fixed test key is fixture-only; production C0 must inject protected verification material, signing separation, rotation and revocation state and must not expose signing material to caller payloads
+remaining_work:
+  - C0 integrate the revised project-scoped atomic Core/admission/export/operations ports and concrete API/AppShell registrations
+  - after Human session restores MIS preflight, create governed Plan/Run and record Artifact/Evaluation readback
+  - run real openJiuwen, SSH GPU, restart/disconnect, checkpoint/resume and Claim acceptance
+  - decide Slurm target boundary and run or approve exclusion ADR
+  - C0 satisfy C0_INTEGRATION_CHANGE_REQUEST.md and run mounted API/CLI/AppShell E2E
+change_requests:
+  - docs/templates/research_lab/C0_INTEGRATION_CHANGE_REQUEST.md
+canonical: false
+FINAL_STATE: IN_PROGRESS

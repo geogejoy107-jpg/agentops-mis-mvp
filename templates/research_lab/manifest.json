@@ -1,0 +1,942 @@
+{
+  "agents": [
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.agent.research_lead",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.agent.literature_researcher",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.agent.protocol_planner",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.agent.experiment_planner",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.agent.training_operator",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.agent.failure_diagnoser",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.agent.metrics_analyst",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.agent.evidence_reviewer",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.agent.paper_writer",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.agent.memory_curator",
+      "version": "1.0.0"
+    }
+  ],
+  "api_routes": [
+    {
+      "configuration": {
+        "prefix": "/api/v1/templates/research_lab",
+        "routes": [
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/projects",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/experiments",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/trials",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/attempts",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/metrics",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/claims",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/manuscripts",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/literature",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/checkpoints",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/compute-targets",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/budgets",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/receipts",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/health",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/approvals",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/attempts/logs",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/memory",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/runtime/health",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/settings",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/experiments/{experiment_id}",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/experiments/{experiment_id}/trials",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/attempts/{attempt_id}",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/attempts/{attempt_id}/logs",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/experiments/{experiment_id}/metrics",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "GET",
+            "path": "/api/v1/templates/research_lab/attempts/{attempt_id}/checkpoints",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/projects",
+            "permission": "research_lab.permission.experiment.write"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/experiments",
+            "permission": "research_lab.permission.experiment.write"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/attempts/start",
+            "permission": "research_lab.permission.compute.local"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/attempts/execute",
+            "permission": "research_lab.permission.compute.remote"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/attempts/cancel",
+            "permission": "research_lab.permission.compute.remote"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/attempts/reconcile",
+            "permission": "research_lab.permission.compute.remote"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/claims/decide",
+            "permission": "research_lab.permission.claim.review"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/evidence/invalidate",
+            "permission": "research_lab.permission.claim.review"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/literature/search",
+            "permission": "research_lab.permission.experiment.write"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/budgets/evaluate",
+            "permission": "research_lab.permission.experiment.write"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/runtime/dispatch",
+            "permission": "research_lab.permission.experiment.write"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/runtime/resume",
+            "permission": "research_lab.permission.compute.remote"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/memory/candidate",
+            "permission": "research_lab.permission.experiment.write"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/migration/dry-run",
+            "permission": "research_lab.permission.read"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/migration/apply",
+            "permission": "research_lab.permission.compute.remote"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/migration/restore",
+            "permission": "research_lab.permission.compute.remote"
+          },
+          {
+            "handler": "ResearchAPI.dispatch",
+            "method": "POST",
+            "path": "/api/v1/templates/research_lab/exports/bdci",
+            "permission": "research_lab.permission.claim.review"
+          }
+        ]
+      },
+      "contract_version": "template-platform-api/v1",
+      "entrypoint": "templates.research_lab.api:route_contracts",
+      "id": "research_lab.api.domain",
+      "version": "1.0.0"
+    }
+  ],
+  "capabilities": [
+    "research.literature",
+    "research.protocol",
+    "research.local_execution",
+    "research.ssh_execution",
+    "research.slurm_execution",
+    "research.checkpoint",
+    "research.claim_gate",
+    "research.manuscript",
+    "research.reproducibility"
+  ],
+  "category": "research",
+  "cli_commands": [
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.cli:main",
+      "id": "research_lab.cli.validate",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.cli:main",
+      "id": "research_lab.cli.migration_dry_run",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.cli:main",
+      "id": "research_lab.cli.checkpoint_validate",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.cli:main",
+      "id": "research_lab.cli.api_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.cli:main",
+      "id": "research_lab.cli.bdci_build",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.cli:main",
+      "id": "research_lab.cli.operation",
+      "version": "1.0.0"
+    }
+  ],
+  "description": "Governed literature-to-experiment-to-evidence research production line backed exclusively by MIS Core authority.",
+  "domain_objects": [
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.research_project",
+      "name": "ResearchProject",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.research_contract",
+      "name": "ResearchContract",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.research_question",
+      "name": "ResearchQuestion",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.literature_evidence",
+      "name": "LiteratureEvidence",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.experiment",
+      "name": "Experiment",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.protocol",
+      "name": "ProtocolVersion",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.trial",
+      "name": "Trial",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.job_attempt",
+      "name": "JobAttempt",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.compute_target",
+      "name": "ComputeTarget",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.checkpoint",
+      "name": "Checkpoint",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.metric_snapshot",
+      "name": "MetricSnapshot",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.research_artifact",
+      "name": "ResearchArtifact",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.research_claim",
+      "name": "ResearchClaim",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.claim_evidence",
+      "name": "ClaimEvidence",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.manuscript",
+      "name": "Manuscript",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "template_domain",
+      "id": "research_lab.domain.research_receipt",
+      "name": "ResearchReceipt",
+      "schema": {
+        "version": "research-lab-domain/v1"
+      }
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.workspace",
+      "name": "Workspace"
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.project",
+      "name": "Project"
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.agent",
+      "name": "Agent"
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.task",
+      "name": "Task"
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.plan",
+      "name": "Plan"
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.run",
+      "name": "Run"
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.tool_call",
+      "name": "ToolCall"
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.prepared_action",
+      "name": "PreparedAction"
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.approval",
+      "name": "Approval"
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.artifact",
+      "name": "Artifact"
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.evaluation",
+      "name": "Evaluation"
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.memory_review",
+      "name": "MemoryReview"
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.audit",
+      "name": "Audit"
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.evidence",
+      "name": "Evidence"
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.identity",
+      "name": "Identity"
+    },
+    {
+      "authority": "mis_core_reference",
+      "core_authority_id": "mis_core.permission",
+      "name": "Permission"
+    }
+  ],
+  "evaluators": [
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.evidence:evaluate_claim",
+      "id": "research_lab.evaluator.claim_integrity",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.literature:verify_citation_claims",
+      "id": "research_lab.evaluator.citation_integrity",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.migrations:verify_migration",
+      "id": "research_lab.evaluator.migration_readback",
+      "version": "1.0.0"
+    }
+  ],
+  "exports": [
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.exports:reproducibility_bundle",
+      "id": "research_lab.export.reproducibility",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.literature:export_bibtex",
+      "id": "research_lab.export.bibtex",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.exports:research_receipt",
+      "id": "research_lab.export.research_receipt",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.exports:bdci_submission_package",
+      "id": "research_lab.export.bdci_submission",
+      "version": "1.0.0"
+    }
+  ],
+  "fixtures": [
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.fixtures:reference_workload",
+      "id": "research_lab.fixture.reference_e2e",
+      "version": "1.0.0"
+    }
+  ],
+  "id": "research_lab",
+  "integrity": {
+    "algorithm": "sha256",
+    "content_sha256": "2945524d886d31b33dd44f08eafb96003c1a6880442f4e37d545b6354dfde1df",
+    "signature": {
+      "status": "unsigned_candidate"
+    }
+  },
+  "license": "Proprietary",
+  "memory": {
+    "candidate_only": true,
+    "conflict_policy": "stale_or_superseded",
+    "shared_memory": "deny_by_default",
+    "source_refs_required": true
+  },
+  "migrations": [
+    {
+      "checksum": "20ac254226751668c159e57f03257e6372c0bc5adea33d5bcd044564584ba7d2",
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.migrations:transform_legacy",
+      "from_version": "0.1.0",
+      "id": "research_lab.migration.0_1_0_to_1_0_0",
+      "reversible": true,
+      "to_version": "1.0.0",
+      "version": "1.0.0"
+    }
+  ],
+  "min_mis_version": "1.6.0",
+  "name": "Research Lab",
+  "permissions": [
+    {
+      "action": "research_lab.permission.read",
+      "contract_version": "template-sdk/v1",
+      "default": "allow",
+      "entrypoint": "templates.research_lab.api",
+      "id": "research_lab.permission.read",
+      "risk": "low",
+      "scope": "template",
+      "version": "1.0.0"
+    },
+    {
+      "action": "research_lab.permission.experiment.write",
+      "contract_version": "template-sdk/v1",
+      "default": "ask",
+      "entrypoint": "templates.research_lab.api",
+      "id": "research_lab.permission.experiment_write",
+      "risk": "medium",
+      "scope": "project",
+      "version": "1.0.0"
+    },
+    {
+      "action": "research_lab.permission.compute.local",
+      "contract_version": "template-sdk/v1",
+      "default": "deny",
+      "entrypoint": "templates.research_lab.executors",
+      "id": "research_lab.permission.compute_local",
+      "risk": "high",
+      "scope": "run",
+      "version": "1.0.0"
+    },
+    {
+      "action": "research_lab.permission.compute.remote",
+      "contract_version": "template-sdk/v1",
+      "default": "deny",
+      "entrypoint": "templates.research_lab.executors",
+      "id": "research_lab.permission.compute_remote",
+      "risk": "critical",
+      "scope": "run",
+      "version": "1.0.0"
+    },
+    {
+      "action": "research_lab.permission.claim.review",
+      "contract_version": "template-sdk/v1",
+      "default": "ask",
+      "entrypoint": "templates.research_lab.evidence:evaluate_claim",
+      "id": "research_lab.permission.claim_review",
+      "risk": "medium",
+      "scope": "project",
+      "version": "1.0.0"
+    }
+  ],
+  "policies": [
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.policy.read_only",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.policy.deep_search",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.policy.no_external_write",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.budgets",
+      "id": "research_lab.policy.compute",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.policy.diagnostics",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.policy.memory_candidate",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.evidence:evaluate_claim",
+      "id": "research_lab.policy.claim_gate",
+      "version": "1.0.0"
+    }
+  ],
+  "provenance": {
+    "built_at": "2026-08-12T00:00:00+08:00",
+    "source_commit": "0000000000000000000000000000000000000000",
+    "source_repository": "geogejoy107-jpg/agentops-mis-mvp"
+  },
+  "publisher": "agentops-mis",
+  "reports": [
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.exports:research_receipt",
+      "id": "research_lab.report.research_receipt",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.exports:manuscript_section",
+      "id": "research_lab.report.iclr",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.exports:manuscript_section",
+      "id": "research_lab.report.research_report",
+      "version": "1.0.0"
+    }
+  ],
+  "runtime_dependencies": [
+    {
+      "id": "openjiuwen-runtime",
+      "kind": "runtime",
+      "optional": false,
+      "version": "==0.1.16"
+    },
+    {
+      "id": "pytorch",
+      "kind": "python",
+      "optional": true,
+      "version": ">=2.6.0,<3.0.0"
+    },
+    {
+      "id": "openssh",
+      "kind": "service",
+      "optional": true,
+      "version": ">=9.0.0,<10.0.0"
+    },
+    {
+      "id": "slurm",
+      "kind": "service",
+      "optional": true,
+      "version": ">=23.0.0,<26.0.0"
+    }
+  ],
+  "schema_version": "template-manifest/v1",
+  "skills": [
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.literature:verify_citation_claims",
+      "id": "research_lab.skill.literature_verify",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.service",
+      "id": "research_lab.skill.protocol_freeze",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.evidence:evaluate_claim",
+      "id": "research_lab.skill.claim_gate",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.exports:reproducibility_bundle",
+      "id": "research_lab.skill.reproducibility_export",
+      "version": "1.0.0"
+    }
+  ],
+  "testing_hooks": [
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.fixtures:reference_workload",
+      "id": "research_lab.testing.contract",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.fixtures:reference_workload",
+      "id": "research_lab.testing.reference_e2e",
+      "version": "1.0.0"
+    },
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.observability:external_preflight",
+      "id": "research_lab.testing.external_preflight",
+      "version": "1.0.0"
+    }
+  ],
+  "tools": [
+    {
+      "approval": "always",
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.literature:normalize_source_url",
+      "id": "research_lab.tool.deep_search",
+      "risk": "medium",
+      "side_effect": "external_write",
+      "version": "1.0.0"
+    },
+    {
+      "approval": "policy",
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.executors",
+      "id": "research_lab.tool.local_execute",
+      "risk": "high",
+      "side_effect": "internal_write",
+      "version": "1.0.0"
+    },
+    {
+      "approval": "always",
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.executors",
+      "id": "research_lab.tool.ssh_execute",
+      "risk": "critical",
+      "side_effect": "external_write",
+      "version": "1.0.0"
+    },
+    {
+      "approval": "always",
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.executors",
+      "id": "research_lab.tool.slurm_execute",
+      "risk": "critical",
+      "side_effect": "external_write",
+      "version": "1.0.0"
+    }
+  ],
+  "ui_extensions": [
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.ui:app_shell_extension",
+      "id": "research_lab.ui.product",
+      "metadata": {
+        "component": "templates/research_lab/ui/ResearchLabExtension.tsx",
+        "style": "templates/research_lab/ui/research-lab.css",
+        "surfaces": 18
+      },
+      "nav_label": "Research Lab",
+      "permission": "research_lab.permission.read",
+      "route": "/solutions/research_lab/home",
+      "version": "1.0.0"
+    }
+  ],
+  "uninstall_policy": {
+    "approval_required": true,
+    "archive_history": true,
+    "data_policy": "archive",
+    "preview_required": true,
+    "readback_required": true,
+    "receipt_required": true
+  },
+  "upgrade_policy": {
+    "approval_required": true,
+    "backup_required": true,
+    "compatibility": "explicit_matrix",
+    "preview_required": true,
+    "readback_required": true,
+    "receipt_required": true,
+    "rollback_required": true
+  },
+  "version": "1.0.0",
+  "workflows": [
+    {
+      "contract_version": "template-sdk/v1",
+      "entrypoint": "templates.research_lab.runtime_team",
+      "id": "research_lab.workflow.production",
+      "version": "1.0.0"
+    }
+  ]
+}

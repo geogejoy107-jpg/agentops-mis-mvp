@@ -1,0 +1,43 @@
+{
+  "schema_version": "product-profile/v1",
+  "id": "research_lab_full",
+  "template_id": "research_lab",
+  "name": "Full Research Lab",
+  "version": "1.0.0",
+  "description": "Full production research operations with Local, SSH and conditional Slurm execution, recovery, multi-seed science and governed claims.",
+  "configuration": {
+    "workflow": "research_lab.workflow.production",
+    "executors": ["local", "ssh", "slurm"],
+    "slurm_boundary": "required_when_target_infrastructure_uses_slurm",
+    "checkpoint_adapter": "pytorch",
+    "restart_reconcile": true,
+    "multi_seed": true,
+    "ablation": true,
+    "robustness": true,
+    "claim_gate": "strict"
+  },
+  "budgets": {
+    "gpu_hours": 1000,
+    "token_budget": 10000000,
+    "model_cost_usd": 1000,
+    "max_concurrency": 32,
+    "approval_gpu_hour_threshold": 2,
+    "approval_cost_threshold_usd": 50
+  },
+  "policies": [
+    {"id": "research_lab.policy.claim_gate", "version": "1.0.0", "contract_version": "template-sdk/v1", "entrypoint": "templates.research_lab.evidence:evaluate_claim"},
+    {"id": "research_lab.policy.compute", "version": "1.0.0", "contract_version": "template-sdk/v1", "entrypoint": "templates.research_lab.budgets"},
+    {"id": "research_lab.policy.memory_candidate", "version": "1.0.0", "contract_version": "template-sdk/v1", "entrypoint": "templates.research_lab.runtime_team"}
+  ],
+  "evaluators": [
+    {"id": "research_lab.evaluator.claim_integrity", "version": "1.0.0", "contract_version": "template-sdk/v1", "entrypoint": "templates.research_lab.evidence:evaluate_claim"},
+    {"id": "research_lab.evaluator.citation_integrity", "version": "1.0.0", "contract_version": "template-sdk/v1", "entrypoint": "templates.research_lab.literature:verify_citation_claims"},
+    {"id": "research_lab.evaluator.migration_readback", "version": "1.0.0", "contract_version": "template-sdk/v1", "entrypoint": "templates.research_lab.migrations:verify_migration"}
+  ],
+  "submission": {
+    "required_outputs": ["research_receipt", "reproducibility_bundle", "operations_report", "manuscript"],
+    "unsupported_claims": "block",
+    "external_receipts_required": true,
+    "approval_required": true
+  }
+}

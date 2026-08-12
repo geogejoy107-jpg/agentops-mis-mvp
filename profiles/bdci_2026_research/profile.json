@@ -1,0 +1,38 @@
+{
+  "schema_version": "product-profile/v1",
+  "id": "bdci_2026_research",
+  "template_id": "research_lab",
+  "name": "BDCI 2026 Research",
+  "version": "1.0.0",
+  "description": "Competition research profile with evidence-governed experiments, short paper, ICLR export, evaluation and submission packaging.",
+  "configuration": {
+    "workflow": "research_lab.workflow.production",
+    "required_stages": ["smoke", "pilot", "confirmatory", "robustness"],
+    "minimum_confirmatory_seeds": 2,
+    "literature_verification": "doi_or_arxiv",
+    "claim_gate": "strict",
+    "report_format": "iclr",
+    "submission_bundle": "bdci_2026"
+  },
+  "budgets": {
+    "gpu_hours": 24,
+    "token_budget": 1000000,
+    "model_cost_usd": 100,
+    "max_concurrency": 4,
+    "approval_gpu_hour_threshold": 2
+  },
+  "policies": [
+    {"id": "research_lab.policy.claim_gate", "version": "1.0.0", "contract_version": "template-sdk/v1", "entrypoint": "templates.research_lab.evidence:evaluate_claim"},
+    {"id": "research_lab.policy.compute", "version": "1.0.0", "contract_version": "template-sdk/v1", "entrypoint": "templates.research_lab.budgets"}
+  ],
+  "evaluators": [
+    {"id": "research_lab.evaluator.claim_integrity", "version": "1.0.0", "contract_version": "template-sdk/v1", "entrypoint": "templates.research_lab.evidence:evaluate_claim"},
+    {"id": "research_lab.evaluator.citation_integrity", "version": "1.0.0", "contract_version": "template-sdk/v1", "entrypoint": "templates.research_lab.literature:verify_citation_claims"}
+  ],
+  "submission": {
+    "required_outputs": ["short_paper", "iclr_export", "reproducibility_bundle", "evaluation_script", "input_output_manifest", "submission_package"],
+    "unsupported_claims": "block",
+    "checksum_required": true,
+    "approval_required": true
+  }
+}
