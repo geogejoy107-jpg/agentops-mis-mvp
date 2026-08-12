@@ -225,6 +225,110 @@ services:
     networks:
       - control_plane
 
+  worker-hermes:
+    profiles: [worker-hermes]
+    image: "${AGENTOPS_IMAGE:?set AGENTOPS_IMAGE to the immutable AgentOps release digest}"
+    restart: unless-stopped
+    stop_grace_period: 30s
+    user: "1000:1000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run/agentops-worker:rw,noexec,nosuid,size=1m,mode=0700,uid=1000,gid=1000
+      - /tmp:rw,noexec,nosuid,size=64m,mode=0700,uid=1000,gid=1000
+    entrypoint: [node, /usr/local/lib/agentops/worker-entrypoint.mjs]
+    environment:
+      NODE_ENV: production
+      AGENTOPS_DEPLOYMENT_MODE: production
+      AGENTOPS_WORKER_ADAPTER: hermes
+      AGENTOPS_AGENT_TOKEN_SOURCE_FILE: /run/secrets/agent_token
+      AGENTOPS_BASE_URL: "${AGENTOPS_WORKER_CONTROL_PLANE_URL:-}"
+      AGENTOPS_WORKSPACE_ID: "${AGENTOPS_WORKER_WORKSPACE_ID:-}"
+      AGENTOPS_AGENT_ID: "${AGENTOPS_HERMES_WORKER_AGENT_ID:-}"
+      AGENTOPS_RUN_ESTIMATED_COST_USD: "${AGENTOPS_WORKER_ESTIMATED_COST_USD:-}"
+      AGENTOPS_POLL_INTERVAL_MS: "${AGENTOPS_WORKER_POLL_INTERVAL_MS:-5000}"
+      AGENTOPS_ADAPTER_MAX_ATTEMPTS: "${AGENTOPS_WORKER_ADAPTER_MAX_ATTEMPTS:-2}"
+      AGENTOPS_WORKER_HEALTH_LEASE_SECONDS: "${AGENTOPS_WORKER_HEALTH_LEASE_SECONDS:-120}"
+      AGENTOPS_ALLOW_INSECURE_LOOPBACK: "false"
+      AGENTOPS_ALLOW_HIGH_RISK: "${AGENTOPS_WORKER_ALLOW_HIGH_RISK:-false}"
+      HERMES_GATEWAY_URL: "${AGENTOPS_HERMES_GATEWAY_URL:-}"
+      HERMES_MODEL: "${AGENTOPS_HERMES_MODEL:-hermes-agent}"
+      HERMES_TIMEOUT_MS: "${AGENTOPS_HERMES_TIMEOUT_MS:-180000}"
+      HERMES_MAX_TOKENS: "${AGENTOPS_HERMES_MAX_TOKENS:-512}"
+    secrets:
+      - source: hermes_agent_token
+        target: agent_token
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, /usr/local/lib/agentops/worker-healthcheck.mjs]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+    networks:
+      - control_plane
+
+  worker-openclaw:
+    profiles: [worker-openclaw]
+    image: "${AGENTOPS_IMAGE:?set AGENTOPS_IMAGE to the immutable AgentOps release digest}"
+    restart: unless-stopped
+    stop_grace_period: 30s
+    user: "1000:1000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run/agentops-worker:rw,noexec,nosuid,size=1m,mode=0700,uid=1000,gid=1000
+      - /run/openclaw-state:rw,noexec,nosuid,size=64m,mode=0700,uid=1000,gid=1000
+      - /tmp:rw,noexec,nosuid,size=64m,mode=0700,uid=1000,gid=1000
+    entrypoint: [node, /usr/local/lib/agentops/worker-entrypoint.mjs]
+    environment:
+      NODE_ENV: production
+      AGENTOPS_DEPLOYMENT_MODE: production
+      AGENTOPS_WORKER_ADAPTER: openclaw
+      AGENTOPS_AGENT_TOKEN_SOURCE_FILE: /run/secrets/agent_token
+      AGENTOPS_BASE_URL: "${AGENTOPS_WORKER_CONTROL_PLANE_URL:-}"
+      AGENTOPS_WORKSPACE_ID: "${AGENTOPS_WORKER_WORKSPACE_ID:-}"
+      AGENTOPS_AGENT_ID: "${AGENTOPS_OPENCLAW_WORKER_AGENT_ID:-}"
+      AGENTOPS_RUN_ESTIMATED_COST_USD: "${AGENTOPS_WORKER_ESTIMATED_COST_USD:-}"
+      AGENTOPS_POLL_INTERVAL_MS: "${AGENTOPS_WORKER_POLL_INTERVAL_MS:-5000}"
+      AGENTOPS_ADAPTER_MAX_ATTEMPTS: "${AGENTOPS_WORKER_ADAPTER_MAX_ATTEMPTS:-2}"
+      AGENTOPS_WORKER_HEALTH_LEASE_SECONDS: "${AGENTOPS_WORKER_HEALTH_LEASE_SECONDS:-120}"
+      AGENTOPS_ALLOW_INSECURE_LOOPBACK: "false"
+      AGENTOPS_ALLOW_HIGH_RISK: "${AGENTOPS_WORKER_ALLOW_HIGH_RISK:-false}"
+      OPENCLAW_BIN: "${AGENTOPS_OPENCLAW_CONTAINER_BIN:-/opt/agentops-provider/openclaw/bin/openclaw}"
+      OPENCLAW_AGENT: "${AGENTOPS_OPENCLAW_AGENT:-main}"
+      OPENCLAW_TIMEOUT_SECONDS: "${AGENTOPS_OPENCLAW_TIMEOUT_SECONDS:-180}"
+      OPENCLAW_CONFIG_PATH: /run/secrets/openclaw_config
+      OPENCLAW_STATE_DIR: /run/openclaw-state
+      AGENTOPS_WORKER_CWD: /opt/agentops-worker/workspace
+    secrets:
+      - source: openclaw_agent_token
+        target: agent_token
+      - source: openclaw_config
+        target: openclaw_config
+    volumes:
+      - "${AGENTOPS_OPENCLAW_RUNTIME_PATH:-./openclaw-runtime}:/opt/agentops-provider/openclaw:ro"
+      - "${AGENTOPS_WORKER_WORKSPACE_PATH:-./worker-workspace}:/opt/agentops-worker/workspace:ro"
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, /usr/local/lib/agentops/worker-healthcheck.mjs]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+    networks:
+      - control_plane
+
 volumes:
   agentops_postgres_data:
 
@@ -243,3 +347,9 @@ secrets:
     file: "${AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD_FILE:?set AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD_FILE}"
   human_session_hmac_key:
     file: "${AGENTOPS_HUMAN_SESSION_HMAC_KEY_FILE:?set AGENTOPS_HUMAN_SESSION_HMAC_KEY_FILE}"
+  hermes_agent_token:
+    file: "${AGENTOPS_HERMES_WORKER_AGENT_TOKEN_FILE:-./secrets/hermes-worker-agent-token}"
+  openclaw_agent_token:
+    file: "${AGENTOPS_OPENCLAW_WORKER_AGENT_TOKEN_FILE:-./secrets/openclaw-worker-agent-token}"
+  openclaw_config:
+    file: "${AGENTOPS_OPENCLAW_CONFIG_FILE:-./secrets/openclaw-config.json}"

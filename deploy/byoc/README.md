@@ -104,6 +104,36 @@ The initial entitlement still goes through the v11 challenge and the isolated
 
    Never commit `.env` or the `deploy/byoc/secrets/` directory.
 
+### Optional TypeScript Worker profiles
+
+The commercial image contains the TypeScript Worker and `tsx` runtime, so the
+customer needs no repository checkout. Workers remain disabled unless an
+operator explicitly selects `worker-hermes` or `worker-openclaw` after issuing
+a scoped Agent Gateway enrollment for that Worker.
+
+Each profile mounts only its own Agent token file. Keep the one-time token in
+the file configured by `.env`; never put it in `.env`, argv, or a committed
+file. The supervisor rejects direct token environment values, requires
+production mode and trusted HTTPS AgentOps/provider URLs, validates bounded
+receipts, and never prints token, raw prompt, or raw response. OpenClaw config
+is a separate file secret; its Linux runtime and read-only working directory
+are customer mounts and are not shipped in this repository.
+
+```bash
+docker compose --env-file deploy/byoc/.env -f deploy/byoc/compose.yaml \
+  --profile worker-hermes up -d worker-hermes
+
+docker compose --env-file deploy/byoc/.env -f deploy/byoc/compose.yaml \
+  --profile worker-openclaw up -d worker-openclaw
+```
+
+Both services run as UID/GID `1000` with a read-only root filesystem, all
+capabilities dropped, bounded tmpfs state, `restart: unless-stopped`, and a
+renewable process-health lease. The Agent heartbeat, task claim, run heartbeat,
+cost reservation, and approval ledger remain authoritative. Real providers are
+never enabled by the default Compose graph. Keep
+`AGENTOPS_WORKER_ALLOW_HIGH_RISK=false` unless separately approved.
+
 4. Keep `AGENTOPS_BIND_ADDRESS=127.0.0.1` unless TLS is terminated by a trusted
    reverse proxy on the same private deployment boundary.
 5. Set `AGENTOPS_ALLOWED_ORIGINS` to the exact HTTPS browser origin.

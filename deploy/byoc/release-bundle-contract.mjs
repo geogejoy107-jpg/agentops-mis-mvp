@@ -103,7 +103,7 @@ function assertStaticCustomerBoundary() {
   if (/^\s+build:/m.test(compose) || /context:|dockerfile:|\.\.\/\.\./i.test(compose)) {
     fail("release_compose_build_boundary_invalid");
   }
-  if ((compose.match(/image: "?\$\{AGENTOPS_IMAGE:\?[^}]+\}"?/g) || []).length !== 4) {
+  if ((compose.match(/image: "?\$\{AGENTOPS_IMAGE:\?[^}]+\}"?/g) || []).length !== 6) {
     fail("release_compose_image_binding_invalid");
   }
   const ownerService = compose.match(
@@ -114,6 +114,8 @@ function assertStaticCustomerBoundary() {
     join(moduleDirectory, "owner-bootstrap-entrypoint.mjs"),
     "utf8",
   );
+  const workerEntrypoint = readFileSync(join(moduleDirectory, "worker-entrypoint.mjs"), "utf8");
+  const workerHealthcheck = readFileSync(join(moduleDirectory, "worker-healthcheck.mjs"), "utf8");
   if (
     !ownerService.includes("profiles: [owner-bootstrap]")
     || !ownerService.includes("--postgres-migrator")
@@ -134,6 +136,19 @@ function assertStaticCustomerBoundary() {
     || ownerEntrypoint.includes("childEnvironment.PGPASSWORD =")
   ) {
     fail("release_owner_bootstrap_boundary_invalid");
+  }
+  if (
+    !compose.includes("profiles: [worker-hermes]")
+    || !compose.includes("profiles: [worker-openclaw]")
+    || !compose.includes("AGENTOPS_AGENT_TOKEN_SOURCE_FILE: /run/secrets/agent_token")
+    || !compose.includes("/usr/local/lib/agentops/worker-entrypoint.mjs")
+    || !compose.includes("/usr/local/lib/agentops/worker-healthcheck.mjs")
+    || /\n\s+(?:AGENTOPS_API_KEY|AGENTOPS_AGENT_TOKEN):/.test(compose)
+    || !workerEntrypoint.includes("direct_agent_token_environment_forbidden")
+    || !workerEntrypoint.includes("worker_receipt_boundary_invalid")
+    || !workerHealthcheck.includes("process.kill(payload.pid, 0)")
+  ) {
+    fail("release_worker_boundary_invalid");
   }
   const installer = readFileSync(join(moduleDirectory, "install.sh"), "utf8");
   if (
@@ -263,6 +278,7 @@ const temporaryRoot = mkdtempSync(join(tmpdir(), "agentops-byoc-release-contract
 
 try {
   assertStaticCustomerBoundary();
+  run(process.execPath, [join(moduleDirectory, "worker-service-contract.mjs")], sourceRepository);
   const repository = join(temporaryRoot, "repository");
   mkdirSync(repository);
   copyInputs(repository);
@@ -500,6 +516,9 @@ exit 0
     owner_bootstrap_runtime_inputs_revision_bound: true,
     owner_bootstrap_password_stdin_only: true,
     owner_bootstrap_entitlement_boundary_unchanged: true,
+    source_free_typescript_worker_profiles_packaged: true,
+    worker_file_secret_and_health_lease_verified: true,
+    real_provider_execution_performed: false,
     failed_health_stack_stopped: true,
     tamper_refused: true,
     credentials_omitted: true,

@@ -10,6 +10,13 @@ lifecycle tools, the executable `owner-init.sh`, `release-image.env`, a bounded
 manifest, `SHA256SUMS`, and the `COMMITTED` marker. It does not contain the
 source-side bundle builder.
 
+The immutable image also contains the independent commercial TypeScript Worker
+supervisor and healthcheck. Optional `worker-hermes` and `worker-openclaw`
+profiles run from that image without a customer checkout, but remain disabled
+until explicitly selected. They require provider-specific Agent token files and
+complete production runtime settings. Provider credentials, OpenClaw binaries,
+and real-provider execution are not bundled or enabled by default.
+
 The release is bound to the exact source commit and the application image's
 immutable registry digest. A release build fails when any selected input is
 untracked or differs from that commit. The package's `SHA256SUMS` proves internal
