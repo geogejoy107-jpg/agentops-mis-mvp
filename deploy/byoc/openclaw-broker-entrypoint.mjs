@@ -11,7 +11,7 @@ import {
   readFileSync,
   unlinkSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey } from "node:crypto";
 import { createServer, request as httpRequest } from "node:http";
 import { createConnection } from "node:net";
 import { dirname, isAbsolute, resolve } from "node:path";
@@ -317,13 +317,29 @@ export function loadExecutorReceiptTrustRoots(path, { expectedUid = 0 } = {}) {
   if (!keys || typeof keys !== "object" || Array.isArray(keys)) fail("broker_receipt_trust_root_keys_invalid");
   const entries = Object.entries(keys);
   if (entries.length < 1 || entries.length > 8) fail("broker_receipt_trust_root_count_invalid");
-  for (const [keyId, publicKey] of entries) {
-    if (!SAFE_IDENTIFIER.test(keyId) || typeof publicKey !== "string" || publicKey.length > 4096) {
+  const parsedEntries = [];
+  for (const [keyId, publicKeyPem] of entries) {
+    if (
+      !SAFE_IDENTIFIER.test(keyId)
+      || typeof publicKeyPem !== "string"
+      || publicKeyPem.length > 4096
+      || !/^-----BEGIN PUBLIC KEY-----\n[A-Za-z0-9+/=\n]+-----END PUBLIC KEY-----\n?$/.test(publicKeyPem)
+    ) {
       fail("broker_receipt_trust_root_key_invalid");
     }
+    let publicKey;
+    try {
+      publicKey = createPublicKey(publicKeyPem);
+    } catch {
+      fail("broker_receipt_trust_root_key_invalid");
+    }
+    if (publicKey.type !== "public" || publicKey.asymmetricKeyType !== "ed25519") {
+      fail("broker_receipt_trust_root_key_invalid");
+    }
+    parsedEntries.push([keyId, publicKey]);
   }
   if (!bytes.equals(canonicalExecutorProtocolBytes(value))) fail("broker_receipt_trust_root_encoding_noncanonical");
-  return new Map(entries);
+  return new Map(parsedEntries);
 }
 
 function fileIdentity(metadata) {
@@ -385,11 +401,12 @@ export function privateRequestBytes(configuration, publicBytes, bootClock = null
     fail("broker_public_request_json_invalid");
   }
   if (value?.schema !== EXECUTOR_PUBLIC_REQUEST_SCHEMA) return Buffer.from(publicBytes);
-  if (!configuration.runtimeManifestSha256 || !configuration.isolationPolicySha256) {
-    fail("broker_executor_v2_bindings_unavailable");
-  }
+  requireV2ReceiptConfiguration(configuration);
+  const dispatchClock = typeof bootClock === "function"
+    ? bootClock()
+    : (bootClock || readLinuxBootClock());
   const dispatch = buildExecutorDispatch(value, {
-    bootClock: bootClock || readLinuxBootClock(),
+    bootClock: dispatchClock,
     isolationPolicySha256: configuration.isolationPolicySha256,
     runtimeManifestSha256: configuration.runtimeManifestSha256,
   });
@@ -485,13 +502,15 @@ export function verifyExecutorPrivateResponse(
     verification_boottime_ns: clock.now_boottime_ns,
     workspace_id_hash: publicRequest.workspace_id_hash,
   };
-  const verified = verifyExecutorReceipt(receipt, trustRoots, expected, replayCache);
+  const stagedReplayCache = new Set(replayCache);
+  const verified = verifyExecutorReceipt(receipt, trustRoots, expected, stagedReplayCache);
   const providerResponseSha256 = sha256Bytes(canonicalExecutorProtocolBytes(providerResponse));
   if (
     verified.provider.response_complete !== true
     || verified.provider.response_sha256 !== providerResponseSha256
     || verified.provider.call_observed !== providerResponse.provider_call_performed
   ) fail("broker_executor_v2_provider_response_binding_invalid");
+  for (const key of stagedReplayCache) replayCache.add(key);
   return canonicalExecutorProtocolBytes(providerResponse);
 }
 
@@ -768,12 +787,19 @@ function writePrivateResponse(publicResponse, forwarded) {
   publicResponse.end(forwarded.body);
 }
 
-export async function startBrokerService(configuration = loadConfiguration()) {
+export async function startBrokerService(configuration = loadConfiguration(), dependencies = {}) {
+  const readBootClock = dependencies.readBootClock || readLinuxBootClock;
+  if (typeof readBootClock !== "function") fail("broker_boot_clock_reader_invalid");
   await preparePublicSocket(configuration);
   const privateIdentity = inspectPrivateSocket(configuration);
-  const receiptTrustRoots = configuration.receiptTrustRootPath
-    ? loadExecutorReceiptTrustRoots(configuration.receiptTrustRootPath)
-    : null;
+  const receiptTrustRoots = dependencies.receiptTrustRoots === undefined
+    ? (configuration.receiptTrustRootPath
+      ? loadExecutorReceiptTrustRoots(configuration.receiptTrustRootPath)
+      : null)
+    : dependencies.receiptTrustRoots;
+  if (receiptTrustRoots !== null && !(receiptTrustRoots instanceof Map)) {
+    fail("broker_receipt_trust_roots_invalid");
+  }
   const receiptReplayCache = new Set();
   const state = {
     activeRequest: null,
@@ -836,12 +862,15 @@ export async function startBrokerService(configuration = loadConfiguration()) {
       }
       if (body === null || response.headersSent || response.destroyed) return;
       try {
-        const privateBody = privateRequestBytes(configuration, body);
+        const publicRequest = JSON.parse(body.toString("utf8"));
+        if (
+          publicRequest.schema === EXECUTOR_PUBLIC_REQUEST_SCHEMA
+          && (!receiptTrustRoots || !receiptTrustRoots.has(configuration.receiptKeyId))
+        ) fail("broker_executor_v2_receipt_trust_root_unavailable");
+        const privateBody = privateRequestBytes(configuration, body, readBootClock);
         slot.forward = forwardToPrivate(configuration, privateIdentity, privateBody, response);
         const forwarded = await slot.forward.result;
-        const publicRequest = JSON.parse(body.toString("utf8"));
         if (publicRequest.schema === EXECUTOR_PUBLIC_REQUEST_SCHEMA) {
-          if (!receiptTrustRoots) fail("broker_executor_v2_receipt_trust_roots_unavailable");
           forwarded.body = verifyExecutorPrivateResponse(
             configuration,
             body,
@@ -849,6 +878,7 @@ export async function startBrokerService(configuration = loadConfiguration()) {
             forwarded.body,
             receiptTrustRoots,
             receiptReplayCache,
+            readBootClock(),
           );
         }
         writePrivateResponse(response, forwarded);

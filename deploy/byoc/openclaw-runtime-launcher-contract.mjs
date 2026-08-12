@@ -176,7 +176,7 @@ if (process.platform !== "linux" || (typeof process.geteuid === "function" && pr
     "--security-opt",
     "seccomp=unconfined",
     "--tmpfs",
-    "/tmp:rw,nosuid,nodev,size=128m,mode=1777",
+    "/tmp:rw,exec,nosuid,nodev,size=128m,mode=1777",
     "--volume",
     `${repoRoot}:/workspace:ro`,
     "--workdir",
@@ -193,7 +193,11 @@ if (process.platform !== "linux" || (typeof process.geteuid === "function" && pr
   });
   rmSync(dockerConfig, { recursive: true, force: true });
   assert.equal(docker.error?.code, undefined, docker.error?.code ?? "");
-  assert.equal(docker.status, 0, `${docker.stdout}${docker.stderr}`);
+  assert.equal(
+    docker.status,
+    0,
+    `${docker.error?.code ?? ""}${docker.error?.message ?? ""}${docker.stdout}${docker.stderr}`,
+  );
   process.stdout.write(docker.stdout);
   process.exit(0);
 }
@@ -395,7 +399,11 @@ try {
   compile(probeSource, probeBinary);
 
   const nonRoot = launchWithFd([probeBinary, "identity"], { uid: 65534, gid: 65534 });
-  assert.equal(nonRoot.status, 77, `${nonRoot.stdout}${nonRoot.stderr}`);
+  assert.equal(
+    nonRoot.status,
+    77,
+    `${nonRoot.error?.code ?? ""}${nonRoot.error?.message ?? ""}${nonRoot.stdout}${nonRoot.stderr}`,
+  );
   assert.equal(nonRoot.stderr, "runtime_launcher_root_required\n");
 
   const valid = launcherArgs(3);
