@@ -53,7 +53,7 @@ invalidates the previous review and requires a new independent review.
 | Lane | Exact candidate | Required reviewer state |
 | --- | --- | --- |
 | C0 Shared Runtime | `7691d4a38613e23f42f9a433ddc2cffe188ba365` | Corrective commit closes prior resume/UI/SBOM findings and passes author gates, but fresh review reproduces C0-008 concurrent convergence failure. Exact decision remains FAIL; another fix and non-author review are required. |
-| C1 Research | candidate `a9fa0f02deeab9b3f0f0c90ea4edcd314e644bd0`; integration `5cdc9570c31ef821f12cafb0e17b399a939a72e8` | Fresh exact independent PASS: P0=0, P1=0, P2=0. Merged without conflict. Combined head reran Python 3.11/3.14 90/90, secret scan 1010 files/0, compile/diff/clean tree; isolated frontend command replay remains pending. Shared server/AppShell/CLI live wiring remains a truthful combined-head gate. |
+| C1 Research | candidate `a9fa0f02deeab9b3f0f0c90ea4edcd314e644bd0`; integration `5cdc9570c31ef821f12cafb0e17b399a939a72e8` | Fresh exact independent PASS: P0=0, P1=0, P2=0. Merged without conflict. Combined head reran Python 3.11/3.14 90/90, secret scan 1010 files/0, compile/diff/clean tree and isolated esbuild 0.25.12 bundle. Shared server/AppShell/CLI live wiring remains a truthful combined-head gate. |
 | C2 Career | `80b2a2dac8299590baab3aff76e3bf099f009d02` | Corrective candidate passes its author suites, but independent trust-boundary review reproduces a forged-Core official submission. Exact decision remains FAIL pending C2-007 correction and fresh review. |
 | C3 Quant | `b3828a2e0eb933d5211737a53f4b8cfca3e750d5` | Fresh exact review FAIL: P0=0, P1=1, P2=1. Core trust-envelope and exact-handoff corrective implementation is running; any new commit requires another non-author review. |
 
