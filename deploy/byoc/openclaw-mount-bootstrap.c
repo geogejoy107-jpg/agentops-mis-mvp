@@ -208,28 +208,33 @@ static int validate_self_executable(void) {
 
 static int harden_mount(const char *target, int recursive_bind) {
     const unsigned long bind_flags = MS_BIND | (recursive_bind ? MS_REC : 0UL);
-    const unsigned long remount_flags = MS_BIND | MS_REMOUNT | MS_RDONLY
-        | MS_NOSUID | MS_NODEV | MS_NOEXEC;
+    const struct mount_attr attributes = {
+        .attr_set = MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID
+            | MOUNT_ATTR_NODEV | MOUNT_ATTR_NOEXEC,
+    };
+    const unsigned int recursive_flags = recursive_bind ? AT_RECURSIVE : 0U;
 
+    if (syscall(
+        SYS_mount_setattr,
+        AT_FDCWD,
+        target,
+        recursive_flags,
+        &attributes,
+        sizeof(attributes)
+    ) < 0) {
+        return -1;
+    }
     if (mount(target, target, NULL, bind_flags, NULL) < 0) {
         return -1;
     }
-    if (recursive_bind) {
-        const struct mount_attr attributes = {
-            .attr_set = MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID
-                | MOUNT_ATTR_NODEV | MOUNT_ATTR_NOEXEC,
-        };
-        if (syscall(
-            SYS_mount_setattr,
-            AT_FDCWD,
-            target,
-            AT_RECURSIVE,
-            &attributes,
-            sizeof(attributes)
-        ) < 0) {
-            return -1;
-        }
-    } else if (mount(NULL, target, NULL, remount_flags, NULL) < 0) {
+    if (syscall(
+        SYS_mount_setattr,
+        AT_FDCWD,
+        target,
+        recursive_flags,
+        &attributes,
+        sizeof(attributes)
+    ) < 0) {
         return -1;
     }
     return 0;

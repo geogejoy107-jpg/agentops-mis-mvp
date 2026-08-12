@@ -88,13 +88,12 @@ function sourceAudit() {
   assert.match(sourceText, /MS_BIND \| \(recursive_bind \? MS_REC : 0UL\)/);
   assert.match(sourceText, /harden_mount\(CONFIG_TARGET, 0\)/);
   assert.match(sourceText, /harden_mount\(WORKSPACE_TARGET, 1\)/);
-  assert.match(sourceText, /MS_BIND \| MS_REMOUNT \| MS_RDONLY/);
-  assert.match(sourceText, /MS_NOSUID \| MS_NODEV \| MS_NOEXEC/);
   assert.match(sourceText, /SYS_mount_setattr/);
   assert.match(sourceText, /AT_RECURSIVE/);
   assert.match(sourceText, /MOUNT_ATTR_RDONLY \| MOUNT_ATTR_NOSUID/);
   assert.match(sourceText, /MOUNT_ATTR_NODEV \| MOUNT_ATTR_NOEXEC/);
   assert.match(sourceText, /mount_point_in_tree/);
+  assert.equal((sourceText.match(/SYS_mount_setattr/g) || []).length, 2);
   assert.match(sourceText, /open\("\/proc\/self\/mountinfo", O_RDONLY \| O_CLOEXEC \| O_NOFOLLOW\)/);
   assert.match(sourceText, /config_mount_id != workspace_mount_id/);
   for (const option of ["ro", "nosuid", "nodev", "noexec"]) {
