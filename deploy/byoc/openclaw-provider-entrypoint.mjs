@@ -212,6 +212,16 @@ export function loadConfiguration(environment = process.env) {
   );
   if (!statSync(workspace).isDirectory()) fail("openclaw_workspace_directory_required");
 
+  const socketDirectoryMode = boundedInteger(
+    environment.OPENCLAW_PROVIDER_SOCKET_DIRECTORY_MODE,
+    0o750,
+    0o700,
+    0o750,
+    "openclaw_provider_socket_directory_mode",
+  );
+  if (![0o700, 0o750].includes(socketDirectoryMode)) {
+    fail("openclaw_provider_socket_directory_mode_invalid");
+  }
   const configuration = {
     socketPath,
     binaryPath,
@@ -232,6 +242,7 @@ export function loadConfiguration(environment = process.env) {
       2 ** 31 - 1,
       "openclaw_provider_socket_gid",
     ),
+    socketDirectoryMode,
     shutdownGraceMs: boundedInteger(
       environment.OPENCLAW_PROVIDER_SHUTDOWN_GRACE_MS,
       5_000,
@@ -596,7 +607,7 @@ async function prepareSocket(configuration) {
     || directory.isSymbolicLink()
     || directory.uid !== process.getuid()
     || directory.gid !== configuration.socketGid
-    || (directory.mode & 0o777) !== 0o750
+    || (directory.mode & 0o777) !== configuration.socketDirectoryMode
   ) {
     fail("provider_socket_directory_permissions_invalid");
   }

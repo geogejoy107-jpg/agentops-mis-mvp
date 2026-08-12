@@ -204,7 +204,9 @@ function assertStaticCustomerBoundary() {
     || !openClawProviderEntrypoint.includes("state.activeRequest = requestSlot")
     || !openClawProviderEntrypoint.includes("provider_socket_directory_unavailable")
     || !openClawProviderEntrypoint.includes("provider_socket_directory_permissions_invalid")
-    || !openClawProviderEntrypoint.includes("(directory.mode & 0o777) !== 0o750")
+    || !openClawProviderEntrypoint.includes(
+      "(directory.mode & 0o777) !== configuration.socketDirectoryMode",
+    )
     || !openClawProviderEntrypoint.includes('error?.code === "ECONNRESET"')
     || /O_NOFOLLOW\s*\|\|\s*0/.test(openClawProviderEntrypoint)
     || openClawProvider.includes("AGENTOPS_AGENT_TOKEN")
@@ -406,6 +408,11 @@ try {
   run(
     process.execPath,
     [join(moduleDirectory, "openclaw-phase-a03-image-contract.mjs")],
+    sourceRepository,
+  );
+  run(
+    process.execPath,
+    [join(moduleDirectory, "openclaw-phase-a04-a05-image-contract.mjs")],
     sourceRepository,
   );
   const repository = join(temporaryRoot, "repository");

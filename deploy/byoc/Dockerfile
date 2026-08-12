@@ -1,5 +1,17 @@
 # syntax=docker/dockerfile:1.7
 
+FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS peercred-build
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY deploy/byoc/openclaw-peercred-gate.c ./
+RUN gcc -std=c11 -O2 -fPIE -fstack-protector-strong \
+      -D_FORTIFY_SOURCE=2 -Wall -Wextra -Werror \
+      -Wl,-z,relro,-z,now,-z,noexecstack -pie \
+      -o /agentops-openclaw-peercred-gate openclaw-peercred-gate.c \
+    && strip --strip-all /agentops-openclaw-peercred-gate
+
 FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS dependencies
 WORKDIR /opt/agentops/ui/next-app
 COPY ui/next-app/package.json ui/next-app/package-lock.json ./
@@ -29,12 +41,16 @@ RUN test "$(id -u node)" = "1000" \
 WORKDIR /opt/agentops
 COPY --from=build /opt/agentops/ui/next-app ./ui/next-app
 COPY migrations/postgres ./migrations/postgres
+COPY --from=peercred-build --chmod=0555 /agentops-openclaw-peercred-gate /usr/local/bin/agentops-openclaw-peercred-gate
 COPY --chmod=0555 \
     deploy/byoc/node-healthcheck.mjs \
     deploy/byoc/node-secret-entrypoint.mjs \
     deploy/byoc/owner-bootstrap-entrypoint.mjs \
     deploy/byoc/openclaw-broker-entrypoint.mjs \
     deploy/byoc/openclaw-broker-contract.mjs \
+    deploy/byoc/openclaw-boundary-supervisor.mjs \
+    deploy/byoc/openclaw-boundary-supervisor-contract.mjs \
+    deploy/byoc/openclaw-peercred-gate-contract.mjs \
     deploy/byoc/openclaw-phase-a03-image-contract.mjs \
     deploy/byoc/openclaw-provider-entrypoint.mjs \
     deploy/byoc/openclaw-provider-healthcheck.mjs \

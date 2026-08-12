@@ -1,0 +1,130 @@
+name: agentops-openclaw-phase-a04-a05
+
+services:
+  worker:
+    image: ${AGENTOPS_A04_A05_IMAGE:?set AGENTOPS_A04_A05_IMAGE to the candidate BYOC image digest}
+    init: true
+    restart: "no"
+    user: "1000:1000"
+    group_add:
+      - "2100"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=1000,gid=1000
+    entrypoint: [node, -e]
+    command:
+      - process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000)
+    volumes:
+      - phase_a04_a05_public_socket:/run/agentops-openclaw-public:ro
+
+  broker:
+    image: ${AGENTOPS_A04_A05_IMAGE:?set AGENTOPS_A04_A05_IMAGE to the candidate BYOC image digest}
+    init: true
+    restart: "no"
+    user: "1100:1100"
+    group_add:
+      - "2100"
+      - "2200"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=1100,gid=1100
+      - /run/agentops-openclaw-broker-backend:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=1100,gid=1100
+    entrypoint: [node, /usr/local/lib/agentops/openclaw-boundary-supervisor.mjs]
+    environment:
+      AGENTOPS_OPENCLAW_BOUNDARY_ROLE: broker
+      AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_PATH: /run/agentops-openclaw-public/broker.sock
+      AGENTOPS_OPENCLAW_BROKER_PRIVATE_SOCKET_PATH: /run/agentops-openclaw-private/executor.sock
+      AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_GID: "2100"
+      AGENTOPS_OPENCLAW_BROKER_PRIVATE_SOCKET_GID: "2200"
+      AGENTOPS_OPENCLAW_BROKER_PRIVATE_SOCKET_UID: "1001"
+    volumes:
+      - phase_a04_a05_public_socket:/run/agentops-openclaw-public:rw
+      - phase_a04_a05_private_socket:/run/agentops-openclaw-private:ro
+    depends_on:
+      executor:
+        condition: service_healthy
+
+  executor:
+    image: ${AGENTOPS_A04_A05_IMAGE:?set AGENTOPS_A04_A05_IMAGE to the candidate BYOC image digest}
+    init: true
+    restart: "no"
+    user: "1001:1000"
+    group_add:
+      - "2200"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run/agentops-openclaw-provider-backend:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=1001,gid=1000
+      - /run/openclaw-state:rw,noexec,nosuid,nodev,size=16m,mode=0700,uid=1001,gid=1000
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=0700,uid=1001,gid=1000
+    entrypoint: [node, /usr/local/lib/agentops/openclaw-boundary-supervisor.mjs]
+    environment:
+      NODE_ENV: production
+      AGENTOPS_OPENCLAW_BOUNDARY_ROLE: executor
+      OPENCLAW_PROVIDER_SOCKET: /run/agentops-openclaw-private/executor.sock
+      OPENCLAW_PROVIDER_SOCKET_GID: "2200"
+      OPENCLAW_BIN: /opt/agentops-provider/openclaw/bin/openclaw
+      OPENCLAW_BIN_SHA256: ${AGENTOPS_A04_A05_OPENCLAW_BIN_SHA256:?set AGENTOPS_A04_A05_OPENCLAW_BIN_SHA256}
+      OPENCLAW_CONFIG_PATH: /run/secrets/openclaw_config
+      OPENCLAW_STATE_DIR: /run/openclaw-state
+      OPENCLAW_WORKSPACE: /opt/agentops-worker/workspace
+      OPENCLAW_AGENT: acceptance-a04-a05
+      OPENCLAW_TIMEOUT_SECONDS: "30"
+      OPENCLAW_PROVIDER_SHUTDOWN_GRACE_MS: "5000"
+    volumes:
+      - phase_a04_a05_private_socket:/run/agentops-openclaw-private:rw
+      - type: bind
+        source: ${AGENTOPS_A04_A05_RUNTIME_PATH:?set AGENTOPS_A04_A05_RUNTIME_PATH}
+        target: /opt/agentops-provider/openclaw
+        read_only: true
+      - type: bind
+        source: ${AGENTOPS_A04_A05_CONFIG_PATH:?set AGENTOPS_A04_A05_CONFIG_PATH}
+        target: /run/secrets/openclaw_config
+        read_only: true
+      - type: bind
+        source: ${AGENTOPS_A04_A05_WORKSPACE_PATH:?set AGENTOPS_A04_A05_WORKSPACE_PATH}
+        target: /opt/agentops-worker/workspace
+        read_only: true
+      - type: bind
+        source: ${AGENTOPS_A04_A05_SIGNING_KEY_PATH:?set AGENTOPS_A04_A05_SIGNING_KEY_PATH}
+        target: /run/secrets/openclaw_receipt_signing_key
+        read_only: true
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - OPENCLAW_PROVIDER_SOCKET=/run/agentops-openclaw-provider-backend/provider.sock AGENTOPS_OPENCLAW_BOUNDARY_STATE_PATH=/run/agentops-openclaw-provider-backend/supervisor-state.json node /usr/local/lib/agentops/openclaw-provider-healthcheck.mjs
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+    networks:
+      - provider-egress
+
+volumes:
+  phase_a04_a05_public_socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=1100,gid=2100,mode=0750,nosuid,nodev,noexec,size=1m
+  phase_a04_a05_private_socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=1001,gid=2200,mode=0750,nosuid,nodev,noexec,size=1m
+
+networks:
+  provider-egress:
+    driver: bridge
+    internal: false

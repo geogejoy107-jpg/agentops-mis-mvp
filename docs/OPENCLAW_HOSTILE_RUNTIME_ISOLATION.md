@@ -1,12 +1,16 @@
 # OpenClaw Hostile Runtime Isolation
 
 Status: engineering specification under implementation. The default customer
-release remains on the two-service A01/A02 topology. A source-only three-service
-A03 candidate now lives in `deploy/byoc/compose.openclaw-phase-a03.yaml`; its
-exact-image Linux attack gate is
-`.github/workflows/openclaw-phase-a03-acceptance.yml`. Source and offline
-contracts alone are not A03 evidence, and this document is not evidence that the
-complete hostile-runtime boundary is implemented.
+release remains on the two-service A01/A02 topology. The three-service A03
+candidate in `deploy/byoc/compose.openclaw-phase-a03.yaml` passed its exact-image
+Linux path-isolation gate at source commit
+`6c37c47e16f6a4e4327372960c58144744af5721`. That proves the bounded A03 mount
+and DAC claims only. The source-only A04/A05 successor lives in
+`deploy/byoc/compose.openclaw-phase-a04-a05.yaml` and adds Linux `SO_PEERCRED`
+gates in front of both Node.js protocol services. It earns no A04/A05 claim
+until its own exact-image Linux attack workflow passes. Neither candidate is the
+default customer topology, and this document is not evidence that the complete
+hostile-runtime boundary is implemented.
 
 ## 1. Security Claims At The Current Baseline
 
@@ -30,10 +34,18 @@ The current two-service topology must not claim hostile-runtime isolation.
 
 Until Phase A passes every mandatory acceptance below, the default release's
 maximum claim is credential separation between the Worker and the current
-provider container. The source-only A03 candidate may additionally claim Worker
-mount/path separation only after its real Linux exact-image receipt passes; it
-must keep `so_peercred_verified=false`, `runtime_receipt_verified=false`, and
-`hostile_runtime_isolation_verified=false`.
+provider container. The A03 exact-image evidence additionally proves Worker
+mount/path separation for that candidate. The A04/A05 candidate may set the
+individual public and private peer-credential fields only after active Linux
+wrong-uid probes pass. Both candidates must keep
+`runtime_receipt_verified=false` and `hostile_runtime_isolation_verified=false`.
+The A03 receipt must additionally keep `so_peercred_verified=false`.
+The A04/A05 Compose healthcheck is an operational startup-ordering check only.
+Its Supervisor state file and internal Provider socket share the Executor uid in
+this interim topology, so the check is not an independent security authority
+against a runtime that has already compromised that uid. Receipts must keep
+`healthcheck_security_boundary_verified=false`; A06 and later identity/runtime
+separation must close that gap before any complete hostile-runtime claim.
 Even after Phase A passes, the release metadata must state:
 
 ```text
