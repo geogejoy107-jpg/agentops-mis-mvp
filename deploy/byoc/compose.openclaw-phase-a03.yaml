@@ -46,6 +46,9 @@ services:
     volumes:
       - phase_a03_public_socket:/run/agentops-openclaw-public:rw
       - phase_a03_private_socket:/run/agentops-openclaw-private:ro
+    depends_on:
+      executor:
+        condition: service_healthy
 
   executor:
     image: ${AGENTOPS_A03_IMAGE:?set AGENTOPS_A03_IMAGE to the candidate BYOC image}
@@ -92,6 +95,12 @@ services:
         source: ${AGENTOPS_A03_SIGNING_KEY_PATH:?set AGENTOPS_A03_SIGNING_KEY_PATH}
         target: /run/secrets/openclaw_receipt_signing_key
         read_only: true
+    healthcheck:
+      test: [CMD, node, /usr/local/lib/agentops/openclaw-provider-healthcheck.mjs]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
     networks:
       - provider-egress
 

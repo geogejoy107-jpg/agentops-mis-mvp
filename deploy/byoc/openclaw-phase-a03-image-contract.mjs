@@ -51,11 +51,13 @@ assert.match(broker, /network_mode: none/);
 assert.match(broker, /openclaw-broker-entrypoint\.mjs/);
 assert.match(broker, /phase_a03_public_socket:\/run\/agentops-openclaw-public:rw/);
 assert.match(broker, /phase_a03_private_socket:\/run\/agentops-openclaw-private:ro/);
+assert.match(broker, /depends_on:[\s\S]*executor:[\s\S]*condition: service_healthy/);
 assert.doesNotMatch(
   broker,
   /agentops-provider\/openclaw|openclaw_config|agentops-worker\/workspace|signing_key/,
 );
 assert.match(executor, /phase_a03_private_socket:\/run\/agentops-openclaw-private:rw/);
+assert.match(executor, /openclaw-provider-healthcheck\.mjs/);
 assert.doesNotMatch(executor, /agentops-openclaw-public|control_plane/);
 assert.match(compose, /o: uid=1100,gid=2100,mode=0750/);
 assert.match(compose, /o: uid=1001,gid=2200,mode=0750/);
