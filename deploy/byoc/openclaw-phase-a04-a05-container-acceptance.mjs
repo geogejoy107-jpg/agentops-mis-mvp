@@ -67,6 +67,73 @@ function compose(composeFiles, project, environment, args, options = {}) {
   ], { ...options, environment });
 }
 
+const SUPERVISOR_STARTUP_ERROR_CODES = new Set([
+  "boundary_backend_health_child_exited",
+  "boundary_backend_health_spawn_failed",
+  "boundary_backend_health_timeout",
+  "boundary_environment_unknown",
+  "boundary_gate_listener_child_exited",
+  "boundary_gate_listener_spawn_failed",
+  "boundary_gate_listener_timeout",
+  "boundary_internal_cleanup_failed",
+  "boundary_internal_root_invalid",
+  "boundary_internal_root_unavailable",
+  "boundary_internal_state_not_clean",
+  "boundary_role_invalid",
+  "boundary_shutdown_requested_during_startup",
+  "boundary_test_override_forbidden",
+  "openclaw_boundary_supervisor_failed",
+]);
+
+function boundedComposeStartupDiagnostics(composeFiles, project, environment) {
+  let rows = [];
+  try {
+    const output = compose(
+      composeFiles,
+      project,
+      environment,
+      ["ps", "--all", "--format", "json"],
+      { accepted: [0, 1], code: "compose_diagnostics_unavailable" },
+    ).trim();
+    const parsed = output
+      ? (output.startsWith("[")
+          ? JSON.parse(output)
+          : output.split("\n").map((line) => JSON.parse(line)))
+      : [];
+    rows = parsed.slice(0, 3).map((value) => {
+      const id = String(value.ID || "");
+      let fixedCodes = [];
+      if (/^[a-f0-9]{12,64}$/.test(id)) {
+        const logged = spawnSync("docker", ["logs", "--tail", "20", id], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 5_000,
+          env: process.env,
+        });
+        fixedCodes = `${logged.stdout || ""}\n${logged.stderr || ""}`.split("\n")
+          .map((line) => line.trim())
+          .filter((line) => SUPERVISOR_STARTUP_ERROR_CODES.has(line))
+          .slice(-3);
+      }
+      return {
+        service: String(value.Service || "").slice(0, 40),
+        state: String(value.State || "").slice(0, 20),
+        health: String(value.Health || "").slice(0, 20),
+        exit_code: Number.isSafeInteger(Number(value.ExitCode)) ? Number(value.ExitCode) : null,
+        fixed_error_codes: fixedCodes,
+      };
+    });
+  } catch {
+    rows = [];
+  }
+  process.stderr.write(`${JSON.stringify({
+    contract: "agentops_openclaw_a04_a05_startup_diagnostics_v1",
+    services: rows,
+    credentials_omitted: true,
+    raw_logs_omitted: true,
+  })}\n`);
+}
+
 function waitFor(label, probe, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -359,13 +426,18 @@ async function main() {
         !== "service_healthy"
       || !composeConfiguration.services?.executor?.healthcheck
     ) fail("production_compose_health_ordering_invalid");
-    compose(
-      composeFiles,
-      project,
-      environment,
-      ["up", "--detach", "--no-build"],
-      { timeout: 120_000 },
-    );
+    try {
+      compose(
+        composeFiles,
+        project,
+        environment,
+        ["up", "--detach", "--no-build"],
+        { timeout: 120_000, code: "production_compose_start_failed" },
+      );
+    } catch {
+      boundedComposeStartupDiagnostics(composeFiles, project, environment);
+      fail("production_compose_start_failed");
+    }
     const worker = serviceContainer(composeFiles, project, environment, "worker");
     const broker = serviceContainer(composeFiles, project, environment, "broker");
     const executor = serviceContainer(composeFiles, project, environment, "executor");
