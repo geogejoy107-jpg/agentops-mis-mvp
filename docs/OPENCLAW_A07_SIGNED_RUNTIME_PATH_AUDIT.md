@@ -22,6 +22,12 @@ working-tree service calls the runner, but the runner contract injects file-open
 launcher-spawn, cgroup, and child-result behavior. Its own output correctly says
 `real_runtime_process_spawned=false`.
 
+The launcher/runner status pipe is a narrower completed improvement. The
+launcher emits `R` only after its isolation sequence and marks the descriptor
+`CLOEXEC`; the runner requires exact `R` before accepting output. Missing status
+or `RE` cannot produce a receipt. This proves neither root-fd path confinement
+nor a real runtime launch, so it does not change any finding or claim below.
+
 ## 2. Current Path Trace
 
 The manifest contract uses this metadata:

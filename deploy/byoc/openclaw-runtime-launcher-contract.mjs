@@ -25,17 +25,20 @@ const requireRealLinux = process.env.AGENTOPS_REQUIRE_REAL_LINUX === "1" || proc
 function sourceAudit() {
   assert.match(sourceText, /#ifndef __linux__/);
   assert.match(sourceText, /geteuid\(\) != 0/);
-  assert.match(sourceText, /argc < 11/);
+  assert.match(sourceText, /argc < 13/);
   assert.match(sourceText, /strcmp\(argv\[1\], "--uid"\)/);
   assert.match(sourceText, /strcmp\(argv\[3\], "--gid"\)/);
   assert.match(sourceText, /strcmp\(argv\[5\], "--exec-fd"\)/);
   assert.match(sourceText, /strcmp\(argv\[7\], "--cgroup-procs-fd"\)/);
-  assert.match(sourceText, /strcmp\(argv\[9\], "--"\)/);
+  assert.match(sourceText, /strcmp\(argv\[9\], "--status-fd"\)/);
+  assert.match(sourceText, /strcmp\(argv\[11\], "--"\)/);
   assert.match(sourceText, /uid_value != \(unsigned long\)RUNTIME_UID/);
   assert.match(sourceText, /gid_value != \(unsigned long\)RUNTIME_GID/);
   assert.match(sourceText, /fstat\(exec_fd, &metadata\)/);
   assert.match(sourceText, /fstat\(cgroup_procs_fd, &metadata\)/);
   assert.match(sourceText, /fstatfs\(cgroup_procs_fd, &filesystem\)/);
+  assert.match(sourceText, /fstat\(status_fd, &metadata\)/);
+  assert.match(sourceText, /FD_CLOEXEC/);
   assert.match(sourceText, /CGROUP2_SUPER_MAGIC/);
   assert.match(sourceText, /write\(cgroup_procs_fd, pid_text/);
   assert.match(sourceText, /sigprocmask\(SIG_SETMASK, &empty, NULL\)/);
@@ -85,6 +88,7 @@ function sourceAudit() {
     "geteuid() != 0",
     "validate_arguments(argc, argv",
     "validate_executable_fd(exec_fd)",
+    "validate_status_fd(status_fd)",
     "enter_request_cgroup(cgroup_procs_fd)",
     "reset_signal_state()",
     "setgroups(0, NULL)",
@@ -93,10 +97,12 @@ function sourceAudit() {
     "PR_SET_NO_NEW_PRIVS",
     "PR_SET_DUMPABLE",
     "install_resource_limits()",
-    "close_non_allowlisted_fds(exec_fd)",
+    "close_non_allowlisted_fds(exec_fd, status_fd)",
     "clear_capabilities()",
     "install_seccomp_denylist()",
+    "write_status(status_fd, 'R')",
     "execute_fd(exec_fd",
+    "write_status(status_fd, 'E')",
   ];
   let previous = -1;
   for (const operation of orderedOperations) {
@@ -113,8 +119,9 @@ function writeSourceAudit(extra = {}) {
     contract: "agentops_openclaw_runtime_launcher_foundation_a07_source_audit_v1",
     ok: true,
     source_operation_order_audited: true,
-    exact_named_argv_audited: "--uid 1200 --gid 1200 --exec-fd FD --cgroup-procs-fd FD -- ARGV0 [ARGS...]",
+    exact_named_argv_audited: "--uid 1200 --gid 1200 --exec-fd FD --cgroup-procs-fd FD --status-fd FD -- ARGV0 [ARGS...]",
     inherited_cgroup_procs_fd_write_order_audited: true,
+    close_on_exec_ready_milestone_audited: true,
     cgroup2_superblock_fd_required: true,
     signal_mask_and_dispositions_reset_audited: true,
     shell_and_path_execution_omitted: true,
@@ -329,12 +336,13 @@ function compile(source, output) {
   assert.equal(result.status, 0, result.stderr);
 }
 
-function launcherArgs(fd, childArgs = [probeBinary, "identity"], cgroupFd = 4) {
+function launcherArgs(fd, childArgs = [probeBinary, "identity"], cgroupFd = 4, statusFd = 5) {
   return [
     "--uid", "1200",
     "--gid", "1200",
     "--exec-fd", String(fd),
     "--cgroup-procs-fd", String(cgroupFd),
+    "--status-fd", String(statusFd),
     "--",
     ...childArgs,
   ];
@@ -351,9 +359,10 @@ function launchWithFd(childArgs, options = {}) {
       env: options.env ?? {},
       uid: options.uid,
       gid: options.gid,
-      stdio: ["ignore", "pipe", "pipe", executableFd, cgroupFd],
+      stdio: ["ignore", "pipe", "pipe", executableFd, cgroupFd, "pipe"],
     });
     result.cgroupWrite = readFileSync(cgroupPath, "utf8");
+    result.launcherStatus = result.output[5];
     return result;
   } finally {
     closeSync(executableFd);
@@ -369,7 +378,7 @@ function launchWithRejectedFd(parentFd) {
     return spawnSync(binary, launcherArgs(3, undefined, 4), {
       encoding: "utf8",
       env: {},
-      stdio: ["ignore", "pipe", "pipe", parentFd, cgroupFd],
+      stdio: ["ignore", "pipe", "pipe", parentFd, cgroupFd, "pipe"],
     });
   } finally {
     closeSync(cgroupFd);
@@ -383,7 +392,7 @@ function launchWithRealCgroup(childArgs, cgroupProcsPath) {
     return spawnSync(binary, launcherArgs(3, childArgs, 4), {
       encoding: "utf8",
       env: {},
-      stdio: ["ignore", "pipe", "pipe", executableFd, cgroupFd],
+      stdio: ["ignore", "pipe", "pipe", executableFd, cgroupFd, "pipe"],
     });
   } finally {
     closeSync(executableFd);
@@ -408,15 +417,16 @@ try {
 
   const valid = launcherArgs(3);
   for (const invalid of [
-    valid.slice(0, 9),
-    ["--uid", "1200", "--gid", "1200", "--exec-fd", "3", "--cgroup-procs-fd", "4", "--extra", "value", "--", probeBinary, "identity"],
-    ["--gid", "1200", "--uid", "1200", "--exec-fd", "3", "--cgroup-procs-fd", "4", "--", probeBinary, "identity"],
-    ["--uid", "01200", "--gid", "1200", "--exec-fd", "3", "--cgroup-procs-fd", "4", "--", probeBinary, "identity"],
-    ["--uid", "1200", "--gid", "1201", "--exec-fd", "3", "--cgroup-procs-fd", "4", "--", probeBinary, "identity"],
-    ["--uid", "1200", "--gid", "1200", "--exec-fd", "2", "--cgroup-procs-fd", "4", "--", probeBinary, "identity"],
-    ["--uid", "1200", "--gid", "1200", "--exec-fd", "not-an-fd", "--cgroup-procs-fd", "4", "--", probeBinary, "identity"],
-    ["--uid", "1200", "--gid", "1200", "--exec-fd", "3", "--cgroup-procs-fd", "03", "--", probeBinary, "identity"],
-    ["--uid", "1200", "--gid", "1200", "--exec-fd", "3", "--cgroup-procs-fd", "3", "--", probeBinary, "identity"],
+    valid.slice(0, 11),
+    ["--uid", "1200", "--gid", "1200", "--exec-fd", "3", "--cgroup-procs-fd", "4", "--status-fd", "5", "--extra", "value", "--", probeBinary, "identity"],
+    ["--gid", "1200", "--uid", "1200", "--exec-fd", "3", "--cgroup-procs-fd", "4", "--status-fd", "5", "--", probeBinary, "identity"],
+    ["--uid", "01200", "--gid", "1200", "--exec-fd", "3", "--cgroup-procs-fd", "4", "--status-fd", "5", "--", probeBinary, "identity"],
+    ["--uid", "1200", "--gid", "1201", "--exec-fd", "3", "--cgroup-procs-fd", "4", "--status-fd", "5", "--", probeBinary, "identity"],
+    ["--uid", "1200", "--gid", "1200", "--exec-fd", "2", "--cgroup-procs-fd", "4", "--status-fd", "5", "--", probeBinary, "identity"],
+    ["--uid", "1200", "--gid", "1200", "--exec-fd", "not-an-fd", "--cgroup-procs-fd", "4", "--status-fd", "5", "--", probeBinary, "identity"],
+    ["--uid", "1200", "--gid", "1200", "--exec-fd", "3", "--cgroup-procs-fd", "03", "--status-fd", "5", "--", probeBinary, "identity"],
+    ["--uid", "1200", "--gid", "1200", "--exec-fd", "3", "--cgroup-procs-fd", "3", "--status-fd", "5", "--", probeBinary, "identity"],
+    ["--uid", "1200", "--gid", "1200", "--exec-fd", "3", "--cgroup-procs-fd", "4", "--status-fd", "4", "--", probeBinary, "identity"],
   ]) {
     const rejected = spawnSync(binary, invalid, { encoding: "utf8", env: {} });
     assert.equal(rejected.status, 64, `${rejected.stdout}${rejected.stderr}`);
@@ -429,12 +439,28 @@ try {
     const missingCgroupFd = spawnSync(binary, launcherArgs(3, undefined, 63), {
       encoding: "utf8",
       env: {},
-      stdio: ["ignore", "pipe", "pipe", executableFd],
+      stdio: ["ignore", "pipe", "pipe", executableFd, "ignore", "pipe"],
     });
     assert.equal(missingCgroupFd.status, 70, `${missingCgroupFd.stdout}${missingCgroupFd.stderr}`);
     assert.equal(missingCgroupFd.stderr, "runtime_launcher_cgroup_entry_failed\n");
   } finally {
     closeSync(executableFd);
+  }
+  const executableFdForMissingStatus = openSync(probeBinary, "r");
+  const cgroupPathForMissingStatus = join(root, "missing-status-cgroup-procs");
+  writeFileSync(cgroupPathForMissingStatus, "", { mode: 0o600 });
+  const cgroupFdForMissingStatus = openSync(cgroupPathForMissingStatus, "w");
+  try {
+    const missingStatusFd = spawnSync(binary, launcherArgs(3, undefined, 4, 63), {
+      encoding: "utf8",
+      env: {},
+      stdio: ["ignore", "pipe", "pipe", executableFdForMissingStatus, cgroupFdForMissingStatus],
+    });
+    assert.equal(missingStatusFd.status, 65, `${missingStatusFd.stdout}${missingStatusFd.stderr}`);
+    assert.equal(missingStatusFd.stderr, "runtime_launcher_status_fd_invalid\n");
+  } finally {
+    closeSync(executableFdForMissingStatus);
+    closeSync(cgroupFdForMissingStatus);
   }
   for (const rejectedPath of [root, nonExecutable]) {
     const rejectedFd = openSync(rejectedPath, "r");
@@ -460,10 +486,12 @@ try {
     assert.equal(identity.status, 0, `${identity.stdout}${identity.stderr}`);
     assert.equal(identity.stdout, "runtime_probe_identity_ok\n");
     assert.equal(identity.stderr, "");
+    assert.equal(identity.output[5], "R");
     const seccomp = launchWithRealCgroup([probeBinary, "seccomp"], realCgroupProcsPath);
     assert.equal(seccomp.status, 0, `${seccomp.stdout}${seccomp.stderr}`);
     assert.equal(seccomp.stdout, "runtime_probe_seccomp_ok\n");
     assert.equal(seccomp.stderr, "");
+    assert.equal(seccomp.output[5], "R");
     realCgroupVerified = true;
   }
 
@@ -472,10 +500,11 @@ try {
     ok: true,
     linux_native_hardened_compile_verified: true,
     source_operation_order_audited: true,
-    exact_named_argv_audited: "--uid 1200 --gid 1200 --exec-fd FD --cgroup-procs-fd FD -- ARGV0 [ARGS...]",
+    exact_named_argv_audited: "--uid 1200 --gid 1200 --exec-fd FD --cgroup-procs-fd FD --status-fd FD -- ARGV0 [ARGS...]",
     forged_non_cgroup2_procs_fd_rejected: true,
     shell_execution_omitted: true,
     inherited_executable_fd_required: true,
+    close_on_exec_ready_milestone_verified: realCgroupVerified,
     non_root_rejected: true,
     wrong_identity_and_fd_inputs_rejected: true,
     root_identity_transition_probe_passed: realCgroupVerified,

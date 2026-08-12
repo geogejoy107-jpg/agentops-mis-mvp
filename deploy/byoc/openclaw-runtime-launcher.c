@@ -79,36 +79,76 @@ static int parse_decimal(const char *value, unsigned long *result) {
     return 0;
 }
 
-static int validate_arguments(int argc, char **argv, int *exec_fd, int *cgroup_procs_fd, char ***child_argv) {
+static int validate_arguments(
+    int argc,
+    char **argv,
+    int *exec_fd,
+    int *cgroup_procs_fd,
+    int *status_fd,
+    char ***child_argv
+) {
     unsigned long uid_value;
     unsigned long gid_value;
     unsigned long fd_value;
     unsigned long cgroup_fd_value;
+    unsigned long status_fd_value;
 
-    if (argc < 11
+    if (argc < 13
         || strcmp(argv[1], "--uid") != 0
         || strcmp(argv[3], "--gid") != 0
         || strcmp(argv[5], "--exec-fd") != 0
         || strcmp(argv[7], "--cgroup-procs-fd") != 0
-        || strcmp(argv[9], "--") != 0
-        || argv[10][0] == '\0'
+        || strcmp(argv[9], "--status-fd") != 0
+        || strcmp(argv[11], "--") != 0
+        || argv[12][0] == '\0'
         || parse_decimal(argv[2], &uid_value) < 0
         || parse_decimal(argv[4], &gid_value) < 0
         || parse_decimal(argv[6], &fd_value) < 0
         || parse_decimal(argv[8], &cgroup_fd_value) < 0
+        || parse_decimal(argv[10], &status_fd_value) < 0
         || uid_value != (unsigned long)RUNTIME_UID
         || gid_value != (unsigned long)RUNTIME_GID
         || fd_value < 3UL
         || fd_value > (unsigned long)INT_MAX
         || cgroup_fd_value < 3UL
         || cgroup_fd_value > (unsigned long)INT_MAX
-        || cgroup_fd_value == fd_value) {
+        || status_fd_value < 3UL
+        || status_fd_value > (unsigned long)INT_MAX
+        || cgroup_fd_value == fd_value
+        || status_fd_value == fd_value
+        || status_fd_value == cgroup_fd_value) {
         return -1;
     }
     *exec_fd = (int)fd_value;
     *cgroup_procs_fd = (int)cgroup_fd_value;
-    *child_argv = &argv[10];
+    *status_fd = (int)status_fd_value;
+    *child_argv = &argv[12];
     return 0;
+}
+
+static int validate_status_fd(int status_fd) {
+    struct stat metadata;
+    int descriptor_flags;
+    int open_flags;
+
+    descriptor_flags = fcntl(status_fd, F_GETFD);
+    open_flags = fcntl(status_fd, F_GETFL);
+    if (descriptor_flags < 0
+        || open_flags < 0
+        || fstat(status_fd, &metadata) < 0
+        || (!S_ISFIFO(metadata.st_mode) && !S_ISSOCK(metadata.st_mode))
+        || (open_flags & O_ACCMODE) == O_RDONLY) {
+        return -1;
+    }
+    return fcntl(status_fd, F_SETFD, descriptor_flags | FD_CLOEXEC);
+}
+
+static int write_status(int status_fd, char marker) {
+    ssize_t written;
+    do {
+        written = write(status_fd, &marker, 1U);
+    } while (written < 0 && errno == EINTR);
+    return written == 1 ? 0 : -1;
 }
 
 static int enter_request_cgroup(int cgroup_procs_fd) {
@@ -194,13 +234,19 @@ static int install_resource_limits(void) {
     return 0;
 }
 
-static int close_non_allowlisted_fds(int exec_fd) {
-    if (exec_fd > 3
-        && syscall(SYS_close_range, (unsigned int)3, (unsigned int)(exec_fd - 1), 0U) < 0) {
+static int close_non_allowlisted_fds(int exec_fd, int status_fd) {
+    int lower = exec_fd < status_fd ? exec_fd : status_fd;
+    int upper = exec_fd < status_fd ? status_fd : exec_fd;
+    if (lower > 3
+        && syscall(SYS_close_range, (unsigned int)3, (unsigned int)(lower - 1), 0U) < 0) {
         return -1;
     }
-    if (exec_fd < INT_MAX
-        && syscall(SYS_close_range, (unsigned int)(exec_fd + 1), UINT_MAX, 0U) < 0) {
+    if (lower < upper - 1
+        && syscall(SYS_close_range, (unsigned int)(lower + 1), (unsigned int)(upper - 1), 0U) < 0) {
+        return -1;
+    }
+    if (upper < INT_MAX
+        && syscall(SYS_close_range, (unsigned int)(upper + 1), UINT_MAX, 0U) < 0) {
         return -1;
     }
     return 0;
@@ -292,18 +338,23 @@ static int execute_fd(int exec_fd, char **child_argv) {
 int main(int argc, char **argv) {
     int exec_fd;
     int cgroup_procs_fd;
+    int status_fd;
     char **child_argv;
 
     if (geteuid() != 0) {
         fixed_error("runtime_launcher_root_required");
         return 77;
     }
-    if (validate_arguments(argc, argv, &exec_fd, &cgroup_procs_fd, &child_argv) < 0) {
+    if (validate_arguments(argc, argv, &exec_fd, &cgroup_procs_fd, &status_fd, &child_argv) < 0) {
         fixed_error("runtime_launcher_arguments_invalid");
         return 64;
     }
     if (validate_executable_fd(exec_fd) < 0) {
         fixed_error("runtime_launcher_exec_fd_invalid");
+        return 65;
+    }
+    if (validate_status_fd(status_fd) < 0) {
+        fixed_error("runtime_launcher_status_fd_invalid");
         return 65;
     }
     if (enter_request_cgroup(cgroup_procs_fd) < 0) {
@@ -332,7 +383,7 @@ int main(int argc, char **argv) {
         fixed_error("runtime_launcher_rlimit_failed");
         return 70;
     }
-    if (close_non_allowlisted_fds(exec_fd) < 0) {
+    if (close_non_allowlisted_fds(exec_fd, status_fd) < 0) {
         fixed_error("runtime_launcher_fd_close_failed");
         return 70;
     }
@@ -344,7 +395,12 @@ int main(int argc, char **argv) {
         fixed_error("runtime_launcher_seccomp_failed");
         return 70;
     }
+    if (write_status(status_fd, 'R') < 0) {
+        fixed_error("runtime_launcher_status_write_failed");
+        return 70;
+    }
     (void)execute_fd(exec_fd, child_argv);
+    (void)write_status(status_fd, 'E');
     fixed_error("runtime_launcher_exec_failed");
     return 71;
 }

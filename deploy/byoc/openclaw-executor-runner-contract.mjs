@@ -171,10 +171,11 @@ function fixture({ outcome = "success", journal = new FakeJournal(), manifest = 
       if (outcome === "tampered") {
         const bytes = canonicalExecutorProtocolBytes(providerResponse());
         bytes[bytes.length - 2] ^= 1;
-        return { code: 0, pid: 4242, signal: null, spawned: true, stdout: bytes, timedOut: false };
+        return { code: 0, launcherStatus: "R", pid: 4242, signal: null, spawned: true, stdout: bytes, timedOut: false };
       }
       return {
         code: 0,
+        launcherStatus: outcome === "forged-milestone" ? "RE" : outcome === "missing-milestone" ? "" : "R",
         pid: 4242,
         signal: null,
         spawned: true,
@@ -242,7 +243,7 @@ await assert.rejects(
 );
 assert.equal(successFixture.observations().spawnCalls, 1);
 
-for (const outcome of ["timeout", "spawn-fail"]) {
+for (const outcome of ["timeout", "spawn-fail", "missing-milestone", "forged-milestone"]) {
   const current = fixture({ outcome });
   const bytes = canonicalExecutorProtocolBytes(dispatch(`req-${outcome}`));
   await assert.rejects(
@@ -319,6 +320,7 @@ process.stdout.write(`${JSON.stringify({
   schema: "agentops_openclaw_executor_runner_contract_v1",
   success_and_tamper_covered: true,
   timeout_and_spawn_failure_marked_uncertain_without_receipt: true,
+  missing_and_forged_launcher_milestones_rejected_without_receipt: true,
   replay_and_crash_window_no_double_dispatch: true,
   prompt_stdin_only_and_argv_fails_closed: true,
   raw_prompt_and_response_not_persisted: true,

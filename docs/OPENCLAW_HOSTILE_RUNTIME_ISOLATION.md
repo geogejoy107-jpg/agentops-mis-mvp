@@ -36,6 +36,16 @@ bounded input and single-flight execution. Its contracts use injected runtime,
 cgroup, and child-process dependencies, so they do not prove a real OpenClaw
 process or Provider call.
 
+The native launcher now receives a dedicated status pipe. It writes exactly
+`R` only after cgroup entry, identity drop, `no_new_privs`, capability clearing,
+resource limits, descriptor closure, and seccomp installation. The status fd is
+`CLOEXEC`, so a successful `execveat` produces `R` followed by EOF; a failed
+exec attempt appends `E`. The runner accepts a provider response only with the
+exact `R` milestone and otherwise records an uncertain execution without a
+receipt. This closes the earlier gap where a child-process spawn event could be
+mistaken for completed launcher isolation, but remains contract evidence until
+the exact-image Linux acceptance passes.
+
 The exact A07 foundation image and native launcher contract have passed Linux
 CI, but the signed runtime path audit in
 `docs/OPENCLAW_A07_SIGNED_RUNTIME_PATH_AUDIT.md` identifies unresolved
@@ -262,8 +272,9 @@ For every request the Executor performs this exact fail-closed sequence:
    group; clear supplementary groups; call `setresgid(1200,1200,1200)` and
    `setresuid(1200,1200,1200)`; set `PR_SET_NO_NEW_PRIVS`; clear all permitted,
    effective, inheritable, and ambient capabilities; install the runtime seccomp
-   profile; close all non-allowlisted descriptors; then exec a fixed absolute
-   argv template.
+   profile; close all non-allowlisted descriptors except the executable and
+   close-on-exec status descriptors; write one `R` status byte; then exec a fixed
+   absolute argv template. If exec returns, write `E` and fail.
 6. In the parent: close child-only descriptors, enforce the monotonic deadline,
    collect bounded stdout/stderr through pipes, hash raw output without storing
    it, and never return raw stderr.
@@ -379,7 +390,7 @@ Replace the overloaded success signal with three independent booleans:
 
 | Field | Set true only when | Authority |
 | --- | --- | --- |
-| `runtime_process_spawned` | Executor successfully execs the measured child as uid/gid `1200:1200` inside the bound cgroup. | Executor observation; trustworthy only inside a verified receipt. |
+| `runtime_process_spawned` | Executor receives exact launcher status `R` followed by close-on-exec EOF, then a canonical bounded child response and exit code 0. | Executor observation; trustworthy only inside a verified receipt and exact-image acceptance. |
 | `runtime_receipt_verified` | Broker/control plane verifies the Executor signature and every request, manifest, policy, deadline, result, and cleanup binding. | Broker/control plane verifier. |
 | `provider_call_verified` | A configured remote Provider trust root verifies Provider/Gateway evidence bound to this execution. | Remote Provider/Gateway verifier. |
 

@@ -176,11 +176,12 @@ function defaultSpawnLauncher(configuration, preflight, handles, stdinBytes) {
     "--uid", "1200", "--gid", "1200",
     "--exec-fd", "3",
     "--cgroup-procs-fd", "4",
+    "--status-fd", "5",
     "--", ...argv,
   ], {
     detached: true,
     env: { LANG: "C", PATH: "/usr/bin:/bin" },
-    stdio: ["pipe", "pipe", "pipe", handles.execFd, handles.cgroupFd],
+    stdio: ["pipe", "pipe", "pipe", handles.execFd, handles.cgroupFd, "pipe"],
     windowsHide: true,
   });
   child.stdin.once("error", () => {});
@@ -191,6 +192,7 @@ function defaultSpawnLauncher(configuration, preflight, handles, stdinBytes) {
 function childResult(child, deadlineNs, clock, maximum = MAX_PROVIDER_RESPONSE_BYTES) {
   return new Promise((resolveResult) => {
     const stdout = [];
+    const status = [];
     let bytes = 0;
     let settled = false;
     let spawned = false;
@@ -213,6 +215,7 @@ function childResult(child, deadlineNs, clock, maximum = MAX_PROVIDER_RESPONSE_B
       }
     });
     child.stderr?.resume();
+    child.stdio?.[5]?.on("data", (chunk) => status.push(Buffer.from(chunk)));
     const remaining = BigInt(deadlineNs) - BigInt(clock().now_boottime_ns);
     const timeoutMs = Number(remaining > 0n ? (remaining + 999_999n) / 1_000_000n : 0n);
     timer = setTimeout(() => {
@@ -227,6 +230,7 @@ function childResult(child, deadlineNs, clock, maximum = MAX_PROVIDER_RESPONSE_B
       stdout: Buffer.concat(stdout),
       timedOut,
       outputTooLarge: bytes > maximum,
+      launcherStatus: Buffer.concat(status).toString("ascii"),
     }));
   });
 }
@@ -428,7 +432,13 @@ async function runExecutorDispatchWithDependencies(dispatchBytesValue, configura
       dependencies.clock,
     );
     result = { ...result, pid: result.pid ?? child?.pid ?? null };
-    if (result.spawned && !result.timedOut && result.code === 0 && !result.outputTooLarge) {
+    if (
+      result.spawned
+      && !result.timedOut
+      && result.code === 0
+      && !result.outputTooLarge
+      && result.launcherStatus === "R"
+    ) {
       response = validateProviderResponseBytes(result.stdout);
     }
   } catch (error) {
