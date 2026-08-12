@@ -43,6 +43,9 @@ jobs:
             --publish 127.0.0.1:5000:5000 \
             registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
           printf 'registry_name=%s\n' "${registry_name}" >> "${GITHUB_OUTPUT}"
+          curl --fail --silent --show-error \
+            --retry 20 --retry-all-errors --retry-delay 1 \
+            http://127.0.0.1:5000/v2/ >/dev/null
           timeout 25m docker build --pull --platform linux/amd64 \
             --file deploy/byoc/Dockerfile \
             --build-arg "AGENTOPS_BUILD_IDENTITY=openclaw-a03-${GITHUB_SHA}" \
@@ -57,6 +60,7 @@ jobs:
           )"
           test "$(printf '%s\n' "${digest}" | sed '/^$/d' | wc -l | tr -d ' ')" = 1
           [[ "${digest}" =~ ^localhost:5000/agentops-openclaw-a03@sha256:[0-9a-f]{64}$ ]]
+          docker pull "${digest}" >/dev/null
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${digest}")" = "${GITHUB_SHA}"
           printf 'digest=%s\n' "${digest}" >> "${GITHUB_OUTPUT}"
 
