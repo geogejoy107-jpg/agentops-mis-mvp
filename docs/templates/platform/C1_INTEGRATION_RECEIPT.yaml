@@ -1,0 +1,61 @@
+schema_version: template-candidate-integration-receipt/v1
+canonical: false
+template_id: research_lab
+source_pack_sha256: f0b39687e21157b01d93c22c9820728c9a8a450d94f8ee22ffbc485decdd813b
+contract_commit: 1bce8f9e0312df9a29635a6988b62cd297b1ab14
+candidate_commit: a9fa0f02deeab9b3f0f0c90ea4edcd314e644bd0
+candidate_commits:
+  - b6fb216661215eb524c1ed3ff1c24453c474f46e
+  - 343cae665e2634d5a990920e8cffa9595cbac152
+  - a9fa0f02deeab9b3f0f0c90ea4edcd314e644bd0
+integration_cherry_picks:
+  - ffbe2d05
+  - 9641af7a
+  - 5cdc9570
+integration_candidate_code_head: 5cdc9570c31ef821f12cafb0e17b399a939a72e8
+integration_evidence_head: 44558e757ae60837d99a3bc3de821d74491bb02c
+independent_review:
+  verdict: PASS
+  p0: 0
+  p1: 0
+  p2: 0
+  author_is_reviewer: false
+  exact_candidate_reviewed: true
+candidate_evidence:
+  python_3_11: 90/90 PASS
+  python_3_14: 90/90 PASS
+  exact_c0_implementation: aa667fcc012a5eed4a6e823741d8867f750417a1
+  c0_export: git_archive_exact_commit
+  c0_production_mount: PASS
+  ssh_signed_reconciliation_attacks: PASS
+  secret_scan: 1006 files / 0 findings
+  isolated_esbuild: PASS
+integration_evidence:
+  isolated_checkout: true
+  python_3_11: 90/90 PASS
+  python_3_14: 90/90 PASS
+  secret_scan: 1010 files / 0 findings
+  compile_diff_clean_tree: PASS
+  frontend:
+    tool: esbuild
+    version: 0.25.12
+    command_scope: templates/research_lab/ui/ResearchLabExtension.tsx
+    javascript_bytes_human: 10.8KB
+    css_bytes_human: 1.5KB
+    duration_ms: 10
+    result: PASS
+admission:
+  merged_to_candidate_integration: true
+  merged_to_main: false
+  release_or_deploy_performed: false
+  mis_pass_written: false
+pending_combined_head_gates:
+  - shared_server_route_mount
+  - appshell_navigation_and_authenticated_browser_e2e
+  - shared_cli_live_delegation
+  - cross_template_isolation
+  - exact_combined_head_regression
+  - real_gpu_ssh_slurm_acceptance
+notes:
+  - Domain candidate PASS does not waive combined-head or real-resource gates.
+  - No credential, raw prompt, raw response, private transcript or checkpoint bytes are recorded.
