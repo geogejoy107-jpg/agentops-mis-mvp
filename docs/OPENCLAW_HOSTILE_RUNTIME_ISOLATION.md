@@ -1,9 +1,12 @@
 # OpenClaw Hostile Runtime Isolation
 
-Status: engineering specification under implementation. The current candidate
-implements the public-socket A01/A02 boundary only; a real Linux container gate
-must still verify it. This document is not evidence that the complete hostile-
-runtime boundary is implemented.
+Status: engineering specification under implementation. The default customer
+release remains on the two-service A01/A02 topology. A source-only three-service
+A03 candidate now lives in `deploy/byoc/compose.openclaw-phase-a03.yaml`; its
+exact-image Linux attack gate is
+`.github/workflows/openclaw-phase-a03-acceptance.yml`. Source and offline
+contracts alone are not A03 evidence, and this document is not evidence that the
+complete hostile-runtime boundary is implemented.
 
 ## 1. Security Claims At The Current Baseline
 
@@ -25,8 +28,12 @@ The current two-service topology must not claim hostile-runtime isolation.
   runtime launch. It is neither a signed local execution receipt nor proof that
   a remote model Provider received the request.
 
-Until Phase A passes every mandatory acceptance below, the maximum claim is
-credential separation between the Worker and the current provider container.
+Until Phase A passes every mandatory acceptance below, the default release's
+maximum claim is credential separation between the Worker and the current
+provider container. The source-only A03 candidate may additionally claim Worker
+mount/path separation only after its real Linux exact-image receipt passes; it
+must keep `so_peercred_verified=false`, `runtime_receipt_verified=false`, and
+`hostile_runtime_isolation_verified=false`.
 Even after Phase A passes, the release metadata must state:
 
 ```text
