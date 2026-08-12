@@ -1,8 +1,6 @@
-import { execFile } from "node:child_process";
-import { access, lstat } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { isAbsolute } from "node:path";
-import { promisify } from "node:util";
 
 import type {
   PromptBundle,
@@ -16,7 +14,6 @@ import {
   stableHash,
 } from "./redaction";
 
-const execFileAsync = promisify(execFile);
 const MAX_RUNTIME_RESPONSE_BYTES = 1024 * 1024;
 const PROVIDER_RESPONSE_OMITTED =
   "Provider response omitted; execution metadata and payload hash recorded.";
@@ -311,55 +308,21 @@ export class HermesAdapter implements RuntimeAdapter {
   }
 }
 
-function openClawEnvironment() {
-  const allowed = [
-    "HOME",
-    "LANG",
-    "LC_ALL",
-    "PATH",
-    "SHELL",
-    "TMPDIR",
-    "TMP",
-    "TEMP",
-    "OPENCLAW_HOME",
-    "OPENCLAW_STATE_DIR",
-    "OPENCLAW_CONFIG_PATH",
-    "XDG_CONFIG_HOME",
-    "XDG_DATA_HOME",
-  ];
-  return {
-    NODE_ENV: process.env.NODE_ENV || "production",
-    ...Object.fromEntries(
-    allowed
-      .filter((key) => process.env[key])
-      .map((key) => [key, process.env[key] as string]),
-    ),
-  };
-}
-
 export class OpenClawAdapter implements RuntimeAdapter {
   readonly runtime = "openclaw" as const;
   readonly modelName: string;
-  readonly #binaryPath: string;
-  readonly #providerSocketPath?: string;
+  readonly #providerSocketPath: string;
   readonly #agentName: string;
   readonly #timeoutSeconds: number;
-  readonly #workingDirectory: string;
 
   constructor(options: {
-    binaryPath: string;
-    providerSocketPath?: string;
+    providerSocketPath: string;
     agentName?: string;
     timeoutSeconds?: number;
-    workingDirectory?: string;
   }) {
-    if (!isAbsolute(options.binaryPath)) {
-      throw new Error("openclaw_binary_absolute_path_required");
-    }
-    if (options.providerSocketPath && !isAbsolute(options.providerSocketPath)) {
+    if (!isAbsolute(options.providerSocketPath)) {
       throw new Error("openclaw_provider_socket_absolute_path_required");
     }
-    this.#binaryPath = options.binaryPath;
     this.#providerSocketPath = options.providerSocketPath;
     this.#agentName = redactText(options.agentName || "main", 80);
     this.modelName = this.#agentName;
@@ -369,108 +332,10 @@ export class OpenClawAdapter implements RuntimeAdapter {
       1,
       600,
     );
-    this.#workingDirectory = options.workingDirectory || process.cwd();
   }
 
   async execute(bundle: PromptBundle, signal?: AbortSignal): Promise<RuntimeAdapterResult> {
-    if (this.#providerSocketPath) {
-      return this.#executeViaProvider(bundle, signal);
-    }
-    await access(this.#binaryPath);
-    const started = Date.now();
-    const targetResource = `local://openclaw/${this.#agentName}`;
-    let providerCallPerformed = false;
-    try {
-      providerCallPerformed = true;
-      const { stdout, stderr } = await execFileAsync(
-        this.#binaryPath,
-        [
-          "agent",
-          "--agent",
-          this.#agentName,
-          "--message",
-          bundle.prompt,
-          "--timeout",
-          String(this.#timeoutSeconds),
-          "--json",
-        ],
-        {
-          cwd: this.#workingDirectory,
-          env: openClawEnvironment(),
-          encoding: "utf8",
-          timeout: (this.#timeoutSeconds + 30) * 1000,
-          maxBuffer: MAX_RUNTIME_RESPONSE_BYTES,
-          windowsHide: true,
-          signal,
-        },
-      );
-      const rawPayloadHash = stableHash({ stdout, stderr });
-      let payload: Record<string, unknown>;
-      try {
-        payload = stdout ? JSON.parse(stdout) as Record<string, unknown> : {};
-      } catch {
-        throw new Error("openclaw_response_invalid_json");
-      }
-      const result = payload.result && typeof payload.result === "object"
-        ? payload.result as Record<string, unknown>
-        : {};
-      const meta = result.meta && typeof result.meta === "object"
-        ? result.meta as Record<string, unknown>
-        : {};
-      const payloads = Array.isArray(result.payloads) ? result.payloads : [];
-      const firstPayload = payloads[0] && typeof payloads[0] === "object"
-        ? payloads[0] as Record<string, unknown>
-        : {};
-      const hasVisibleContent = hasVisibleProviderContent(
-        meta.finalAssistantVisibleText ?? firstPayload.text,
-      );
-      return {
-        ok: hasVisibleContent,
-        runtime: this.runtime,
-        modelName: this.modelName,
-        outputSummary: hasVisibleContent
-          ? PROVIDER_RESPONSE_OMITTED
-          : PROVIDER_EMPTY_RESPONSE,
-        rawPayloadHash,
-        targetResource,
-        durationMs: boundedInteger(
-          meta.durationMs,
-          Date.now() - started,
-          0,
-          86_400_000,
-        ),
-        outputTokens: 0,
-        providerCallPerformed,
-        dryRun: false,
-        retryable: !hasVisibleContent,
-        errorType: hasVisibleContent ? null : "OpenClawEmptyResponse",
-        errorMessage: hasVisibleContent
-          ? null
-          : "Provider error detail omitted; OpenClaw returned no visible content.",
-      };
-    } catch {
-      const cancelled = signal?.aborted === true;
-      return {
-        ok: false,
-        runtime: this.runtime,
-        modelName: this.modelName,
-        outputSummary: "OpenClaw execution failed.",
-        rawPayloadHash: stableHash({
-          runtime: this.runtime,
-          error_type: cancelled ? "RuntimeCancelled" : "OpenClawExecutionFailed",
-        }),
-        targetResource,
-        durationMs: Date.now() - started,
-        outputTokens: 0,
-        providerCallPerformed,
-        dryRun: false,
-        retryable: !cancelled,
-        errorType: cancelled ? "RuntimeCancelled" : "OpenClawExecutionFailed",
-        errorMessage: cancelled
-          ? "Runtime execution cancelled for controlled shutdown."
-          : "OpenClaw process failed; detail omitted.",
-      };
-    }
+    return this.#executeViaProvider(bundle, signal);
   }
 
   async #executeViaProvider(
@@ -482,14 +347,14 @@ export class OpenClawAdapter implements RuntimeAdapter {
     let providerCallPerformed = false;
     try {
       if (signal?.aborted) throw signal.reason;
-      const socket = await lstat(this.#providerSocketPath as string);
+      const socket = await lstat(this.#providerSocketPath);
       if (!socket.isSocket() || socket.isSymbolicLink()) {
         throw new Error("openclaw_provider_socket_invalid");
       }
       // Once dispatched, a lost or malformed reply cannot prove execution did not occur.
       providerCallPerformed = true;
       const payload = await unixSocketJson({
-        socketPath: this.#providerSocketPath as string,
+        socketPath: this.#providerSocketPath,
         path: "/v1/execute",
         timeoutMs: (this.#timeoutSeconds + 30) * 1000,
         signal,

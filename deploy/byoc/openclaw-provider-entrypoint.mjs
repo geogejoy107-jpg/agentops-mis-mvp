@@ -5,8 +5,13 @@ import { spawn } from "node:child_process";
 import {
   chmodSync,
   chownSync,
+  closeSync,
+  constants,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  openSync,
+  readSync,
   statSync,
   unlinkSync,
 } from "node:fs";
@@ -49,6 +54,7 @@ const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/;
 const FIXED_PROVIDER_ERROR =
   "Provider error detail omitted; OpenClaw execution failed.";
 const MAX_PROVIDER_OUTPUT_BYTES = 1024 * 1024;
+const MAX_RUNTIME_BINARY_BYTES = 256 * 1024 * 1024;
 const TOKEN_ENVIRONMENT_NAMES = Object.freeze([
   "AGENTOPS_AGENT_TOKEN",
   "AGENTOPS_AGENT_TOKEN_FILE",
@@ -65,6 +71,73 @@ function fail(code) {
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.mode === right.mode
+    && left.size === right.size
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
+}
+
+function verifyBinaryIdentity(binaryPath, expectedSha256) {
+  if (!Number.isInteger(constants.O_NOFOLLOW) || constants.O_NOFOLLOW <= 0) {
+    fail("openclaw_bin_nofollow_unavailable");
+  }
+  let pathBefore;
+  try {
+    pathBefore = lstatSync(binaryPath, { bigint: true });
+  } catch {
+    fail("openclaw_bin_identity_unavailable");
+  }
+  if (pathBefore.isSymbolicLink()) fail("openclaw_bin_symlink_forbidden");
+  if (!pathBefore.isFile()) fail("openclaw_bin_regular_file_required");
+  if (pathBefore.size > BigInt(MAX_RUNTIME_BINARY_BYTES)) {
+    fail("openclaw_bin_too_large");
+  }
+
+  let descriptor;
+  try {
+    descriptor = openSync(binaryPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch {
+    fail("openclaw_bin_open_failed");
+  }
+  try {
+    const descriptorBefore = fstatSync(descriptor, { bigint: true });
+    if (!descriptorBefore.isFile() || !sameFileIdentity(pathBefore, descriptorBefore)) {
+      fail("openclaw_bin_identity_changed");
+    }
+    const digest = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let bytesReadTotal = 0;
+    while (true) {
+      const bytesRead = readSync(descriptor, buffer, 0, buffer.byteLength, null);
+      if (bytesRead === 0) break;
+      bytesReadTotal += bytesRead;
+      if (bytesReadTotal > MAX_RUNTIME_BINARY_BYTES) fail("openclaw_bin_too_large");
+      digest.update(buffer.subarray(0, bytesRead));
+    }
+    const descriptorAfter = fstatSync(descriptor, { bigint: true });
+    let pathAfter;
+    try {
+      pathAfter = lstatSync(binaryPath, { bigint: true });
+    } catch {
+      fail("openclaw_bin_identity_changed");
+    }
+    if (
+      BigInt(bytesReadTotal) !== descriptorBefore.size
+      || !sameFileIdentity(descriptorBefore, descriptorAfter)
+      || !sameFileIdentity(descriptorAfter, pathAfter)
+      || pathAfter.isSymbolicLink()
+    ) {
+      fail("openclaw_bin_identity_changed");
+    }
+    if (digest.digest("hex") !== expectedSha256) fail("openclaw_bin_digest_mismatch");
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function boundedInteger(value, fallback, minimum, maximum, name) {
@@ -132,16 +205,18 @@ export function loadConfiguration(environment = process.env) {
     "openclaw_provider_socket",
   );
   const binaryPath = requiredAbsolutePath(environment.OPENCLAW_BIN, "openclaw_bin");
+  const binarySha256 = String(environment.OPENCLAW_BIN_SHA256 || "");
+  if (!SHA256_HEX.test(binarySha256)) fail("openclaw_bin_sha256_invalid");
   const workspace = requiredAbsolutePath(
     environment.OPENCLAW_WORKSPACE || environment.AGENTOPS_WORKER_CWD || process.cwd(),
     "openclaw_workspace",
   );
-  if (!statSync(binaryPath).isFile()) fail("openclaw_bin_regular_file_required");
   if (!statSync(workspace).isDirectory()) fail("openclaw_workspace_directory_required");
 
-  return Object.freeze({
+  const configuration = {
     socketPath,
     binaryPath,
+    binarySha256,
     workspace,
     agentName: safeIdentifier(environment.OPENCLAW_AGENT || "main", "openclaw_agent"),
     timeoutSeconds: boundedInteger(
@@ -165,7 +240,9 @@ export function loadConfiguration(environment = process.env) {
       30_000,
       "openclaw_provider_shutdown_grace_ms",
     ),
-  });
+  };
+  verifyBinaryIdentity(configuration.binaryPath, configuration.binarySha256);
+  return Object.freeze(configuration);
 }
 
 function validateRequest(value, configuration) {
@@ -283,7 +360,7 @@ function signalProcessGroup(child, signal) {
   }
 }
 
-function executeOpenClaw(configuration, request, state) {
+function executeOpenClaw(configuration, request) {
   const started = Date.now();
   const stdout = [];
   let stdoutBytes = 0;
@@ -299,6 +376,22 @@ function executeOpenClaw(configuration, request, state) {
   const done = new Promise((resolveDone) => {
     settleDone = resolveDone;
   });
+  try {
+    verifyBinaryIdentity(configuration.binaryPath, configuration.binarySha256);
+  } catch {
+    const payload = response({
+      ok: false,
+      providerCallPerformed: false,
+      modelName: request.agentName,
+      durationMs: Date.now() - started,
+      rawPayloadHash: sha256("OpenClawBinaryIdentityFailure"),
+      outputPresent: false,
+      retryable: false,
+      errorType: "OpenClawBinaryIdentityFailure",
+    });
+    settleDone();
+    return { child: null, done, result: Promise.resolve(payload), terminate: () => true };
+  }
   let child;
   try {
     child = spawn(
@@ -413,12 +506,7 @@ function executeOpenClaw(configuration, request, state) {
     });
   });
 
-  const execution = { child, done, result, terminate };
-  state.activeExecution = execution;
-  done.finally(() => {
-    if (state.activeExecution === execution) state.activeExecution = null;
-  });
-  return execution;
+  return { child, done, result, terminate };
 }
 
 function writeJson(res, status, payload) {
@@ -510,14 +598,14 @@ async function prepareSocket(configuration) {
 
 export async function startProviderService(configuration = loadConfiguration()) {
   await prepareSocket(configuration);
-  const state = { activeExecution: null, shuttingDown: false };
+  const state = { activeRequest: null, shuttingDown: false };
   const server = createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/health") {
       writeJson(res, state.shuttingDown ? 503 : 200, {
         schema: HEALTH_SCHEMA,
         ok: !state.shuttingDown,
         ready: !state.shuttingDown,
-        busy: state.activeExecution !== null,
+        busy: state.activeRequest !== null,
       });
       return;
     }
@@ -526,45 +614,52 @@ export async function startProviderService(configuration = loadConfiguration()) 
       boundaryError(res, 404, "RouteNotFound");
       return;
     }
-    if (state.shuttingDown || state.activeExecution) {
+    if (state.shuttingDown || state.activeRequest) {
       req.resume();
       boundaryError(res, 503, "ProviderBusy");
       return;
     }
-    if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers["content-type"] || ""))) {
-      req.resume();
-      boundaryError(res, 415, "ContentTypeUnsupported");
-      return;
-    }
-    let body;
+    const requestSlot = { req, res, execution: null };
+    state.activeRequest = requestSlot;
     try {
-      body = await readJsonBody(req, res);
-    } catch {
-      if (!res.headersSent) boundaryError(res, 400, "RequestReadFailed");
-      return;
-    }
-    if (body === null || res.headersSent) return;
-    let request;
-    try {
-      request = validateRequest(body, configuration);
-    } catch {
-      boundaryError(res, 400, "RequestValidationFailed");
-      return;
-    }
-    const execution = executeOpenClaw(configuration, request, state);
-    let responseCompleted = false;
-    const cancelDisconnectedClient = () => {
-      if (!responseCompleted && !res.writableEnded) {
-        execution.terminate("OpenClawInterrupted");
+      if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers["content-type"] || ""))) {
+        req.resume();
+        boundaryError(res, 415, "ContentTypeUnsupported");
+        return;
       }
-    };
-    res.once("close", cancelDisconnectedClient);
-    const result = await execution.result;
-    if (!res.destroyed && !res.writableEnded) {
-      writeJson(res, 200, result);
-      responseCompleted = true;
+      let body;
+      try {
+        body = await readJsonBody(req, res);
+      } catch {
+        if (!res.headersSent) boundaryError(res, 400, "RequestReadFailed");
+        return;
+      }
+      if (body === null || res.headersSent) return;
+      let request;
+      try {
+        request = validateRequest(body, configuration);
+      } catch {
+        boundaryError(res, 400, "RequestValidationFailed");
+        return;
+      }
+      const execution = executeOpenClaw(configuration, request);
+      requestSlot.execution = execution;
+      let responseCompleted = false;
+      const cancelDisconnectedClient = () => {
+        if (!responseCompleted && !res.writableEnded) {
+          execution.terminate("OpenClawInterrupted");
+        }
+      };
+      res.once("close", cancelDisconnectedClient);
+      const result = await execution.result;
+      if (!res.destroyed && !res.writableEnded) {
+        writeJson(res, 200, result);
+        responseCompleted = true;
+      }
+      res.off("close", cancelDisconnectedClient);
+    } finally {
+      if (state.activeRequest === requestSlot) state.activeRequest = null;
     }
-    res.off("close", cancelDisconnectedClient);
   });
   server.requestTimeout = (configuration.timeoutSeconds + 35) * 1000;
   server.headersTimeout = 5_000;
@@ -590,15 +685,20 @@ export async function startProviderService(configuration = loadConfiguration()) 
   let shutdownPromise = null;
   const shutdown = (signal = "SIGTERM") => {
     if (shutdownPromise) {
-      const killed = state.activeExecution?.terminate("OpenClawInterrupted", "SIGKILL") ?? true;
+      const killed = state.activeRequest?.execution?.terminate("OpenClawInterrupted", "SIGKILL") ?? true;
       process.exitCode = 1;
       return shutdownPromise.then(() => killed);
     }
     state.shuttingDown = true;
     shutdownPromise = (async () => {
       const closed = new Promise((resolveClosed) => server.close(resolveClosed));
-      const execution = state.activeExecution;
+      const activeRequest = state.activeRequest;
+      const execution = activeRequest?.execution;
       let forced = false;
+      if (activeRequest && !execution) {
+        activeRequest.req.destroy();
+        if (!activeRequest.res.destroyed) activeRequest.res.destroy();
+      }
       if (execution) {
         if (!execution.terminate("OpenClawInterrupted", signal)) forced = true;
         const force = setTimeout(() => {

@@ -124,6 +124,10 @@ function assertStaticCustomerBoundary() {
     join(moduleDirectory, "worker-container-acceptance.mjs"),
     "utf8",
   );
+  const openClawProviderEntrypoint = readFileSync(
+    join(moduleDirectory, "openclaw-provider-entrypoint.mjs"),
+    "utf8",
+  );
   const openClawProvider = compose.match(
     /  openclaw-provider:\n([\s\S]*?)(?=\n  worker-openclaw:)/,
   )?.[1] || "";
@@ -186,11 +190,18 @@ function assertStaticCustomerBoundary() {
     || !openClawProvider.includes("openclaw-provider-healthcheck.mjs")
     || !openClawProvider.includes("OPENCLAW_CONFIG_PATH:")
     || !openClawProvider.includes("OPENCLAW_BIN:")
+    || !openClawProvider.includes("OPENCLAW_BIN_SHA256:")
+    || !openClawProvider.includes("AGENTOPS_OPENCLAW_PROVIDER_BIN_SHA256")
     || !openClawProvider.includes("OPENCLAW_AGENT:")
     || !openClawProvider.includes("AGENTOPS_OPENCLAW_AGENT")
     || !openClawProvider.includes("OPENCLAW_TIMEOUT_SECONDS:")
     || !openClawProvider.includes("AGENTOPS_OPENCLAW_TIMEOUT_SECONDS")
     || !openClawProvider.includes("agentops_openclaw_provider_socket:/run/agentops-openclaw")
+    || !openClawProviderEntrypoint.includes("OPENCLAW_BIN_SHA256")
+    || !openClawProviderEntrypoint.includes("constants.O_RDONLY | constants.O_NOFOLLOW")
+    || !openClawProviderEntrypoint.includes("verifyBinaryIdentity(configuration.binaryPath, configuration.binarySha256)")
+    || !openClawProviderEntrypoint.includes("state.activeRequest = requestSlot")
+    || /O_NOFOLLOW\s*\|\|\s*0/.test(openClawProviderEntrypoint)
     || openClawProvider.includes("AGENTOPS_AGENT_TOKEN")
     || openClawProvider.includes("openclaw_agent_token")
     || !openClawProvider.includes("- openclaw_provider_egress")
@@ -199,7 +210,7 @@ function assertStaticCustomerBoundary() {
     || !openClawWorker.includes("OPENCLAW_PROVIDER_SOCKET:")
     || !openClawWorker.includes("openclaw_agent_token")
     || !openClawWorker.includes("agentops_openclaw_provider_socket:/run/agentops-openclaw")
-    || /OPENCLAW_(?:BIN|CONFIG_PATH|STATE_DIR)|AGENTOPS_WORKER_CWD|openclaw_config/.test(openClawWorker)
+    || /OPENCLAW_(?:BIN|BIN_SHA256|CONFIG_PATH|STATE_DIR)|AGENTOPS_WORKER_CWD|openclaw_config/.test(openClawWorker)
     || !openClawWorker.includes("- control_plane")
     || openClawWorker.includes("- openclaw_provider_egress")
     || !workerContainerAcceptance.includes("agentops_byoc_typescript_worker_container_v1")

@@ -119,6 +119,24 @@ prints token, raw prompt, or raw response. OpenClaw uses a separate provider
 sidecar. Its config secret, Linux runtime, and read-only working directory are
 mounted only into that sidecar and are not shipped in this repository.
 
+Before enabling that profile, resolve the configured OpenClaw entrypoint to its
+final regular file. Configure `AGENTOPS_OPENCLAW_PROVIDER_BIN` to that file, not
+to a symlink, and bind its exact SHA-256 digest:
+
+```bash
+OPENCLAW_ENTRYPOINT="$(realpath ./openclaw-runtime/bin/openclaw)"
+test -f "$OPENCLAW_ENTRYPOINT" && test ! -L "$OPENCLAW_ENTRYPOINT"
+shasum -a 256 "$OPENCLAW_ENTRYPOINT"
+```
+
+Set the container path for that same regular file as
+`AGENTOPS_OPENCLAW_PROVIDER_BIN`, and set the first digest field as
+`AGENTOPS_OPENCLAW_PROVIDER_BIN_SHA256`. The provider rejects symlinks, fails
+closed when `O_NOFOLLOW` is unavailable, and checks the digest at startup and
+again before each execution. This binds the configured entrypoint bytes; it is
+not a Provider signature or a digest of every dependency loaded by that
+entrypoint, so the mounted runtime remains trusted operator input.
+
 ```bash
 docker compose --env-file deploy/byoc/.env -f deploy/byoc/compose.yaml \
   --profile worker-hermes up -d worker-hermes

@@ -64,6 +64,22 @@ network. Compose starts the Worker only after both the provider socket and the
 control plane are healthy. Commercial control-plane and Hermes URLs require
 HTTPS.
 
+The Unix socket is a local transport boundary, not provider-signed provenance.
+The broker and OpenClaw CLI currently share the provider container's OS identity,
+so this design isolates control-plane and Agent credentials from the provider
+container but does not defend the broker from a malicious mounted runtime. The
+CLI also requires the prompt in its `--message` argument: receipts, logs, API
+responses, and committed evidence omit it, but privileged process inspection can
+see it while the call runs. A separate runtime identity plus an FD/stdin provider
+interface remains a hardening gate before claiming hostile-runtime isolation.
+
+The provider requires a final regular, non-symlink OpenClaw entrypoint plus
+`AGENTOPS_OPENCLAW_PROVIDER_BIN_SHA256`. It fails closed when `O_NOFOLLOW` is
+unavailable and verifies stable file identity and digest at startup and before
+every execution. This detects entrypoint drift but does not constitute
+Provider-signed evidence or bind the entrypoint's complete dependency tree; the
+customer-controlled runtime mount remains a trusted operator input.
+
 Each Worker supervisor interrupts active provider calls and retry/poll waits,
 then applies a bounded forced-stop fallback before Compose's grace period
 expires. The OpenClaw provider is a separate Compose lifecycle rather than a
@@ -109,10 +125,13 @@ CLI execution requires `--openclaw-provider-socket`; it rejects direct binary
 execution so a provider process cannot inherit the Worker's OS identity and
 read its Agent-token file.
 
-The repository's trusted exact-head acceptance harness has a narrowly named
-`--allow-direct-openclaw-for-exact-head-acceptance` escape hatch for local real
-Agent evidence. It is not a customer or production startup mode; BYOC never
-passes it.
+The trusted exact-head acceptance harness resolves the real OpenClaw entrypoint
+to a regular file, binds its SHA-256 digest, starts the provider entrypoint as a
+separate process, and waits for the temporary Unix socket health contract. The
+TypeScript Worker receives only the socket path, while the provider environment
+omits the Agent token. Acceptance fails unless provider shutdown removes the
+socket and its private temporary directory; direct binary execution is not an
+exact-head acceptance mode.
 
 Loopback HTTP is accepted only with an explicit local-development gate:
 

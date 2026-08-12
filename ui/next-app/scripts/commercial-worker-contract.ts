@@ -547,10 +547,11 @@ async function sourceBoundaryContract() {
   assert.match(orchestrator, /plan-evidence-manifests/);
   assert.match(cliSource, /readCommercialAgentToken/);
   assert.match(cliSource, /openclaw_provider_socket_required/);
-  assert.match(
+  assert.doesNotMatch(
     cliSource,
-    /--allow-direct-openclaw-for-exact-head-acceptance/,
+    /--allow-direct-openclaw-for-exact-head-acceptance|--openclaw-bin|--working-directory|\bexecFile\b/,
   );
+  assert.doesNotMatch(combined, /\bbinaryPath\b|\bworkingDirectory\b|\bexecFile\b/);
   assert.match(cliSource, /if \(!receipt\.ok\) process\.exitCode = 1/);
   assert.doesNotMatch(cliSource, /!receipt\.ok && !stopping/);
   assert.doesNotMatch(cliSource, /values\.get\("--(?:api-key|token)/);
@@ -575,10 +576,36 @@ async function sourceBoundaryContract() {
     /next_runtime_mutable_artifact_paths_omitted/,
   );
   assert.match(realAcceptanceSource, /"--estimated-cost-usd"/);
+  assert.doesNotMatch(
+    realAcceptanceSource,
+    /--allow-direct-openclaw-for-exact-head-acceptance|"--working-directory"|\bexecFile\b/,
+  );
+  assert.match(realAcceptanceSource, /openclaw-provider-entrypoint\.mjs/);
+  assert.match(realAcceptanceSource, /openclaw_worker_arguments/);
+  assert.match(realAcceptanceSource, /"--openclaw-provider-socket"/);
+  assert.match(realAcceptanceSource, /wait_for_openclaw_provider/);
   assert.match(
     realAcceptanceSource,
-    /"--allow-direct-openclaw-for-exact-head-acceptance"/,
+    /"agentops_openclaw_provider_health_v1"/,
   );
+  assert.doesNotMatch(
+    realAcceptanceSource,
+    /"agentops\.openclaw-provider\.health\.v1"\s*\n\s*or health\.get/,
+  );
+  assert.match(
+    realAcceptanceSource,
+    /Path\(args\.openclaw_bin\)\.resolve\(strict=True\)/,
+  );
+  assert.match(realAcceptanceSource, /stat\.S_ISREG\(openclaw_path\.stat\(\)\.st_mode\)/);
+  assert.match(realAcceptanceSource, /"OPENCLAW_BIN": openclaw_bin/);
+  assert.match(
+    realAcceptanceSource,
+    /"OPENCLAW_BIN_SHA256": openclaw_bin_sha256/,
+  );
+  assert.match(realAcceptanceSource, /provider_agent_token_environment_omitted/);
+  assert.match(realAcceptanceSource, /provider_socket_removed/);
+  assert.match(realAcceptanceSource, /provider_temp_root_removed/);
+  assert.match(realAcceptanceSource, /openclaw_provider_service_execution_verified/);
   assert.match(realAcceptanceSource, /configure:workspace-entitlement/);
   assert.match(realAcceptanceSource, /"--max-concurrent-runs"/);
   assert.match(
@@ -731,7 +758,6 @@ async function openClawProviderSocketContract() {
     });
     const prompt = "Return bounded OpenClaw provider metadata.";
     const adapter = new OpenClawAdapter({
-      binaryPath: "/openclaw-binary-intentionally-absent",
       providerSocketPath: socketPath,
       agentName: "contract-openclaw",
       timeoutSeconds: 5,

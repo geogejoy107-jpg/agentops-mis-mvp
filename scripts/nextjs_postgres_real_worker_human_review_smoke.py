@@ -442,8 +442,148 @@ def stop_process(
     }
 
 
+def assert_openclaw_provider_health(health: object) -> None:
+    if (
+        not isinstance(health, dict)
+        or health.get("schema") != "agentops_openclaw_provider_health_v1"
+        or health.get("ok") is not True
+        or health.get("ready") is not True
+        or not isinstance(health.get("busy"), bool)
+    ):
+        raise RuntimeError("openclaw_provider_health_receipt_invalid")
+
+
+def openclaw_worker_arguments(provider_socket: Path) -> list[str]:
+    return [
+        "--openclaw-provider-socket",
+        str(provider_socket),
+        "--openclaw-agent",
+        "main",
+        "--openclaw-timeout-seconds",
+        "180",
+    ]
+
+
+def wait_for_openclaw_provider(
+    socket_path: Path,
+    proc: subprocess.Popen[str],
+    *,
+    timeout: float = 10.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        returncode = proc.poll()
+        if returncode is not None:
+            raise RuntimeError(
+                f"openclaw_provider_exited_before_ready:returncode={returncode}"
+            )
+        try:
+            socket_stat = socket_path.lstat()
+            if not stat.S_ISSOCK(socket_stat.st_mode):
+                raise RuntimeError("openclaw_provider_path_not_socket")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(1.0)
+                client.connect(str(socket_path))
+                client.sendall(
+                    b"GET /health HTTP/1.1\r\n"
+                    b"Host: localhost\r\n"
+                    b"Connection: close\r\n\r\n"
+                )
+                response = bytearray()
+                while len(response) <= 64 * 1024:
+                    chunk = client.recv(4096)
+                    if not chunk:
+                        break
+                    response.extend(chunk)
+            header, separator, body = bytes(response).partition(b"\r\n\r\n")
+            if not separator or not header.startswith(b"HTTP/1.1 200"):
+                raise RuntimeError("openclaw_provider_health_status_invalid")
+            health = json.loads(body.decode("utf-8"))
+            assert_openclaw_provider_health(health)
+            return
+        except (FileNotFoundError, ConnectionError, OSError, json.JSONDecodeError):
+            time.sleep(0.05)
+    raise RuntimeError("openclaw_provider_ready_timeout")
+
+
+def run_process_group(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        stop_receipt = stop_process(proc, timeout=5)
+        try:
+            stdout, stderr = proc.communicate(timeout=1)
+        except Exception:
+            stdout, stderr = "", ""
+        stdout_bytes = stdout.encode("utf-8", errors="replace")
+        stderr_bytes = stderr.encode("utf-8", errors="replace")
+        failure = {
+            "returncode": proc.returncode,
+            "stop_receipt": stop_receipt,
+            "stdout_sha256": hashlib.sha256(stdout_bytes).hexdigest(),
+            "stdout_size_bytes": len(stdout_bytes),
+            "stderr_sha256": hashlib.sha256(stderr_bytes).hexdigest(),
+            "stderr_size_bytes": len(stderr_bytes),
+            "raw_process_output_omitted": True,
+        }
+        raise RuntimeError(
+            "worker_process_timeout:" + json.dumps(failure, sort_keys=True)
+        ) from exc
+    return subprocess.CompletedProcess(
+        command,
+        proc.returncode,
+        stdout,
+        stderr,
+    )
+
+
 def assert_harness_safety_helper_contracts() -> None:
     assert_subprocess_environment_scrub()
+    assert_openclaw_provider_health({
+        "schema": "agentops_openclaw_provider_health_v1",
+        "ok": True,
+        "ready": True,
+        "busy": False,
+    })
+    try:
+        assert_openclaw_provider_health({
+            "schema": "agentops.openclaw-provider.health.v1",
+            "ok": True,
+            "ready": True,
+            "busy": False,
+        })
+    except RuntimeError as exc:
+        if str(exc) != "openclaw_provider_health_receipt_invalid":
+            raise
+    else:
+        raise RuntimeError("openclaw_provider_health_schema_contract_failed")
+    worker_provider_arguments = openclaw_worker_arguments(
+        Path("/tmp/agentops-provider-contract.sock")
+    )
+    if worker_provider_arguments != [
+            "--openclaw-provider-socket",
+            "/tmp/agentops-provider-contract.sock",
+            "--openclaw-agent",
+            "main",
+            "--openclaw-timeout-seconds",
+            "180",
+        ]:
+        raise RuntimeError("openclaw_worker_socket_only_contract_failed")
 
     class FailingProcess:
         pid = 987654321
@@ -975,10 +1115,11 @@ def run_worker(
     token: str,
     hermes_url: str,
     openclaw_bin: str,
+    openclaw_bin_sha256: str,
     sensitive: list[str],
     worker_implementation: str,
     node: str,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
     if worker_implementation != "typescript":
         raise RuntimeError("commercial_worker_implementation_must_be_typescript")
     agent_id = f"agt_real_{runtime}_review"
@@ -1013,34 +1154,124 @@ def run_worker(
             "--hermes-timeout-ms",
             "180000",
         ])
-    else:
-        command.extend([
-            "--openclaw-bin",
-            openclaw_bin,
-            "--allow-direct-openclaw-for-exact-head-acceptance",
-            "--openclaw-agent",
-            "main",
-            "--openclaw-timeout-seconds",
-            "180",
-            "--working-directory",
-            str(ROOT),
-        ])
-    with tempfile.TemporaryDirectory(prefix="agentops-real-worker-token-") as token_root:
-        token_path = Path(token_root) / "agent-token"
-        token_path.write_text(f"{token}\n", encoding="utf-8")
-        token_path.chmod(stat.S_IRUSR)
-        env = environment_without_privileged_control_plane_credentials()
-        env["AGENTOPS_AGENT_TOKEN_SOURCE_FILE"] = str(token_path)
-        env["NODE_ENV"] = "production"
-        completed = subprocess.run(
-            command,
-            cwd=NEXT_APP,
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=240,
-            check=False,
-        )
+    provider_proc: subprocess.Popen[str] | None = None
+    provider_root: Path | None = None
+    provider_socket: Path | None = None
+    provider_ready = False
+    provider_environment_isolated = False
+    provider_cleanup: dict[str, Any] | None = None
+    try:
+        if runtime == "openclaw":
+            provider_root = Path(tempfile.mkdtemp(prefix="agentops-real-openclaw-provider-"))
+            provider_root.chmod(stat.S_IRWXU)
+            provider_socket = provider_root / "provider.sock"
+            provider_env = environment_without_privileged_control_plane_credentials()
+            provider_env.update({
+                "NODE_ENV": "production",
+                "OPENCLAW_PROVIDER_SOCKET": str(provider_socket),
+                "OPENCLAW_PROVIDER_SOCKET_GID": str(os.getgid()),
+                "OPENCLAW_PROVIDER_SHUTDOWN_GRACE_MS": "5000",
+                "OPENCLAW_BIN": openclaw_bin,
+                "OPENCLAW_BIN_SHA256": openclaw_bin_sha256,
+                "OPENCLAW_WORKSPACE": str(ROOT),
+                "OPENCLAW_AGENT": "main",
+                "OPENCLAW_TIMEOUT_SECONDS": "180",
+            })
+            provider_environment_isolated = not any(
+                name in provider_env
+                for name in (
+                    "AGENTOPS_AGENT_TOKEN",
+                    "AGENTOPS_AGENT_TOKEN_SOURCE_FILE",
+                )
+            )
+            if not provider_environment_isolated:
+                raise RuntimeError("openclaw_provider_agent_token_environment_exposed")
+            provider_proc = subprocess.Popen(
+                [
+                    node,
+                    str(ROOT / "deploy" / "byoc" / "openclaw-provider-entrypoint.mjs"),
+                ],
+                cwd=ROOT,
+                env=provider_env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+            wait_for_openclaw_provider(provider_socket, provider_proc)
+            provider_ready = True
+            command.extend(openclaw_worker_arguments(provider_socket))
+
+        with tempfile.TemporaryDirectory(prefix="agentops-real-worker-token-") as token_root:
+            token_path = Path(token_root) / "agent-token"
+            token_path.write_text(f"{token}\n", encoding="utf-8")
+            token_path.chmod(stat.S_IRUSR)
+            env = environment_without_privileged_control_plane_credentials()
+            env["AGENTOPS_AGENT_TOKEN_SOURCE_FILE"] = str(token_path)
+            env["NODE_ENV"] = "production"
+            completed = run_process_group(
+                command,
+                cwd=NEXT_APP,
+                env=env,
+                timeout=240,
+            )
+    finally:
+        if provider_proc is not None:
+            stop_receipt = stop_process(provider_proc, timeout=10)
+            try:
+                provider_stdout, provider_stderr = provider_proc.communicate(timeout=1)
+                provider_output_error = None
+            except Exception as output_exc:
+                provider_stdout, provider_stderr = "", ""
+                provider_output_error = output_exc.__class__.__name__
+            socket_removed = bool(
+                provider_socket is not None
+                and not os.path.lexists(provider_socket)
+            )
+            provider_output = f"{provider_stdout}{provider_stderr}"
+            provider_output_bytes = provider_output.encode(
+                "utf-8",
+                errors="replace",
+            )
+            provider_cleanup = {
+                "provider_process_started": True,
+                "provider_socket_ready": provider_ready,
+                "provider_process_stopped": stop_receipt.get("stopped") is True,
+                "provider_process_stop_errors": stop_receipt.get("errors") or [],
+                "provider_process_returncode": provider_proc.returncode,
+                "provider_socket_removed": socket_removed,
+                "provider_agent_token_environment_omitted":
+                    provider_environment_isolated,
+                "provider_output_sha256": hashlib.sha256(
+                    provider_output_bytes
+                ).hexdigest(),
+                "provider_output_size_bytes": len(provider_output_bytes),
+                "provider_output_read_error": provider_output_error,
+                "raw_provider_output_omitted": True,
+            }
+            if token and token in provider_output:
+                raise RuntimeError("openclaw_provider_output_exposed_agent_token")
+        if provider_root is not None:
+            shutil.rmtree(provider_root)
+            provider_root_removed = not os.path.lexists(provider_root)
+            if provider_cleanup is not None:
+                provider_cleanup["provider_temp_root_removed"] = provider_root_removed
+            if not provider_root_removed:
+                raise RuntimeError("openclaw_provider_temp_root_cleanup_failed")
+        if provider_cleanup is not None and (
+            provider_cleanup.get("provider_socket_ready") is not True
+            or provider_cleanup.get("provider_process_stopped") is not True
+            or provider_cleanup.get("provider_process_stop_errors")
+            or provider_cleanup.get("provider_process_returncode") != 0
+            or provider_cleanup.get("provider_socket_removed") is not True
+            or provider_cleanup.get("provider_agent_token_environment_omitted") is not True
+            or provider_cleanup.get("provider_output_read_error") is not None
+            or provider_cleanup.get("provider_temp_root_removed") is not True
+        ):
+            raise RuntimeError(
+                "openclaw_provider_cleanup_unverified:"
+                + json.dumps(provider_cleanup, sort_keys=True)
+            )
     if token in completed.stdout or token in completed.stderr:
         raise RuntimeError(f"{runtime} Worker output exposed its Agent Gateway credential")
     try:
@@ -1113,7 +1344,7 @@ def run_worker(
         raise RuntimeError(redact(f"{runtime} Worker failed: {json.dumps(failure, ensure_ascii=False, sort_keys=True)}", sensitive))
     if not payload.get("ok") or payload.get("processed") != 1:
         raise RuntimeError(redact(f"{runtime} Worker did not complete one task: {payload}", sensitive))
-    return payload
+    return payload, provider_cleanup
 
 
 def check_runtime_evidence(
@@ -2222,6 +2453,7 @@ def main() -> int:
     adapters = list(dict.fromkeys(args.adapter or ["hermes", "openclaw"]))
     node = shutil.which("node")
     npm = shutil.which("npm")
+    openclaw_bin_sha256 = ""
     if not node or not npm or not (NEXT_APP / "node_modules" / "next").exists():
         result({
             "ok": False,
@@ -2231,15 +2463,23 @@ def main() -> int:
             "worker_implementation": args.worker_implementation,
         }, [])
         return 1
-    if "openclaw" in adapters and not Path(args.openclaw_bin).exists():
-        result({
-            "ok": False,
-            "contract": CONTRACT_ID,
-            "error": "openclaw_binary_unavailable",
-            "next_runtime_mode": "production_start",
-            "worker_implementation": args.worker_implementation,
-        }, [])
-        return 1
+    if "openclaw" in adapters:
+        try:
+            openclaw_path = Path(args.openclaw_bin).resolve(strict=True)
+            if not stat.S_ISREG(openclaw_path.stat().st_mode):
+                raise RuntimeError("openclaw_binary_regular_file_required")
+            args.openclaw_bin = str(openclaw_path)
+            openclaw_bin_sha256 = file_sha256(openclaw_path)
+        except Exception as exc:
+            result({
+                "ok": False,
+                "contract": CONTRACT_ID,
+                "error": "openclaw_binary_unavailable_or_invalid",
+                "error_type": exc.__class__.__name__,
+                "next_runtime_mode": "production_start",
+                "worker_implementation": args.worker_implementation,
+            }, [str(args.openclaw_bin)])
+            return 1
 
     tracked_before = ""
     tracked_after_build = ""
@@ -2341,7 +2581,10 @@ def main() -> int:
             args.hermes_gateway_url.encode("utf-8")
         ).hexdigest()
     if "openclaw" in adapters:
-        runtime_dependency_identity["openclaw_binary_sha256"] = file_sha256(Path(args.openclaw_bin))
+        runtime_dependency_identity["openclaw_binary_sha256"] = openclaw_bin_sha256
+        runtime_dependency_identity["openclaw_provider_entrypoint_sha256"] = file_sha256(
+            ROOT / "deploy" / "byoc" / "openclaw-provider-entrypoint.mjs"
+        )
 
     fixture_suffix = secrets.token_hex(8)
     schema = f"agentops_real_worker_review_{fixture_suffix}"
@@ -2405,6 +2648,7 @@ def main() -> int:
     adapter: NodePgAdapter | None = None
     next_proc: subprocess.Popen[str] | None = None
     worker_receipts: dict[str, Any] = {}
+    provider_service_receipts: dict[str, Any] = {}
     human_receipts: dict[str, Any] = {}
     manifest_authority_receipts: dict[str, Any] = {}
     entitlement_admin_receipt: dict[str, Any] = {}
@@ -2827,16 +3071,19 @@ def main() -> int:
 
         for runtime in adapters:
             worker_process_started = True
-            worker_payload = run_worker(
+            worker_payload, provider_service_receipt = run_worker(
                 runtime,
                 base_url,
                 tokens[runtime],
                 args.hermes_gateway_url,
                 args.openclaw_bin,
+                openclaw_bin_sha256,
                 sensitive,
                 args.worker_implementation,
                 node,
             )
+            if provider_service_receipt is not None:
+                provider_service_receipts[runtime] = provider_service_receipt
             worker_receipts[runtime] = check_runtime_evidence(
                 adapter,
                 runtime,
@@ -2985,6 +3232,30 @@ def main() -> int:
                 receipt.get("provider_call_performed") is True and receipt.get("dry_run") is False
                 for receipt in worker_receipts.values()
             ),
+            "openclaw_provider_service_execution_verified": (
+                "openclaw" not in adapters
+                or (
+                    provider_service_receipts.get("openclaw", {}).get(
+                        "provider_process_started"
+                    ) is True
+                    and provider_service_receipts.get("openclaw", {}).get(
+                        "provider_socket_ready"
+                    ) is True
+                    and provider_service_receipts.get("openclaw", {}).get(
+                        "provider_process_stopped"
+                    ) is True
+                    and provider_service_receipts.get("openclaw", {}).get(
+                        "provider_socket_removed"
+                    ) is True
+                    and provider_service_receipts.get("openclaw", {}).get(
+                        "provider_temp_root_removed"
+                    ) is True
+                )
+            ),
+            "openclaw_provider_transport": (
+                "unix_socket" if "openclaw" in adapters else None
+            ),
+            "provider_services": provider_service_receipts,
             "adapters": adapters,
             "workers": worker_receipts,
             "human_reviews": human_receipts,
@@ -3108,6 +3379,11 @@ def main() -> int:
                 receipt.get("provider_call_performed") is True and receipt.get("dry_run") is False
                 for receipt in worker_receipts.values()
             ),
+            "openclaw_provider_service_execution_verified": False,
+            "openclaw_provider_transport": (
+                "unix_socket" if "openclaw" in adapters else None
+            ),
+            "provider_services": provider_service_receipts or None,
             "fixture_cleanup": cleanup_receipt or None,
             "fixture_cleanup_error":
                 redact(cleanup_error, sensitive) if cleanup_error else None,

@@ -3,7 +3,16 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,10 +21,14 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = mkdtempSync(join(tmpdir(), "agentops-openclaw-provider-contract-"));
 const socketPath = join(root, "provider.sock");
+const shutdownSocketPath = join(root, "provider-shutdown.sock");
 const fakePath = join(root, "fake-openclaw.mjs");
+const fakeSymlinkPath = join(root, "fake-openclaw-link.mjs");
 const pidPath = join(root, "provider-child.pid");
 const disconnectPidPath = join(root, "provider-disconnect-child.pid");
+const launchCountPath = join(root, "provider-launches.txt");
 const entrypoint = join(here, "openclaw-provider-entrypoint.mjs");
+const entrypointSource = readFileSync(entrypoint, "utf8");
 const healthcheck = join(here, "openclaw-provider-healthcheck.mjs");
 const requestSchema = "agentops_openclaw_provider_request_v1";
 const responseSchema = "agentops_openclaw_provider_response_v1";
@@ -33,14 +46,14 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function call({ method = "POST", path = "/v1/execute", body, headers = {} }) {
+function call({ method = "POST", path = "/v1/execute", body, headers = {}, targetSocket = socketPath }) {
   const bytes = body === undefined
     ? Buffer.alloc(0)
     : Buffer.isBuffer(body) ? body : Buffer.from(JSON.stringify(body));
   return new Promise((resolveCall, rejectCall) => {
     const chunks = [];
     const client = request({
-      socketPath,
+      socketPath: targetSocket,
       method,
       path,
       headers: {
@@ -63,6 +76,45 @@ function call({ method = "POST", path = "/v1/execute", body, headers = {} }) {
     client.once("error", rejectCall);
     client.end(bytes);
   });
+}
+
+function beginSlowCall(body, targetSocket = socketPath) {
+  const bytes = Buffer.from(JSON.stringify(body));
+  let finish;
+  let abort;
+  const response = new Promise((resolveCall, rejectCall) => {
+    const chunks = [];
+    const client = request({
+      socketPath: targetSocket,
+      method: "POST",
+      path: "/v1/execute",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": bytes.byteLength,
+        Connection: "close",
+      },
+    }, (serverResponse) => {
+      serverResponse.on("data", (chunk) => chunks.push(chunk));
+      serverResponse.on("end", () => {
+        const raw = Buffer.concat(chunks).toString("utf8");
+        try {
+          resolveCall({ status: serverResponse.statusCode, raw, body: JSON.parse(raw) });
+        } catch {
+          rejectCall(new Error("contract_response_invalid_json"));
+        }
+      });
+    });
+    client.once("error", rejectCall);
+    client.write(bytes.subarray(0, 1));
+    finish = () => client.end(bytes.subarray(1));
+    abort = () => client.destroy();
+  });
+  return { abort: () => abort(), finish: () => finish(), response };
+}
+
+function launchCount() {
+  if (!existsSync(launchCountPath)) return 0;
+  return readFileSync(launchCountPath, "utf8").split("\n").filter(Boolean).length;
 }
 
 function executionRequest(prompt, timeoutSeconds = 3) {
@@ -101,12 +153,12 @@ function assertExactResponse(payload, ok) {
   }
 }
 
-async function waitForSocket(child) {
+async function waitForSocket(child, targetSocket = socketPath) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (child.exitCode !== null) throw new Error("provider_exited_before_ready");
-    if (existsSync(socketPath)) {
+    if (existsSync(targetSocket)) {
       try {
-        const health = await call({ method: "GET", path: "/health" });
+        const health = await call({ method: "GET", path: "/health", targetSocket });
         if (health.status === 200 && health.body.ready === true) return health;
       } catch {
         // The socket can exist briefly before the HTTP listener accepts connections.
@@ -127,12 +179,18 @@ function processGone(pid) {
 }
 
 let provider;
+let preExecutionProvider;
 try {
-  writeFileSync(fakePath, `#!/usr/bin/env node
+  assert.match(entrypointSource, /openclaw_bin_nofollow_unavailable/);
+  assert.match(entrypointSource, /Number\.isInteger\(constants\.O_NOFOLLOW\)/);
+  assert.match(entrypointSource, /constants\.O_RDONLY \| constants\.O_NOFOLLOW/);
+  assert.doesNotMatch(entrypointSource, /O_NOFOLLOW\s*\|\|\s*0/);
+  const fakeSource = `#!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
 const prompt = args[args.indexOf("--message") + 1] || "";
+appendFileSync(${JSON.stringify(launchCountPath)}, "started\\n");
 if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
   const descendant = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
   const target = prompt.includes("disconnect-client")
@@ -148,14 +206,17 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
 } else {
   process.stdout.write(JSON.stringify({ result: { meta: { durationMs: 17, finalAssistantVisibleText: ${JSON.stringify(responseCanary)} }, payloads: [] } }));
 }
-`, { mode: 0o700 });
+`;
+  writeFileSync(fakePath, fakeSource, { mode: 0o700 });
   chmodSync(fakePath, 0o700);
+  const fakeDigest = sha256(readFileSync(fakePath));
 
   const environment = {
     PATH: process.env.PATH,
     HOME: root,
     NODE_ENV: "production",
     OPENCLAW_BIN: fakePath,
+    OPENCLAW_BIN_SHA256: fakeDigest,
     OPENCLAW_AGENT: "main",
     OPENCLAW_TIMEOUT_SECONDS: "5",
     OPENCLAW_WORKSPACE: root,
@@ -171,6 +232,81 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
   assert.equal(tokenRejected.status, 78);
   assert.match(tokenRejected.stderr, /agentops_openclaw_provider_start_failed/);
   assert.doesNotMatch(tokenRejected.stdout + tokenRejected.stderr, new RegExp(secretCanary));
+
+  const digestRejected = spawnSync(process.execPath, [entrypoint], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...environment, OPENCLAW_BIN_SHA256: "0".repeat(64) },
+  });
+  assert.equal(digestRejected.status, 78);
+  assert.match(digestRejected.stderr, /agentops_openclaw_provider_start_failed/);
+  assert.doesNotMatch(digestRejected.stdout + digestRejected.stderr, new RegExp(secretCanary));
+
+  symlinkSync(fakePath, fakeSymlinkPath);
+  const symlinkRejected = spawnSync(process.execPath, [entrypoint], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...environment, OPENCLAW_BIN: fakeSymlinkPath },
+  });
+  assert.equal(symlinkRejected.status, 78);
+  assert.match(symlinkRejected.stderr, /agentops_openclaw_provider_start_failed/);
+  assert.doesNotMatch(symlinkRejected.stdout + symlinkRejected.stderr, new RegExp(secretCanary));
+
+  const preExecutionGraceMs = 1_200;
+  preExecutionProvider = spawn(process.execPath, [entrypoint], {
+    cwd: root,
+    env: {
+      ...environment,
+      OPENCLAW_PROVIDER_SOCKET: shutdownSocketPath,
+      OPENCLAW_PROVIDER_SHUTDOWN_GRACE_MS: String(preExecutionGraceMs),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let preExecutionOutput = "";
+  preExecutionProvider.stdout.on("data", (chunk) => { preExecutionOutput += chunk; });
+  preExecutionProvider.stderr.on("data", (chunk) => { preExecutionOutput += chunk; });
+  await waitForSocket(preExecutionProvider, shutdownSocketPath);
+  const neverFinishedBody = beginSlowCall(
+    executionRequest("shutdown before runtime launch"),
+    shutdownSocketPath,
+  );
+  const neverFinishedResult = neverFinishedBody.response.catch(() => null);
+  let preExecutionBusy = false;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const candidate = await call({
+      method: "GET",
+      path: "/health",
+      targetSocket: shutdownSocketPath,
+    });
+    if (candidate.body.busy === true) {
+      preExecutionBusy = true;
+      break;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  assert.equal(preExecutionBusy, true);
+  assert.equal(launchCount(), 0);
+  const preExecutionExit = new Promise((resolveExit, rejectExit) => {
+    preExecutionProvider.once("exit", (code) => {
+      if (code === 0) resolveExit();
+      else rejectExit(new Error(`provider_pre_execution_signal_exit_${code}`));
+    });
+  });
+  const shutdownStarted = Date.now();
+  preExecutionProvider.kill("SIGTERM");
+  await Promise.race([
+    preExecutionExit,
+    new Promise((_, rejectTimeout) => setTimeout(
+      () => rejectTimeout(new Error("provider_pre_execution_shutdown_exceeded_grace")),
+      preExecutionGraceMs,
+    )),
+  ]);
+  assert.ok(Date.now() - shutdownStarted < preExecutionGraceMs);
+  await neverFinishedResult;
+  assert.equal(existsSync(shutdownSocketPath), false);
+  assert.equal(launchCount(), 0);
+  assert.doesNotMatch(preExecutionOutput, new RegExp(secretCanary));
+  assert.doesNotMatch(preExecutionOutput, new RegExp(responseCanary));
 
   provider = spawn(process.execPath, [entrypoint], {
     cwd: root,
@@ -192,6 +328,52 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
     env: { PATH: process.env.PATH, OPENCLAW_PROVIDER_SOCKET: socketPath },
   });
   assert.equal(healthResult.status, 0);
+
+  const slowBody = beginSlowCall(executionRequest("single-flight slow body"));
+  let busyHealth;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const candidate = await call({ method: "GET", path: "/health" });
+    if (candidate.status === 200 && candidate.body.busy === true) {
+      busyHealth = candidate;
+      break;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  assert.ok(busyHealth);
+  assert.equal(launchCount(), 0);
+  const concurrent = await call({ body: executionRequest("must not launch concurrently") });
+  assert.equal(concurrent.status, 503);
+  assert.equal(concurrent.body.error, "ProviderBusy");
+  assert.equal(launchCount(), 0);
+  slowBody.finish();
+  const admitted = await slowBody.response;
+  assert.equal(admitted.status, 200);
+  assertExactResponse(admitted.body, true);
+  assert.equal(launchCount(), 1);
+  const idleAfterAdmission = await call({ method: "GET", path: "/health" });
+  assert.equal(idleAfterAdmission.body.busy, false);
+
+  const interruptedBody = beginSlowCall(executionRequest("interrupted request body"));
+  const interruptedResult = interruptedBody.response.catch(() => null);
+  let interruptedBusy = false;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const candidate = await call({ method: "GET", path: "/health" });
+    if (candidate.body.busy === true) {
+      interruptedBusy = true;
+      break;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  assert.equal(interruptedBusy, true);
+  interruptedBody.abort();
+  await interruptedResult;
+  let idleAfterInterrupt = false;
+  for (let attempt = 0; attempt < 100 && !idleAfterInterrupt; attempt += 1) {
+    const candidate = await call({ method: "GET", path: "/health" });
+    idleAfterInterrupt = candidate.status === 200 && candidate.body.busy === false;
+    if (!idleAfterInterrupt) await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  assert.equal(idleAfterInterrupt, true);
 
   const successPrompt = `contract success ${secretCanary}`;
   const success = await call({ body: executionRequest(successPrompt) });
@@ -244,10 +426,31 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
   const invalid = await call({ body: mismatch });
   assert.equal(invalid.status, 400);
   assert.equal(invalid.body.error, "RequestValidationFailed");
+  const idleAfterInvalid = await call({ method: "GET", path: "/health" });
+  assert.equal(idleAfterInvalid.body.busy, false);
+
+  const malformed = await call({ body: Buffer.from("{") });
+  assert.equal(malformed.status, 400);
+  assert.equal(malformed.body.error, "RequestJsonInvalid");
+  const idleAfterMalformed = await call({ method: "GET", path: "/health" });
+  assert.equal(idleAfterMalformed.body.busy, false);
 
   const oversized = await call({ body: Buffer.alloc(1024 * 1024 + 1, 0x61) });
   assert.equal(oversized.status, 413);
   assert.equal(oversized.body.error, "RequestBodyTooLarge");
+  const idleAfterOversized = await call({ method: "GET", path: "/health" });
+  assert.equal(idleAfterOversized.body.busy, false);
+
+  const launchesBeforeTamper = launchCount();
+  writeFileSync(fakePath, `${fakeSource}\n// tampered after provider startup\n`, { mode: 0o700 });
+  const tampered = await call({ body: executionRequest("must reject changed runtime") });
+  assert.equal(tampered.status, 200);
+  assertExactResponse(tampered.body, false);
+  assert.equal(tampered.body.provider_call_performed, false);
+  assert.equal(tampered.body.error_type, "OpenClawBinaryIdentityFailure");
+  assert.equal(launchCount(), launchesBeforeTamper);
+  writeFileSync(fakePath, fakeSource, { mode: 0o700 });
+  chmodSync(fakePath, 0o700);
 
   const slow = call({ body: executionRequest("slow-signal", 5) }).catch(() => null);
   for (let attempt = 0; attempt < 100 && !existsSync(pidPath); attempt += 1) {
@@ -278,6 +481,12 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
     real_cli_process_invoked: true,
     success_failure_verified: true,
     bounded_request_verified: true,
+    atomic_single_flight_verified: true,
+    runtime_sha256_identity_verified: true,
+    runtime_symlink_rejected: true,
+    runtime_nofollow_fail_closed_verified: true,
+    pre_execution_shutdown_verified: true,
+    interrupted_request_slot_release_verified: true,
     healthcheck_verified: true,
     process_group_signal_verified: true,
     client_disconnect_cancellation_verified: true,
@@ -286,5 +495,8 @@ if (prompt.includes("slow-signal") || prompt.includes("disconnect-client")) {
   })}\n`);
 } finally {
   if (provider && provider.exitCode === null) provider.kill("SIGKILL");
+  if (preExecutionProvider && preExecutionProvider.exitCode === null) {
+    preExecutionProvider.kill("SIGKILL");
+  }
   rmSync(root, { recursive: true, force: true });
 }

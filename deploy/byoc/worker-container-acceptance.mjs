@@ -344,6 +344,9 @@ try {
     mode: 0o555,
     flag: "wx",
   });
+  const openClawBinarySha256 = createHash("sha256")
+    .update(readFileSync(openClawBinary))
+    .digest("hex");
   writeFileSync(join(openClawRuntime, "provider-sentinel"), `${providerSentinel}\n`, {
     encoding: "utf8",
     mode: 0o444,
@@ -557,6 +560,7 @@ try {
     "--env", "AGENTOPS_DEPLOYMENT_MODE=production",
     "--env", "OPENCLAW_PROVIDER_SOCKET=/run/agentops-openclaw/provider.sock",
     "--env", "OPENCLAW_BIN=/opt/agentops-provider/openclaw/bin/openclaw",
+    "--env", `OPENCLAW_BIN_SHA256=${openClawBinarySha256}`,
     "--env", "OPENCLAW_CONFIG_PATH=/run/secrets/openclaw_config",
     "--env", "OPENCLAW_STATE_DIR=/run/openclaw-state",
     "--env", "AGENTOPS_WORKER_CWD=/opt/agentops-worker/workspace",
@@ -725,7 +729,7 @@ try {
     || item.includes(token)
   )) fail("acceptance_openclaw_provider_agent_token_environment_detected");
   if (openClawWorkerEnvironment.some((item) =>
-    /^(?:OPENCLAW_BIN|OPENCLAW_CONFIG_PATH|OPENCLAW_STATE_DIR|AGENTOPS_WORKER_CWD)=/.test(item)
+    /^(?:OPENCLAW_BIN|OPENCLAW_BIN_SHA256|OPENCLAW_CONFIG_PATH|OPENCLAW_STATE_DIR|AGENTOPS_WORKER_CWD)=/.test(item)
     || item.includes(providerSentinel)
   )) fail("acceptance_openclaw_worker_provider_environment_detected");
   const environmentValue = (environment, name) => {

@@ -30,6 +30,10 @@ try {
   const composeRelease = readFileSync(join(moduleDirectory, "compose.release.yaml"), "utf8");
   const composeSource = readFileSync(join(moduleDirectory, "compose.yaml"), "utf8");
   const dockerfile = readFileSync(join(moduleDirectory, "Dockerfile"), "utf8");
+  const providerEntrypoint = readFileSync(
+    join(moduleDirectory, "openclaw-provider-entrypoint.mjs"),
+    "utf8",
+  );
   for (const compose of [composeRelease, composeSource]) {
     for (const profile of ["worker-hermes", "worker-openclaw"]) {
       assert.match(compose, new RegExp(`profiles: \\[${profile}\\]`));
@@ -55,6 +59,7 @@ try {
     assert.match(provider, /openclaw-provider-entrypoint\.mjs/);
     assert.match(provider, /openclaw-provider-healthcheck\.mjs/);
     assert.match(provider, /OPENCLAW_BIN:/);
+    assert.match(provider, /OPENCLAW_BIN_SHA256:.*AGENTOPS_OPENCLAW_PROVIDER_BIN_SHA256/);
     assert.match(provider, /OPENCLAW_CONFIG_PATH:/);
     assert.match(provider, /AGENTOPS_WORKER_CWD:/);
     assert.match(provider, /OPENCLAW_AGENT:.*AGENTOPS_OPENCLAW_AGENT/);
@@ -69,7 +74,7 @@ try {
     assert.match(workerOpenClaw, /agentops_openclaw_provider_socket:\/run\/agentops-openclaw/);
     assert.doesNotMatch(
       workerOpenClaw,
-      /OPENCLAW_(?:BIN|CONFIG_PATH|STATE_DIR)|AGENTOPS_WORKER_CWD|openclaw_config|OPENCLAW_RUNTIME_PATH|OPENCLAW_WORKSPACE_PATH/,
+      /OPENCLAW_(?:BIN|BIN_SHA256|CONFIG_PATH|STATE_DIR)|AGENTOPS_WORKER_CWD|openclaw_config|OPENCLAW_RUNTIME_PATH|OPENCLAW_WORKSPACE_PATH/,
     );
     assert.match(workerOpenClaw, /- control_plane/);
     assert.doesNotMatch(workerOpenClaw, /- openclaw_provider_egress/);
@@ -80,6 +85,17 @@ try {
   assert.match(dockerfile, /openclaw-provider-entrypoint\.mjs/);
   assert.match(dockerfile, /openclaw-provider-healthcheck\.mjs/);
   assert.match(dockerfile, /openclaw-provider-contract\.mjs/);
+  assert.match(providerEntrypoint, /OPENCLAW_BIN_SHA256/);
+  assert.match(providerEntrypoint, /constants\.O_RDONLY \| constants\.O_NOFOLLOW/);
+  assert.equal(
+    (providerEntrypoint.match(
+      /verifyBinaryIdentity\(configuration\.binaryPath, configuration\.binarySha256\)/g,
+    ) || []).length,
+    2,
+  );
+  assert.match(providerEntrypoint, /state = \{ activeRequest: null, shuttingDown: false \}/);
+  assert.match(providerEntrypoint, /state\.activeRequest = requestSlot/);
+  assert.doesNotMatch(providerEntrypoint, /O_NOFOLLOW\s*\|\|\s*0/);
   const entrypoint = readFileSync(join(moduleDirectory, "worker-entrypoint.mjs"), "utf8");
   assert.match(entrypoint, /detached: true/);
   assert.match(entrypoint, /"--import",\s*\n\s*"tsx"/);
@@ -187,7 +203,10 @@ try {
     openclaw_provider_secret_isolated: true,
     openclaw_worker_runtime_mounts_omitted: true,
     openclaw_unix_socket_only: true,
-    direct_openclaw_exact_head_acceptance_only: true,
+    direct_openclaw_execution_forbidden: true,
+    openclaw_runtime_digest_bound: true,
+    openclaw_runtime_nofollow_fail_closed: true,
+    openclaw_atomic_single_flight: true,
     real_provider_execution_performed: false,
     token_omitted: true,
   })}\n`);

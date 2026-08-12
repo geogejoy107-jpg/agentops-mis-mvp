@@ -29,12 +29,9 @@ type CliOptions = {
   hermesModel: string;
   hermesTimeoutMs: number;
   hermesMaxTokens: number;
-  openClawBinary: string;
   openClawProviderSocket?: string;
-  allowDirectOpenClawForExactHeadAcceptance: boolean;
   openClawAgent: string;
   openClawTimeoutSeconds: number;
-  workingDirectory: string;
 };
 
 function envBoolean(name: string, fallback = false) {
@@ -102,12 +99,9 @@ function cliOptions(argv: string[]): CliOptions {
     "--hermes-model",
     "--hermes-timeout-ms",
     "--hermes-max-tokens",
-    "--openclaw-bin",
     "--openclaw-provider-socket",
-    "--allow-direct-openclaw-for-exact-head-acceptance",
     "--openclaw-agent",
     "--openclaw-timeout-seconds",
-    "--working-directory",
   ]);
   for (const name of [...values.keys(), ...flags]) {
     if (!known.has(name)) throw new Error(`unsupported_argument:${name}`);
@@ -187,14 +181,9 @@ function cliOptions(argv: string[]): CliOptions {
       64,
       4096,
     ),
-    openClawBinary: values.get("--openclaw-bin")
-      || process.env.OPENCLAW_BIN
-      || "/opt/homebrew/bin/openclaw",
     openClawProviderSocket: values.get("--openclaw-provider-socket")
       || process.env.OPENCLAW_PROVIDER_SOCKET
       || undefined,
-    allowDirectOpenClawForExactHeadAcceptance:
-      flags.has("--allow-direct-openclaw-for-exact-head-acceptance"),
     openClawAgent: values.get("--openclaw-agent")
       || process.env.OPENCLAW_AGENT
       || "main",
@@ -205,9 +194,6 @@ function cliOptions(argv: string[]): CliOptions {
       1,
       600,
     ),
-    workingDirectory: values.get("--working-directory")
-      || process.env.AGENTOPS_WORKER_CWD
-      || process.cwd(),
   };
 }
 
@@ -235,7 +221,6 @@ async function main() {
   if (
     options.adapter === "openclaw"
     && !options.openClawProviderSocket
-    && !options.allowDirectOpenClawForExactHeadAcceptance
   ) {
     throw new Error("openclaw_provider_socket_required");
   }
@@ -255,11 +240,9 @@ async function main() {
       maxTokens: options.hermesMaxTokens,
     })
     : new OpenClawAdapter({
-      binaryPath: options.openClawBinary,
-      providerSocketPath: options.openClawProviderSocket,
+      providerSocketPath: options.openClawProviderSocket as string,
       agentName: options.openClawAgent,
       timeoutSeconds: options.openClawTimeoutSeconds,
-      workingDirectory: options.workingDirectory,
     });
   const shutdown = new AbortController();
   let stopping = false;

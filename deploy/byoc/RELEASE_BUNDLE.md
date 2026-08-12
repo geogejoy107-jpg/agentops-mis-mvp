@@ -35,6 +35,18 @@ host port and is not attached to the control-plane network. The two containers
 communicate through `/run/agentops-openclaw/provider.sock`; Compose requires the
 provider and control plane to be healthy before starting the Worker.
 
+The configured OpenClaw entrypoint must be a final regular file rather than a
+symlink. The operator supplies its exact SHA-256 digest through
+`AGENTOPS_OPENCLAW_PROVIDER_BIN_SHA256`; the provider fails closed without
+`O_NOFOLLOW` and verifies the same file identity and digest at startup and before
+each execution. This binds only the entrypoint bytes, not its dependency tree.
+
+The socket is a local transport boundary rather than provider-signed proof. The
+broker and mounted OpenClaw CLI currently execute with the provider container's
+OS identity, so the mounted runtime remains trusted. The CLI receives its prompt
+through `--message`; privileged process inspection can see that argument during
+the call even though release receipts, logs, and committed evidence omit it.
+
 The release is bound to the exact source commit and the application image's
 immutable registry digest. A release build fails when any selected input is
 untracked or differs from that commit. The package's `SHA256SUMS` proves internal
