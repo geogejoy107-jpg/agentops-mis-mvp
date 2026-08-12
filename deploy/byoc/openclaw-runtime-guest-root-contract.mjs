@@ -69,12 +69,12 @@ const missingRequirements = requirements
   .filter(([, pattern]) => !pattern.test(launcherSource))
   .map(([name]) => name);
 for (const [name, pattern] of [
-  ["runner_root_fd_open", /configuration\.runtimeRoot,[\s\S]{0,160}constants\.O_DIRECTORY/],
-  ["runner_root_fd_return", /return \{ execFd, rootFd, cgroupFd \}/],
+  ["runner_retained_root_fd", /rootFd: preflight\.runtimeHandles\.rootFd/],
+  ["runner_retained_exec_fd", /execFd: preflight\.runtimeHandles\.execFd/],
   ["runner_root_fd_argument", /"--root-fd", "4"/],
   ["runner_guest_argv_preserved", /const argv = assertPromptTransport\(preflight\.manifest\);/],
   ["runner_root_fd_stdio", /handles\.execFd, handles\.rootFd, handles\.cgroupFd, "pipe"/],
-  ["runner_root_fd_cleanup", /handles\?\.execFd, handles\?\.rootFd, handles\?\.cgroupFd/],
+  ["runner_request_fd_cleanup", /handles\?\.requestOwnedFds \|\| \[\]/],
 ]) {
   if (!pattern.test(runnerSource)) missingRequirements.push(name);
 }

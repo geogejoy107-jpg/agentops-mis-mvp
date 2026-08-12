@@ -20,10 +20,12 @@ import { readLinuxBootClock } from "./openclaw-executor-protocol.mjs";
 import { ExecutorReplayJournal } from "./openclaw-executor-request.mjs";
 import { runExecutorDispatch } from "./openclaw-executor-runner.mjs";
 import {
-  parseCanonicalRuntimeManifestEnvelope,
-  runtimeManifestSha256,
-  verifyCanonicalRuntimeManifestAndTree,
-} from "./openclaw-runtime-manifest.mjs";
+  canonicalRuntimeManifestV2Bytes,
+  parseCanonicalRuntimeManifestV2Envelope,
+  verifyCanonicalRuntimeManifestV2,
+} from "./openclaw-runtime-manifest-v2.mjs";
+import { verifyOpenClawRuntimeMountPolicy } from "./openclaw-runtime-mount-policy.mjs";
+import { computeOpenClawRuntimeRootfsMerkle } from "./openclaw-runtime-rootfs-merkle.mjs";
 
 export const EXECUTOR_HEALTH_SCHEMA = "agentops_openclaw_executor_health_v1";
 const MAX_CONFIG_BYTES = 1024 * 1024;
@@ -165,6 +167,81 @@ function parseCanonicalJson(bytes, code) {
   return value;
 }
 
+function runtimeIdentity(metadata) {
+  return Object.freeze({
+    ctimeNs: metadata.ctimeNs,
+    dev: metadata.dev,
+    gid: metadata.gid,
+    ino: metadata.ino,
+    mode: metadata.mode,
+    mtimeNs: metadata.mtimeNs,
+    nlink: metadata.nlink,
+    size: metadata.size,
+    uid: metadata.uid,
+  });
+}
+
+function sameRuntimeIdentity(left, right) {
+  return left.ctimeNs === right.ctimeNs
+    && left.dev === right.dev
+    && left.gid === right.gid
+    && left.ino === right.ino
+    && left.mode === right.mode
+    && left.mtimeNs === right.mtimeNs
+    && left.nlink === right.nlink
+    && left.size === right.size
+    && left.uid === right.uid;
+}
+
+export function verifyOpenedRuntimeExecutableBinding(
+  descriptor,
+  executablePath,
+  { expectedUid = 0, expectedGid = 0 } = {},
+) {
+  if (!Number.isSafeInteger(descriptor) || descriptor < 0) {
+    fail("executor_runtime_executable_descriptor_invalid");
+  }
+  const opened = fstatSync(descriptor, { bigint: true });
+  const pathMetadata = lstatSync(executablePath, { bigint: true });
+  const openedIdentity = runtimeIdentity(opened);
+  const pathIdentity = runtimeIdentity(pathMetadata);
+  if (
+    !opened.isFile()
+    || !pathMetadata.isFile()
+    || pathMetadata.isSymbolicLink()
+    || opened.nlink !== 1n
+    || opened.uid !== BigInt(expectedUid)
+    || opened.gid !== BigInt(expectedGid)
+    || (opened.mode & 0o022n) !== 0n
+    || (opened.mode & 0o111n) === 0n
+    || !sameRuntimeIdentity(openedIdentity, pathIdentity)
+  ) fail("executor_runtime_executable_identity_changed");
+  return openedIdentity;
+}
+
+function sameRootfsMeasurement(left, right) {
+  return left.schema === right.schema
+    && left.merkle_sha256 === right.merkle_sha256
+    && left.file_count === right.file_count
+    && left.byte_count === right.byte_count;
+}
+
+function sameMountEvidence(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function verifyRuntimeRootBinding(rootFd, runtimeRoot, expectedIdentity) {
+  const opened = runtimeIdentity(fstatSync(rootFd, { bigint: true }));
+  const pathMetadata = lstatSync(runtimeRoot, { bigint: true });
+  if (
+    !pathMetadata.isDirectory()
+    || pathMetadata.isSymbolicLink()
+    || !sameRuntimeIdentity(opened, runtimeIdentity(pathMetadata))
+    || (expectedIdentity && !sameRuntimeIdentity(opened, expectedIdentity))
+  ) fail("executor_runtime_root_identity_changed");
+  return opened;
+}
+
 export function parseRuntimeManifestTrustRoots(bytes) {
   const value = exactObject(
     parseCanonicalJson(bytes, "executor_manifest_trust_roots_invalid"),
@@ -207,53 +284,156 @@ export async function preflightExecutor(configuration) {
   const policySha256 = createHash("sha256").update(policyBytes).digest("hex");
   const seccompBytes = readSecureFile(configuration.seccompProfilePath);
   const seccompSha256 = createHash("sha256").update(seccompBytes).digest("hex");
-  const manifestBytes = readSecureFile(configuration.manifestPath);
-  const roots = parseRuntimeManifestTrustRoots(readSecureFile(configuration.manifestTrustRootPath));
-  const envelope = parseCanonicalRuntimeManifestEnvelope(manifestBytes);
-  const manifest = await verifyCanonicalRuntimeManifestAndTree(
-    manifestBytes,
+  const rootFd = openSync(
     configuration.runtimeRoot,
-    roots,
-    {
-      cgroup_policy_sha256: policySha256,
-      entrypoint: envelope.body.entrypoint,
-      issuer: configuration.manifestIssuer,
-      key_id: configuration.manifestKeyId,
-      oci_image_digest: configuration.runtimeImageDigest,
-      oci_image_name: configuration.runtimeImageName,
-      runtime_executable: envelope.body.runtime_executable,
-      runtime_gid: configuration.runtimeGid,
-      runtime_uid: configuration.runtimeUid,
-      seccomp_profile_sha256: seccompSha256,
-      verification_time: new Date().toISOString(),
-    },
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_CLOEXEC,
   );
-  const receiptKeyBytes = readSecureFile(configuration.receiptSigningKeyPath, { maximum: 16 * 1024, privateMode: true });
-  let receiptKey;
+  let execFd;
+  let manifestBody;
+  let manifestBytes;
+  let mountEvidence;
+  let rootfs;
   try {
-    receiptKey = createPrivateKey(receiptKeyBytes);
-  } catch {
-    fail("executor_receipt_private_key_invalid");
+    const rootBeforeMetadata = fstatSync(rootFd, { bigint: true });
+    if (
+      !rootBeforeMetadata.isDirectory()
+      || rootBeforeMetadata.uid !== 0n
+      || (rootBeforeMetadata.mode & 0o022n) !== 0n
+    ) fail("executor_runtime_root_metadata_invalid");
+    const rootBefore = runtimeIdentity(rootBeforeMetadata);
+    manifestBytes = readSecureFile(configuration.manifestPath);
+    const roots = parseRuntimeManifestTrustRoots(readSecureFile(configuration.manifestTrustRootPath));
+    const envelope = parseCanonicalRuntimeManifestV2Envelope(manifestBytes);
+    const initialMountEvidence = verifyOpenClawRuntimeMountPolicy({
+      guestRoot: configuration.runtimeRoot,
+      mutableMounts: envelope.body.mutable_mounts,
+    });
+    const initialRootfs = computeOpenClawRuntimeRootfsMerkle(
+      configuration.runtimeRoot,
+      envelope.body.mutable_mounts.map((mount) => mount.path),
+    );
+    manifestBody = verifyCanonicalRuntimeManifestV2(
+      manifestBytes,
+      roots,
+      {
+        body_sha256: createHash("sha256")
+          .update(canonicalRuntimeManifestV2Bytes(envelope.body))
+          .digest("hex"),
+        cgroup_policy_sha256: policySha256,
+        entrypoint: envelope.body.entrypoint,
+        issuer: configuration.manifestIssuer,
+        key_id: configuration.manifestKeyId,
+        oci_image: {
+          digest: configuration.runtimeImageDigest,
+          name: configuration.runtimeImageName,
+        },
+        platform: {
+          arch: process.arch === "x64" ? "amd64" : process.arch,
+          libc: "glibc",
+          os: process.platform,
+        },
+        rootfs_merkle_sha256: initialRootfs.merkle_sha256,
+        runtime_executable: envelope.body.runtime_executable,
+        runtime_gid: configuration.runtimeGid,
+        runtime_uid: configuration.runtimeUid,
+        seccomp_profile_sha256: seccompSha256,
+        verification_time: new Date().toISOString(),
+      },
+    );
+    if (
+      manifestBody.rootfs.file_count !== initialRootfs.file_count
+      || manifestBody.rootfs.byte_count !== initialRootfs.byte_count
+    ) fail("executor_runtime_rootfs_measurement_mismatch");
+    verifyRuntimeRootBinding(rootFd, configuration.runtimeRoot, rootBefore);
+    const relativeExecutable = manifestBody.runtime_executable.slice(1);
+    const executablePath = resolve(configuration.runtimeRoot, relativeExecutable);
+    execFd = openSync(
+      executablePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_CLOEXEC,
+    );
+    const executableBeforeSecondMeasurement = verifyOpenedRuntimeExecutableBinding(execFd, executablePath);
+    const verifiedMountEvidence = verifyOpenClawRuntimeMountPolicy({
+      guestRoot: configuration.runtimeRoot,
+      mutableMounts: manifestBody.mutable_mounts,
+    });
+    const verifiedRootfs = computeOpenClawRuntimeRootfsMerkle(
+      configuration.runtimeRoot,
+      manifestBody.mutable_mounts.map((mount) => mount.path),
+    );
+    if (
+      !sameMountEvidence(initialMountEvidence, verifiedMountEvidence)
+    ) fail("executor_runtime_mount_policy_changed_during_preflight");
+    if (
+      !sameRootfsMeasurement(initialRootfs, verifiedRootfs)
+      || manifestBody.rootfs.merkle_sha256 !== verifiedRootfs.merkle_sha256
+      || manifestBody.rootfs.file_count !== verifiedRootfs.file_count
+      || manifestBody.rootfs.byte_count !== verifiedRootfs.byte_count
+    ) fail("executor_runtime_rootfs_changed_during_preflight");
+    const executableAfterSecondMeasurement = verifyOpenedRuntimeExecutableBinding(execFd, executablePath);
+    if (!sameRuntimeIdentity(executableBeforeSecondMeasurement, executableAfterSecondMeasurement)) {
+      fail("executor_runtime_executable_changed_during_preflight");
+    }
+    verifyRuntimeRootBinding(rootFd, configuration.runtimeRoot, rootBefore);
+    mountEvidence = verifiedMountEvidence;
+    rootfs = verifiedRootfs;
+  } catch (error) {
+    if (Number.isSafeInteger(execFd)) closeSync(execFd);
+    closeSync(rootFd);
+    throw error;
   }
-  if (receiptKey.asymmetricKeyType !== "ed25519") fail("executor_receipt_private_key_invalid");
-  const delegation = inspectDelegatedCgroupRoot({ root: configuration.cgroupRoot });
-  const journal = await ExecutorReplayJournal.open(configuration.journalRoot, {
-    expectedOwner: { uid: 0, gid: 2200 },
-  });
-  const clock = readLinuxBootClock();
-  const recovery = await journal.recover(clock);
-  return Object.freeze({
-    clock,
-    delegation,
-    journal,
-    manifest: manifest.body,
-    manifestSha256: runtimeManifestSha256(manifestBytes),
-    policy,
-    policySha256,
-    receiptKey,
-    recovery,
-    seccompSha256,
-  });
+  try {
+    const receiptKeyBytes = readSecureFile(configuration.receiptSigningKeyPath, { maximum: 16 * 1024, privateMode: true });
+    let receiptKey;
+    try {
+      receiptKey = createPrivateKey(receiptKeyBytes);
+    } catch {
+      fail("executor_receipt_private_key_invalid");
+    }
+    if (receiptKey.asymmetricKeyType !== "ed25519") fail("executor_receipt_private_key_invalid");
+    const delegation = inspectDelegatedCgroupRoot({ root: configuration.cgroupRoot });
+    const journal = await ExecutorReplayJournal.open(configuration.journalRoot, {
+      expectedOwner: { uid: 0, gid: 2200 },
+    });
+    const clock = readLinuxBootClock();
+    const recovery = await journal.recover(clock);
+    const runnerManifest = Object.freeze({
+      argv_template: Object.freeze(manifestBody.argv.map((argument) => argument.value)),
+      entrypoint: manifestBody.entrypoint,
+      environment_name_allowlist: manifestBody.environment_name_allowlist,
+      mutable_mounts: manifestBody.mutable_mounts,
+      rootfs: manifestBody.rootfs,
+      runtime_executable: manifestBody.runtime_executable,
+      schema: manifestBody.schema_semantics,
+    });
+    return Object.freeze({
+      clock,
+      delegation,
+      journal,
+      manifest: runnerManifest,
+      manifestBody,
+      manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
+      mountEvidence,
+      policy,
+      policySha256,
+      receiptKey,
+      recovery,
+      runtimeHandles: Object.freeze({ execFd, rootFd }),
+      rootfs,
+      seccompSha256,
+    });
+  } catch (error) {
+    closeSync(execFd);
+    closeSync(rootFd);
+    throw error;
+  }
+}
+
+function closePreflightRuntimeHandles(preflight) {
+  for (const fd of [preflight?.runtimeHandles?.execFd, preflight?.runtimeHandles?.rootFd]) {
+    if (Number.isSafeInteger(fd)) {
+      try { closeSync(fd); } catch {}
+    }
+  }
 }
 
 function writeJson(response, status, value) {
@@ -441,6 +621,7 @@ async function startExecutorServiceWithDependencies(configuration, preflight, de
         try { unlinkSync(configuration.socketPath); } catch (error) {
           if (error?.code !== "ENOENT") throw error;
         }
+        closePreflightRuntimeHandles(preflight);
         resolveShutdown(true);
       });
     });
@@ -452,7 +633,12 @@ async function startExecutorServiceWithDependencies(configuration, preflight, de
 export async function startExecutorService(configuration) {
   if (arguments.length !== 1) fail("executor_service_dependencies_forbidden");
   const preflight = await preflightExecutor(configuration);
-  return startExecutorServiceWithDependencies(configuration, preflight, {});
+  try {
+    return await startExecutorServiceWithDependencies(configuration, preflight, {});
+  } catch (error) {
+    closePreflightRuntimeHandles(preflight);
+    throw error;
+  }
 }
 
 export async function startExecutorServiceForTest(configuration, preflight, dependencies) {

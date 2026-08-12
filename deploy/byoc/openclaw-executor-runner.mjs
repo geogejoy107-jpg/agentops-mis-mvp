@@ -80,8 +80,12 @@ function assertPreflight(configuration, preflight) {
   }
   for (const name of [
     "delegation", "journal", "manifest", "manifestSha256", "policy", "policySha256",
-    "receiptKey", "seccompSha256",
+    "receiptKey", "runtimeHandles", "seccompSha256",
   ]) if (!preflight[name]) fail(`executor_runner_preflight_${name}_required`);
+  if (
+    !Number.isSafeInteger(preflight.runtimeHandles.execFd)
+    || !Number.isSafeInteger(preflight.runtimeHandles.rootFd)
+  ) fail("executor_runner_preflight_runtime_handles_invalid");
   if (!SHA256.test(preflight.manifestSha256)) fail("executor_runner_manifest_digest_invalid");
 }
 
@@ -125,41 +129,21 @@ function manifestAbsolutePath(runtimeRoot, virtualPath) {
 }
 
 function defaultOpenExecutionFiles(configuration, preflight, cgroup) {
-  const rootFd = openSync(
-    configuration.runtimeRoot,
-    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_CLOEXEC,
-  );
-  const executablePath = manifestAbsolutePath(configuration.runtimeRoot, preflight.manifest.runtime_executable);
-  let execFd;
   let cgroupFd;
   try {
-    execFd = openSync(
-      executablePath,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_CLOEXEC,
-    );
-    const metadata = fstatSync(execFd);
-    const relativePath = preflight.manifest.runtime_executable.slice(1);
-    const expected = preflight.manifest.files?.find((item) => item.path === relativePath);
-    if (
-      !expected
-      || !metadata.isFile()
-      || metadata.nlink !== 1
-      || metadata.uid !== expected.uid
-      || metadata.gid !== expected.gid
-      || (metadata.mode & 0o7777) !== expected.mode
-      || metadata.size !== expected.size
-      || digest(readFileSync(execFd)) !== expected.sha256
-    ) fail("executor_runner_runtime_executable_manifest_mismatch");
     cgroupFd = openSync(
       path.join(cgroup.path, "cgroup.procs"),
       constants.O_WRONLY | constants.O_NOFOLLOW | constants.O_CLOEXEC,
     );
   } catch (error) {
-    if (Number.isSafeInteger(execFd)) closeSync(execFd);
-    closeSync(rootFd);
     throw error;
   }
-  return { execFd, rootFd, cgroupFd };
+  return {
+    cgroupFd,
+    execFd: preflight.runtimeHandles.execFd,
+    requestOwnedFds: [cgroupFd],
+    rootFd: preflight.runtimeHandles.rootFd,
+  };
 }
 
 function defaultLauncherIdentity(configuration) {
@@ -496,7 +480,7 @@ async function runExecutorDispatchWithDependencies(dispatchBytesValue, configura
     }
     if (deferredError === null) result = { ...result, spawnError: result.spawnError ?? error };
   } finally {
-    for (const fd of [handles?.execFd, handles?.rootFd, handles?.cgroupFd]) {
+    for (const fd of handles?.requestOwnedFds || []) {
       if (Number.isSafeInteger(fd)) {
         try { dependencies.closeFd(fd); } catch {}
       }

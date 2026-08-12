@@ -28,13 +28,14 @@ const previousNodeEnvironment = process.env.NODE_ENV;
 process.env.NODE_ENV = "test";
 const runnerSource = readFileSync(fileURLToPath(new URL("./openclaw-executor-runner.mjs", import.meta.url)), "utf8");
 
-assert.match(runnerSource, /constants\.O_DIRECTORY \| constants\.O_NOFOLLOW \| constants\.O_CLOEXEC/);
-assert.match(runnerSource, /return \{ execFd, rootFd, cgroupFd \}/);
+assert.match(runnerSource, /execFd: preflight\.runtimeHandles\.execFd/);
+assert.match(runnerSource, /rootFd: preflight\.runtimeHandles\.rootFd/);
+assert.match(runnerSource, /requestOwnedFds: \[cgroupFd\]/);
 assert.match(runnerSource, /const argv = assertPromptTransport\(preflight\.manifest\);/);
 assert.match(runnerSource, /"--root-fd", "4"/);
 assert.match(runnerSource, /handles\.execFd, handles\.rootFd, handles\.cgroupFd, "pipe"/);
 assert.match(runnerSource, /child\.stdio\?\.\[6\]/);
-assert.match(runnerSource, /handles\?\.execFd, handles\?\.rootFd, handles\?\.cgroupFd/);
+assert.match(runnerSource, /handles\?\.requestOwnedFds \|\| \[\]/);
 
 function providerResponse(overrides = {}) {
   return {
@@ -157,6 +158,7 @@ function fixture({ outcome = "success", journal = new FakeJournal(), manifest = 
     },
     policySha256,
     receiptKey: signing.privateKey,
+    runtimeHandles: { execFd: 30, rootFd: 31 },
     seccompSha256,
   };
   const dependencies = {
@@ -171,7 +173,7 @@ function fixture({ outcome = "success", journal = new FakeJournal(), manifest = 
       rootDevice: "41",
       rootInode: "7001",
     }),
-    openExecutionFiles: async () => ({ execFd: 31, cgroupFd: 32 }),
+    openExecutionFiles: async () => ({ execFd: 30, rootFd: 31, cgroupFd: 32, requestOwnedFds: [32] }),
     closeFd: () => {},
     spawnLauncher: async (_configuration, _preflight, _handles, stdinBytes) => {
       spawnCalls += 1;

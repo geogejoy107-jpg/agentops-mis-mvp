@@ -1,10 +1,20 @@
 # OpenClaw guest-root artifact input
 
 This directory is the isolated, minimum reproducible input for an A07
-platform-specific OpenClaw guest-root OCI artifact. Its own Dockerfile is built
-as an ephemeral Linux amd64 input by the A07 foundation workflow, but it is not
-wired into the production Dockerfile, Compose topology, launcher, or release
-gate.
+platform-specific OpenClaw guest root. The dedicated
+`deploy/byoc/openclaw-phase-a07.Dockerfile` builds the Linux amd64 guest root
+from the same locked inputs on top of the generic commercial image and copies
+the complete filesystem into the executor image at
+`/opt/agentops-provider/openclaw`. The A07 Compose topology consumes that
+read-only image path directly; it no longer accepts an
+`AGENTOPS_A07_RUNTIME_PATH` host bind.
+
+This executor packaging path is intentionally Linux amd64 only for now. The
+Dockerfile selects the recorded amd64 child manifest and fails the final image
+build when `TARGETPLATFORM` is not `linux/amd64`, preventing an amd64 guest root
+from being embedded in an incompatible executor image. The separately declared
+arm64/v8 child remains an artifact input for a later native arm64 packaging
+lane; it is not silently selected here.
 
 The dependency graph is locked by `package-lock.json`. `openclaw@2026.5.4` is
 exact and its npm release integrity is recorded in both the lock and
@@ -32,9 +42,16 @@ the guest-root manifest was signed, an opened fd was handed to the launcher, a
 runtime process was spawned, a provider was called, a receipt was verified, or
 hostile-runtime isolation was achieved.
 
+The config, workspace, state, and temp mounts remain nested below the packaged
+guest root so their guest-visible paths are `/run/secrets/openclaw_config`,
+`/opt/agentops-worker/workspace`, `/run/openclaw-state`, and `/tmp` after
+`chroot(2)`. Packaging the root in the executor image removes the host runtime
+tree input, but does not by itself prove mount identity, runtime execution,
+receipt verification, or hostile-runtime isolation.
+
 The CI build only validates that this exact input can produce and import a
 platform image as uid/gid 1200 with read-only code. It does not publish an OCI
-digest, sign a release manifest, or change any committed claim.
+digest, sign a release manifest, or change any committed runtime claim.
 
 Run the offline contract with:
 

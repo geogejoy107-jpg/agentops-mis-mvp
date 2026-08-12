@@ -9,8 +9,11 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (name) => readFileSync(join(here, name), "utf8");
 const dockerfile = read("Dockerfile");
+const a07Dockerfile = read("openclaw-phase-a07.Dockerfile");
 const compose = read("compose.openclaw-phase-a07.yaml");
 const defaultCompose = read("compose.openclaw-phase-a04-a05.yaml");
+const artifact = JSON.parse(read("openclaw-runtime-artifact/artifact.json"));
+const artifactLock = JSON.parse(read("openclaw-runtime-artifact/package-lock.json"));
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
 assert.equal(
@@ -34,6 +37,38 @@ assert.match(
 );
 assert.match(dockerfile, /deploy\/byoc\/openclaw-runtime-path-resolver-contract\.mjs/);
 assert.match(dockerfile, /install -d -o 0 -g 2200 -m 0700 \/var\/lib\/agentops-openclaw\/replay/);
+assert.equal(artifact.node.version, "22.23.2");
+assert.equal(
+  artifact.platforms["linux/amd64"].base_image,
+  "node:22.23.2-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066",
+);
+assert.equal(artifact.openclaw.version, "2026.5.4");
+assert.equal(
+  artifact.openclaw.npm_integrity,
+  "sha512-nbLukSwhBr/wqFLKwLKMDCXJ0lIQYpKKJ4Zzp6ZoN6erLjRUkU5MyU5wbY5oChl6yM7TinBYZ3lRw9V6K07DSQ==",
+);
+assert.equal(artifactLock.packages["node_modules/openclaw"].version, artifact.openclaw.version);
+assert.equal(artifactLock.packages["node_modules/openclaw"].integrity, artifact.openclaw.npm_integrity);
+assert.match(
+  a07Dockerfile,
+  /FROM --platform=linux\/amd64 node:22\.23\.2-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066 AS openclaw-guest-root/,
+);
+assert.match(a07Dockerfile, /ARG COMMERCIAL_BASE_IMAGE/);
+assert.match(a07Dockerfile, /FROM \$\{COMMERCIAL_BASE_IMAGE\} AS runtime/);
+assert.match(a07Dockerfile, /ARG TARGETPLATFORM/);
+assert.match(a07Dockerfile, /test "\$\{TARGETPLATFORM\}" = "linux\/amd64"/);
+assert.match(a07Dockerfile, /openclaw-runtime-artifact\/package-lock\.json \.\//);
+assert.match(a07Dockerfile, /npm ci --ignore-scripts --omit=dev --no-audit --no-fund/);
+assert.match(a07Dockerfile, /test "\$\(node --version\)" = "v22\.23\.2"/);
+assert.match(a07Dockerfile, /\.version'\)" = "2026\.5\.4"/);
+assert.match(
+  a07Dockerfile,
+  /COPY --from=openclaw-guest-root \/ \/opt\/agentops-provider\/openclaw\//,
+);
+assert.match(a07Dockerfile, /install -d -o 1200 -g 1200 -m 0700 \/run\/openclaw-state/);
+assert.match(a07Dockerfile, /\/opt\/agentops-worker\/workspace/);
+assert.match(a07Dockerfile, /\/run\/secrets\/openclaw_config/);
+assert.doesNotMatch(dockerfile, /openclaw-guest-root|COMMERCIAL_BASE_IMAGE|TARGETPLATFORM/);
 for (const moduleName of [
   "openclaw-cgroup-v2.mjs",
   "openclaw-executor-request.mjs",
@@ -42,6 +77,9 @@ for (const moduleName of [
   "openclaw-executor-runner.mjs",
   "openclaw-executor-service.mjs",
   "openclaw-runtime-manifest.mjs",
+  "openclaw-runtime-manifest-v2.mjs",
+  "openclaw-runtime-mount-policy.mjs",
+  "openclaw-runtime-rootfs-merkle.mjs",
   "openclaw-runtime-receipt.mjs",
 ]) {
   assert.ok(dockerfile.includes(`deploy/byoc/${moduleName}`), `a07_image_module_required:${moduleName}`);
@@ -93,11 +131,16 @@ assert.match(executor, /\/opt\/agentops-provider\/openclaw\/run\/openclaw-state:
 assert.match(executor, /\/opt\/agentops-provider\/openclaw\/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777,uid=1200,gid=1200/);
 assert.match(executor, /phase_a07_private_socket:\/run\/agentops-openclaw-private:rw/);
 assert.match(executor, /networks:\s*\n\s+- provider-egress/);
-assert.equal((executor.match(/create_host_path: false/g) || []).length, 10);
+assert.equal((executor.match(/create_host_path: false/g) || []).length, 9);
 assert.doesNotMatch(executor, /control-plane|agentops-openclaw-public/);
+assert.doesNotMatch(executor, /AGENTOPS_A07_RUNTIME_PATH/);
+assert.doesNotMatch(
+  executor,
+  /target: \/opt\/agentops-provider\/openclaw\s*\n\s*read_only:/,
+  "guest_root_must_come_from_executor_image",
+);
 
 for (const target of [
-  "/opt/agentops-provider/openclaw",
   "/opt/agentops-provider/openclaw/opt/agentops-worker/workspace",
   "/opt/agentops-provider/openclaw/run/secrets/openclaw_config",
   "/run/manifests/openclaw-runtime-manifest.json",
@@ -131,6 +174,8 @@ process.stdout.write(`${JSON.stringify({
   delegated_cgroup_path_exact: true,
   persistent_replay_journal_present: true,
   native_openat2_resolver_foundation_packaged: true,
+  digest_pinned_openclaw_guest_root_packaged: true,
+  host_runtime_root_bind_required: false,
   resolved_fd_handoff_verified: false,
   runtime_path_toctou_closed: false,
   external_provider_egress_operator_attestation_required: true,

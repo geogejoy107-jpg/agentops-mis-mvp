@@ -3,12 +3,16 @@
 import assert from "node:assert/strict";
 import {
   chmodSync,
+  closeSync,
+  constants,
   existsSync,
   linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -25,6 +29,7 @@ import {
   preflightExecutor,
   startExecutorService,
   startExecutorServiceForTest,
+  verifyOpenedRuntimeExecutableBinding,
 } from "./openclaw-executor-service.mjs";
 
 const digest = (character) => character.repeat(64);
@@ -112,8 +117,47 @@ try {
 } finally {
   rmSync(launcherRoot, { recursive: true, force: true });
 }
+const executableRoot = mkdtempSync(path.join(os.tmpdir(), "agentops-executor-binding-"));
+try {
+  const executablePath = path.join(executableRoot, "node");
+  const displacedPath = path.join(executableRoot, "node.displaced");
+  writeFileSync(executablePath, "measured executable\n", { mode: 0o555 });
+  chmodSync(executablePath, 0o555);
+  const descriptor = openSync(
+    executablePath,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_CLOEXEC,
+  );
+  try {
+    const expectedOwner = { expectedUid: process.getuid(), expectedGid: process.getgid() };
+    const identity = verifyOpenedRuntimeExecutableBinding(descriptor, executablePath, expectedOwner);
+    assert.equal(identity.ino, lstatSync(executablePath, { bigint: true }).ino);
+    renameSync(executablePath, displacedPath);
+    writeFileSync(executablePath, "replacement executable\n", { mode: 0o555 });
+    chmodSync(executablePath, 0o555);
+    assert.throws(
+      () => verifyOpenedRuntimeExecutableBinding(descriptor, executablePath, expectedOwner),
+      /executor_runtime_executable_identity_changed/,
+    );
+    assert.equal(readFileSync(descriptor, "utf8"), "measured executable\n");
+  } finally {
+    closeSync(descriptor);
+  }
+} finally {
+  rmSync(executableRoot, { recursive: true, force: true });
+}
 const source = readFileSync(fileURLToPath(new URL("./openclaw-executor-service.mjs", import.meta.url)), "utf8");
-assert.match(source, /verifyCanonicalRuntimeManifestAndTree/);
+assert.match(source, /verifyCanonicalRuntimeManifestV2/);
+assert.match(source, /verifyOpenClawRuntimeMountPolicy/);
+assert.match(source, /computeOpenClawRuntimeRootfsMerkle/);
+assert.match(source, /sameRootfsMeasurement\(initialRootfs, verifiedRootfs\)/);
+assert.match(source, /sameMountEvidence\(initialMountEvidence, verifiedMountEvidence\)/);
+assert.match(source, /verifyOpenedRuntimeExecutableBinding\(execFd, executablePath\)/);
+assert.match(source, /sameRuntimeIdentity\(executableBeforeSecondMeasurement, executableAfterSecondMeasurement\)/);
+assert.match(source, /verifyRuntimeRootBinding\(rootFd, configuration\.runtimeRoot, rootBefore\)/);
+assert.match(source, /argv_template: Object\.freeze\(manifestBody\.argv\.map/);
+assert.match(source, /runtimeHandles: Object\.freeze\(\{ execFd, rootFd \}\)/);
+assert.match(source, /closePreflightRuntimeHandles\(preflight\)/);
+assert.match(source, /catch \(error\) \{\s*closeSync\(execFd\);\s*closeSync\(rootFd\);/);
 assert.match(source, /inspectDelegatedCgroupRoot/);
 assert.match(source, /ExecutorReplayJournal\.open/);
 assert.match(source, /runExecutorDispatch/);
@@ -122,6 +166,7 @@ assert.match(source, /ExecutorBusy/);
 assert.match(source, /MAX_EXECUTE_BYTES/);
 assert.match(source, /runtime_receipt_verified: false/);
 assert.doesNotMatch(source, /runtime_receipt_verified: true/);
+assert.doesNotMatch(source, /runtime_path_toctou_closed: true/);
 
 const fakePreflight = Object.freeze({ contract: true });
 const fakeExpectedOwner = Object.freeze({ expectedOwner: { uid: process.getuid(), gid: process.getgid() } });
@@ -301,7 +346,11 @@ console.log(JSON.stringify({
   strict_configuration_verified: true,
   immutable_executor_image_reference_bound: true,
   root_owned_single_link_launcher_metadata_required: true,
-  signed_manifest_and_exact_tree_preflight_present: true,
+  signed_manifest_v2_and_rootfs_merkle_preflight_present: true,
+  nested_mount_policy_preflight_present: true,
+  retained_runtime_root_and_executable_fds_present: true,
+  startup_mount_and_rootfs_double_measurement_verified: true,
+  opened_executable_identity_binding_verified: true,
   cgroup_delegation_preflight_present: true,
   crash_recovery_preflight_present: true,
   production_preflight_is_internal_and_noninjectable: true,
@@ -318,5 +367,6 @@ console.log(JSON.stringify({
   injected_runner_success_state_transition_verified: true,
   real_runtime_process_spawned: false,
   runtime_receipt_verified: false,
+  runtime_path_toctou_closed: false,
   hostile_runtime_isolation_verified: false,
 }));

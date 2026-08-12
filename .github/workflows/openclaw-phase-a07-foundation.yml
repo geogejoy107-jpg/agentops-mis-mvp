@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/workflows/openclaw-phase-a07-foundation.yml"
       - "deploy/byoc/Dockerfile"
+      - "deploy/byoc/openclaw-phase-a07.Dockerfile"
       - "deploy/byoc/compose.openclaw-phase-a07.yaml"
       - "deploy/byoc/openclaw-boundary-supervisor*.mjs"
       - "deploy/byoc/openclaw-broker-*.mjs"
@@ -13,6 +14,7 @@ on:
       - "deploy/byoc/openclaw-executor-*.mjs"
       - "deploy/byoc/openclaw-runtime-launcher*"
       - "deploy/byoc/openclaw-runtime-guest-root*.mjs"
+      - "deploy/byoc/openclaw-runtime-real-runner-contract.mjs"
       - "deploy/byoc/openclaw-runtime-artifact/**"
       - "deploy/byoc/openclaw-runtime-manifest*.mjs"
       - "deploy/byoc/openclaw-stdin-provider*.mjs"
@@ -50,6 +52,8 @@ jobs:
           node deploy/byoc/openclaw-executor-request-contract.mjs
           node deploy/byoc/openclaw-runtime-manifest-contract.mjs
           node deploy/byoc/openclaw-runtime-manifest-v2-contract.mjs
+          node deploy/byoc/openclaw-runtime-rootfs-merkle-contract.mjs
+          node deploy/byoc/openclaw-runtime-mount-policy-contract.mjs
           node deploy/byoc/openclaw-runtime-artifact/contract.mjs
           node deploy/byoc/openclaw-cgroup-v2-contract.mjs
           node deploy/byoc/openclaw-executor-protocol-contract.mjs
@@ -58,6 +62,7 @@ jobs:
           node deploy/byoc/openclaw-stdin-provider-contract.mjs
           node deploy/byoc/openclaw-runtime-path-resolver-contract.mjs --source-audit-only
           node deploy/byoc/openclaw-runtime-guest-root-contract.mjs
+          node deploy/byoc/openclaw-runtime-real-runner-contract.mjs
           node deploy/byoc/openclaw-executor-service-contract.mjs
           node deploy/byoc/openclaw-boundary-supervisor-contract.mjs
           node deploy/byoc/openclaw-broker-contract.mjs
@@ -72,7 +77,7 @@ jobs:
           set -euo pipefail
           image="agentops-openclaw-guest-root-input:${GITHUB_SHA}"
           node_image="node:22.23.2-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066"
-          timeout 20m docker build --pull --platform linux/amd64 \
+          timeout 20m docker build --platform linux/amd64 \
             --file deploy/byoc/openclaw-runtime-artifact/Dockerfile \
             --build-arg "NODE_IMAGE=${node_image}" \
             --tag "${image}" .
@@ -150,6 +155,126 @@ jobs:
             and .hostile_runtime_isolation_verified == false
           ' "${guest_root_receipt}" >/dev/null
 
+      - name: Run strict default runner against exported OpenClaw guest root
+        run: |
+          set -euo pipefail
+          guest_image="agentops-openclaw-guest-root-input:${GITHUB_SHA}"
+          launcher_image="agentops-a07-launcher-test:${GITHUB_SHA}"
+          scratch="${RUNNER_TEMP}/a07-real-runner"
+          rootfs="${scratch}/rootfs"
+          upper="${scratch}/upper"
+          work="${scratch}/work"
+          merged="${scratch}/merged"
+          config="${scratch}/openclaw.json"
+          mkdir -p "${rootfs}" "${upper}" "${work}" "${merged}"
+          container_id="$(docker create "${guest_image}")"
+          trap 'docker rm -f "${container_id}" >/dev/null 2>&1 || true' EXIT
+          docker export "${container_id}" | tar -x -C "${rootfs}"
+          runtime_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "${guest_image}" 2>/dev/null | sed -n 's/.*@\(sha256:[a-f0-9]\{64\}\)$/\1/p')"
+          if [ -z "${runtime_digest}" ]; then
+            runtime_digest="sha256:$(docker image inspect --format '{{.Id}}' "${guest_image}" | sed 's/^sha256://')"
+          fi
+          cat > "${config}" <<'JSON'
+          {
+            "agents": {
+              "defaults": {
+                "model": { "primary": "contract/contract-dynamic-model" },
+                "skipBootstrap": true,
+                "workspace": "/opt/agentops-worker/workspace"
+              },
+              "list": [{ "id": "main" }]
+            },
+            "models": {
+              "mode": "replace",
+              "providers": {
+                "contract": {
+                  "api": "openai-completions",
+                  "apiKey": "contract-provider-key",
+                  "baseUrl": "http://127.0.0.1:18081/v1",
+                  "models": [{
+                    "contextWindow": 8192,
+                    "cost": { "cacheRead": 0, "cacheWrite": 0, "input": 0, "output": 0 },
+                    "id": "contract-dynamic-model",
+                    "input": ["text"],
+                    "maxTokens": 1024,
+                    "name": "Contract Dynamic Model",
+                    "reasoning": false
+                  }]
+                }
+              }
+            }
+          }
+          JSON
+          chmod 0444 "${config}"
+          docker run --rm --privileged --cgroupns private --network host \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777 \
+            --volume "${GITHUB_WORKSPACE}:/workspace:ro" \
+            --volume "${rootfs}:/contract/lower:ro" \
+            --volume "${upper}:/contract/upper:rw" \
+            --volume "${work}:/contract/work:rw" \
+            --volume "${merged}:/contract/merged:rw" \
+            --volume "${config}:/contract/config:ro" \
+            --workdir /workspace \
+            --entrypoint /bin/sh \
+            "${launcher_image}" -ec '
+              mount -t overlay overlay -o lowerdir=/contract/lower,upperdir=/contract/upper,workdir=/contract/work /contract/merged
+              mkdir -p \
+                /contract/merged/opt/agentops/real-runner \
+                /contract/merged/opt/agentops-worker/workspace \
+                /contract/merged/run/openclaw-state \
+                /contract/merged/run/secrets \
+                /contract/merged/tmp
+              cp /workspace/deploy/byoc/openclaw-runtime-real-runner-contract.mjs \
+                /contract/merged/opt/agentops/real-runner/openclaw-runtime-real-runner-contract.mjs
+              chmod 0555 /contract/merged/opt/agentops/real-runner/openclaw-runtime-real-runner-contract.mjs
+              touch /agentops-host-only-canary
+              mount -t tmpfs -o uid=0,gid=0,mode=0555,nosuid,nodev,noexec,size=16m tmpfs /contract/merged/opt/agentops-worker/workspace
+              printf "workspace-visible\n" > /contract/merged/opt/agentops-worker/workspace/contract-marker
+              chmod 0444 /contract/merged/opt/agentops-worker/workspace/contract-marker
+              mount -t tmpfs -o uid=1200,gid=1200,mode=0700,nosuid,nodev,noexec,size=64m tmpfs /contract/merged/run/openclaw-state
+              mount -t tmpfs -o uid=1200,gid=1200,mode=1777,nosuid,nodev,noexec,size=64m tmpfs /contract/merged/tmp
+              mount --bind /contract/config /contract/merged/run/secrets/openclaw_config
+              mount -o remount,bind,ro,nosuid,nodev,noexec /contract/merged/run/secrets/openclaw_config
+              test -f /sys/fs/cgroup/cgroup.controllers
+              grep -qw cpu /sys/fs/cgroup/cgroup.controllers
+              grep -qw io /sys/fs/cgroup/cgroup.controllers
+              grep -qw memory /sys/fs/cgroup/cgroup.controllers
+              grep -qw pids /sys/fs/cgroup/cgroup.controllers
+              mkdir /sys/fs/cgroup/agentops-contract-host-processes
+              while IFS= read -r pid; do
+                test -n "${pid}"
+                echo "${pid}" > /sys/fs/cgroup/agentops-contract-host-processes/cgroup.procs
+              done < /sys/fs/cgroup/cgroup.procs
+              echo "+cpu +io +memory +pids" > /sys/fs/cgroup/cgroup.subtree_control
+              mkdir /sys/fs/cgroup/agentops-openclaw-executor
+              chmod 0700 /sys/fs/cgroup/agentops-openclaw-executor
+              echo "+cpu +io +memory +pids" > /sys/fs/cgroup/agentops-openclaw-executor/cgroup.subtree_control
+              io_device="$(awk '\''$3 ~ /^[0-9]+$/ && $3 > 0 && $4 !~ /^(loop|ram|zram)/ { print $1 ":" $2; exit }'\'' /proc/partitions)"
+              test -n "${io_device}"
+              export AGENTOPS_REAL_RUNNER_GUEST_ROOT=/contract/merged
+              export AGENTOPS_REAL_RUNNER_CGROUP_ROOT=/sys/fs/cgroup/agentops-openclaw-executor
+              export AGENTOPS_REAL_RUNNER_LAUNCHER=/agentops-openclaw-runtime-launcher
+              export AGENTOPS_REAL_RUNNER_GUEST_CONFIG=/contract/config
+              export AGENTOPS_REAL_RUNNER_IMAGE_DIGEST="'"${runtime_digest}"'"
+              export AGENTOPS_REAL_RUNNER_IO_DEVICE="${io_device}"
+              node deploy/byoc/openclaw-runtime-real-runner-contract.mjs --require-real-runner
+            ' | tee "${scratch}/receipt.json"
+          jq -e '
+            .ok == true
+            and .real_default_open_spawn_executed == true
+            and .dynamic_node_openclaw_entrypoint_executed == true
+            and .guest_config_state_workspace_tmp_visible == true
+            and .host_path_invisible == true
+            and .runtime_uid_gid_1200_verified == true
+            and .status_handshake_r_verified == true
+            and .fake_handles_injected == false
+            and .fixed_launcher_environment_verified == true
+            and .instrumentation_overlay == true
+            and .provider_call_observed == true
+            and .runtime_path_toctou_closed == false
+            and .runtime_handles_closed_in_finally == true
+          ' "${scratch}/receipt.json" >/dev/null
+
       - name: Run Linux openat2 path resolver contract
         run: |
           set -euo pipefail
@@ -181,18 +306,38 @@ jobs:
       - name: Build exact candidate image
         run: |
           set -euo pipefail
+          base_image="agentops-commercial-base:${GITHUB_SHA}"
           image="agentops-a07:${GITHUB_SHA}"
           timeout 25m docker build --pull --platform linux/amd64 \
             --file deploy/byoc/Dockerfile \
             --build-arg "AGENTOPS_BUILD_IDENTITY=openclaw-a07-foundation-${GITHUB_SHA}" \
             --build-arg "AGENTOPS_SOURCE_REVISION=${GITHUB_SHA}" \
+            --tag "${base_image}" .
+          timeout 20m docker build --platform linux/amd64 \
+            --file deploy/byoc/openclaw-phase-a07.Dockerfile \
+            --build-arg "COMMERCIAL_BASE_IMAGE=${base_image}" \
             --tag "${image}" .
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image}")" = "${GITHUB_SHA}"
-          docker run --rm --entrypoint /bin/sh "${image}" -c '
+          docker run --rm --user 0:0 --entrypoint /bin/sh "${image}" -c '
             test -x /usr/local/bin/agentops-openclaw-runtime-launcher
             test -x /usr/local/bin/agentops-openclaw-runtime-path-resolver
             test -r /usr/local/lib/agentops/openclaw-executor-runner.mjs
             test -r /usr/local/lib/agentops/openclaw-executor-receipt.mjs
+            test -x /opt/agentops-provider/openclaw/usr/local/bin/node
+            test -r /opt/agentops-provider/openclaw/opt/openclaw/node_modules/openclaw/package.json
+            node --input-type=module -e '\''
+              import { computeOpenClawRuntimeRootfsMerkle } from "/usr/local/lib/agentops/openclaw-runtime-rootfs-merkle.mjs";
+              const measurement = computeOpenClawRuntimeRootfsMerkle(
+                "/opt/agentops-provider/openclaw",
+                [
+                  "/opt/agentops-worker/workspace",
+                  "/run/openclaw-state",
+                  "/run/secrets/openclaw_config",
+                  "/tmp",
+                ],
+              );
+              if (!/^[a-f0-9]{64}$/.test(measurement.merkle_sha256)) process.exit(1);
+            '\''
             ! command -v cc
             ! command -v gcc
           '
