@@ -72,8 +72,11 @@ contract_review:
 
 open_blockers:
   - id: openjiuwen_runtime_dependency
-    status: NOT_INSTALLED
-    effect: WP2 real runtime compatibility and domain E2E remain unverified
+    status: LOCAL_RUNTIME_SMOKE_ONLY
+    effect: >-
+      Exact openJiuwen 0.1.16 wheel install/import and upstream TeamRuntime P2P
+      smoke passed locally, but no governed provider, MIS gateway or product
+      runtime receipt exists; WP2 real runtime and domain E2E remain unverified.
   - id: research_gpu_slurm
     status: UNKNOWN
     effect: real remote GPU and Slurm acceptance remain unverified
@@ -86,6 +89,14 @@ open_blockers:
   - id: governed_production_deploy
     status: AUTHORIZATION_REQUIRED
     effect: deployment, readback, and release receipt are not authorized yet
+
+candidate_admission:
+  c0_shared_runtime: FAILED_INDEPENDENT_REVIEW_FIXING
+  c1_research: FAILED_INDEPENDENT_REVIEW_FIXING
+  c2_career: FAILED_INDEPENDENT_REVIEW_FIXING
+  c3_quant: FRESH_INDEPENDENT_REVIEW_RUNNING
+  implementation_merged: false
+  mis_pass_written: false
 
 source_pack_sha256: f0b39687e21157b01d93c22c9820728c9a8a450d94f8ee22ffbc485decdd813b
 canonical: false
