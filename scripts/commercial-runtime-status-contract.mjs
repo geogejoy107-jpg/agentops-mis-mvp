@@ -46,6 +46,8 @@ function receipt() {
     python_worker_started: false,
     python_api_started: false,
     real_runtime_execution_performed: true,
+    openclaw_provider_service_execution_verified: true,
+    openclaw_provider_transport: "unix_socket",
     manifest_authority_guards_passed: true,
     real_run_bound_delivery_decisions_completed: true,
     worker_created_delivery_approvals: true,
@@ -54,6 +56,22 @@ function receipt() {
     adapters: ["hermes", "openclaw"],
     workers: { hermes: worker("hermes"), openclaw: worker("openclaw") },
     human_reviews: { hermes: review, openclaw: review },
+    runtime_dependency_identity: {
+      openclaw_binary_sha256: "b".repeat(64),
+      openclaw_provider_entrypoint_sha256: "c".repeat(64),
+    },
+    provider_services: {
+      openclaw: {
+        provider_process_started: true,
+        provider_socket_ready: true,
+        provider_process_stopped: true,
+        provider_process_returncode: 0,
+        provider_socket_removed: true,
+        provider_temp_root_removed: true,
+        provider_agent_token_environment_omitted: true,
+        raw_provider_output_omitted: true,
+      },
+    },
   };
 }
 
@@ -151,6 +169,11 @@ process.stdout.write(response + "\\n");
   assert.equal(valid.payload.receipt_sha256,
     digest(JSON.stringify(receipt())));
   assert.equal(valid.payload.evidence.hermes.provider_call_performed, true);
+  assert.equal(valid.payload.evidence.openclaw.provider_transport, "unix_socket");
+  assert.equal(
+    valid.payload.evidence.openclaw.provider_service_cleanup_verified,
+    true,
+  );
 
   const published = run([
     "publish", "--receipt", receiptPath, "--sha", SHA, "--repo", REPOSITORY,
@@ -242,6 +265,42 @@ process.stdout.write(response + "\\n");
   assert.equal(python.status, 1);
   assert.equal(python.payload.error, "runtime_status_receipt_shared_evidence_invalid");
 
+  const directOpenClawReceipt = receipt();
+  directOpenClawReceipt.openclaw_provider_transport = null;
+  const directOpenClaw = run(
+    ["validate", "--receipt", receiptPath, "--sha", SHA],
+    directOpenClawReceipt,
+  );
+  assert.equal(directOpenClaw.status, 1);
+  assert.equal(
+    directOpenClaw.payload.error,
+    "runtime_status_receipt_shared_evidence_invalid",
+  );
+
+  const uncleanProviderReceipt = receipt();
+  uncleanProviderReceipt.provider_services.openclaw.provider_socket_removed = false;
+  const uncleanProvider = run(
+    ["validate", "--receipt", receiptPath, "--sha", SHA],
+    uncleanProviderReceipt,
+  );
+  assert.equal(uncleanProvider.status, 1);
+  assert.equal(
+    uncleanProvider.payload.error,
+    "runtime_status_receipt_shared_evidence_invalid",
+  );
+
+  const unboundRuntimeReceipt = receipt();
+  delete unboundRuntimeReceipt.runtime_dependency_identity.openclaw_binary_sha256;
+  const unboundRuntime = run(
+    ["validate", "--receipt", receiptPath, "--sha", SHA],
+    unboundRuntimeReceipt,
+  );
+  assert.equal(unboundRuntime.status, 1);
+  assert.equal(
+    unboundRuntime.payload.error,
+    "runtime_status_receipt_shared_evidence_invalid",
+  );
+
   process.stdout.write(`${JSON.stringify({
     ok: true,
     contract: "agentops_commercial_runtime_exact_head_status_contract_v2",
@@ -252,6 +311,8 @@ process.stdout.write(response + "\\n");
     repository_owner_trust_model_explicit: true,
     provider_signed_attestation_claimed: false,
     real_provider_required: true,
+    openclaw_sidecar_receipt_required: true,
+    openclaw_runtime_identity_required: true,
     typescript_worker_required: true,
     hermes_openclaw_contexts_required: true,
     credentials_omitted: true,

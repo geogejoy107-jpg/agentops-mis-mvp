@@ -200,6 +200,7 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
+          inactive_openclaw_provider_bin_sha256="$(printf '%064d' 0)"
           {
             printf 'AGENTOPS_IMAGE=%s\n' "${AGENTOPS_CROSS_SCHEMA_OLD_IMAGE}"
             printf 'AGENTOPS_BIND_ADDRESS=127.0.0.1\n'
@@ -218,6 +219,8 @@ jobs:
             printf 'AGENTOPS_BUILD_IDENTITY=target-v11-%s-%s\n' \
               "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}"
             printf 'AGENTOPS_SOURCE_REVISION=%s\n' "${GITHUB_SHA}"
+            printf 'AGENTOPS_OPENCLAW_PROVIDER_BIN_SHA256=%s\n' \
+              "${inactive_openclaw_provider_bin_sha256}"
             printf 'AGENTOPS_BIND_ADDRESS=127.0.0.1\n'
             printf 'AGENTOPS_PORT=3001\n'
             printf 'AGENTOPS_ALLOWED_ORIGINS=http://127.0.0.1:3001\n'

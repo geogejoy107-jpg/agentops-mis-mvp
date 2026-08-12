@@ -141,6 +141,18 @@ async function run() {
   );
   assert.match(byoc, /timeout-minutes:\s+45/);
   assert(byoc.includes(REGISTRY_IMAGE));
+  const composeConfigurationStep = byoc.match(
+    /- name: Create ephemeral BYOC configuration\n([\s\S]*?)(?=\n\s+- name:)/,
+  )?.[1] || "";
+  assert.notEqual(composeConfigurationStep, "");
+  assert.match(
+    composeConfigurationStep,
+    /inactive_openclaw_provider_bin_sha256="\$\(printf '%064d' 0\)"/,
+  );
+  assert.match(
+    composeConfigurationStep,
+    /printf 'AGENTOPS_OPENCLAW_PROVIDER_BIN_SHA256=%s\\n' \\\n\s+"\$\{inactive_openclaw_provider_bin_sha256\}"[\s\S]*?\} > "\$\{env_file\}"/,
+  );
   assert.doesNotMatch(byoc, /^\s+registry:2\s*$/m);
   assert.match(byoc, /docker compose[\s\S]+build --pull migrate/);
   assert.match(byoc, /up --detach --no-build --wait --wait-timeout 300 control-plane/);
@@ -226,6 +238,18 @@ async function run() {
   );
   assert.match(crossSchema, /timeout-minutes:\s+60/);
   assert(crossSchema.includes(REGISTRY_IMAGE));
+  const crossSchemaConfigurationStep = crossSchema.match(
+    /- name: Bind historical and target Compose configurations\n([\s\S]*?)(?=\n\s+- name:)/,
+  )?.[1] || "";
+  assert.notEqual(crossSchemaConfigurationStep, "");
+  assert.match(
+    crossSchemaConfigurationStep,
+    /inactive_openclaw_provider_bin_sha256="\$\(printf '%064d' 0\)"/,
+  );
+  assert.match(
+    crossSchemaConfigurationStep,
+    /printf 'AGENTOPS_IMAGE=%s\\n' "\$\{AGENTOPS_CROSS_SCHEMA_TARGET_IMAGE\}"[\s\S]*?printf 'AGENTOPS_OPENCLAW_PROVIDER_BIN_SHA256=%s\\n' \\\n\s+"\$\{inactive_openclaw_provider_bin_sha256\}"[\s\S]*?\} > "\$\{AGENTOPS_CROSS_SCHEMA_TARGET_ENV_FILE\}"/,
+  );
   assert.match(crossSchema, /historical-v9\.Dockerfile/);
   assert.match(crossSchema, /deploy\/byoc\/Dockerfile/);
   assert.match(crossSchema, /cross-schema-v9-v11-acceptance\.sh/);
@@ -287,6 +311,7 @@ async function run() {
     retained_postgres_volume_verified: true,
     rollback_data_authority_verified: true,
     real_byoc_cross_schema_upgrade_gate_in_ci: true,
+    byoc_required_compose_interpolation_bound: true,
     aggregate_commercial_promotion_gate_in_ci: true,
     historical_byoc_image_inputs_pinned: true,
     byoc_upgrade_rollback_claimed: false,

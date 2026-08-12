@@ -52,6 +52,9 @@ function validateReceipt(path, sha) {
   }
   const workers = object(receipt.workers);
   const reviews = object(receipt.human_reviews);
+  const providerServices = object(receipt.provider_services);
+  const openClawProvider = object(providerServices.openclaw);
+  const runtimeDependencyIdentity = object(receipt.runtime_dependency_identity);
   const adapters = Array.isArray(receipt.adapters) ? receipt.adapters : [];
   const sharedChecks = [
     receipt.ok === true,
@@ -70,6 +73,22 @@ function validateReceipt(path, sha) {
     receipt.worker_created_delivery_approvals === true,
     receipt.run_cost_reservations_settled === true,
     receipt.fixture_cleanup_verified_before_success === true,
+    receipt.openclaw_provider_service_execution_verified === true,
+    receipt.openclaw_provider_transport === "unix_socket",
+    openClawProvider.provider_process_started === true,
+    openClawProvider.provider_socket_ready === true,
+    openClawProvider.provider_process_stopped === true,
+    openClawProvider.provider_process_returncode === 0,
+    openClawProvider.provider_socket_removed === true,
+    openClawProvider.provider_temp_root_removed === true,
+    openClawProvider.provider_agent_token_environment_omitted === true,
+    openClawProvider.raw_provider_output_omitted === true,
+    /^[a-f0-9]{64}$/.test(String(
+      runtimeDependencyIdentity.openclaw_binary_sha256 || "",
+    )),
+    /^[a-f0-9]{64}$/.test(String(
+      runtimeDependencyIdentity.openclaw_provider_entrypoint_sha256 || "",
+    )),
     Object.keys(CONTEXTS).every((runtime) => adapters.includes(runtime)),
   ];
   if (sharedChecks.some((passed) => !passed)) {
@@ -100,6 +119,10 @@ function validateReceipt(path, sha) {
       dry_run: false,
       delivery_review_completed: true,
       cost_reservation_settled: true,
+      ...(runtime === "openclaw" ? {
+        provider_transport: "unix_socket",
+        provider_service_cleanup_verified: true,
+      } : {}),
     };
   }
   return {
