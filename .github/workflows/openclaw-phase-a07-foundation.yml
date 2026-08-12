@@ -212,17 +212,15 @@ jobs:
           docker run --rm --privileged --cgroupns private --network host \
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777 \
             --volume "${GITHUB_WORKSPACE}:/workspace:ro" \
-            --volume "${rootfs}:/contract/lower:ro" \
-            --volume "${upper}:/contract/upper:rw" \
-            --volume "${work}:/contract/work:rw" \
-            --volume "${merged}:/contract/merged:rw" \
-            --volume "${config}:/contract/config:ro" \
+            --volume "${scratch}:/contract:rw" \
             --workdir /workspace \
             --entrypoint /bin/sh \
             "${launcher_image}" -ec '
               stage=overlay_mount
               trap '\''status=$?; trap - 0; if [ "${status}" -ne 0 ]; then printf "a07_real_runner_stage=%s\n" "${stage}" >&2; fi; exit "${status}"'\'' 0
-              mount -t overlay overlay -o lowerdir=/contract/lower,upperdir=/contract/upper,workdir=/contract/work /contract/merged
+              mount --bind /contract/rootfs /contract/rootfs
+              mount -o remount,bind,ro,nosuid,nodev /contract/rootfs
+              mount -t overlay overlay -o lowerdir=/contract/rootfs,upperdir=/contract/upper,workdir=/contract/work /contract/merged
               stage=guest_mounts
               mkdir -p \
                 /contract/merged/opt/agentops/real-runner \
@@ -239,7 +237,7 @@ jobs:
               chmod 0444 /contract/merged/opt/agentops-worker/workspace/contract-marker
               mount -t tmpfs -o uid=1200,gid=1200,mode=0700,nosuid,nodev,noexec,size=64m tmpfs /contract/merged/run/openclaw-state
               mount -t tmpfs -o uid=1200,gid=1200,mode=1777,nosuid,nodev,noexec,size=64m tmpfs /contract/merged/tmp
-              mount --bind /contract/config /contract/merged/run/secrets/openclaw_config
+              mount --bind /contract/openclaw.json /contract/merged/run/secrets/openclaw_config
               mount -o remount,bind,ro,nosuid,nodev,noexec /contract/merged/run/secrets/openclaw_config
               stage=cgroup_delegation
               test -f /sys/fs/cgroup/cgroup.controllers
@@ -262,7 +260,7 @@ jobs:
               export AGENTOPS_REAL_RUNNER_GUEST_ROOT=/contract/merged
               export AGENTOPS_REAL_RUNNER_CGROUP_ROOT=/sys/fs/cgroup/agentops-openclaw-executor
               export AGENTOPS_REAL_RUNNER_LAUNCHER=/agentops-openclaw-runtime-launcher
-              export AGENTOPS_REAL_RUNNER_GUEST_CONFIG=/contract/config
+              export AGENTOPS_REAL_RUNNER_GUEST_CONFIG=/contract/openclaw.json
               export AGENTOPS_REAL_RUNNER_IMAGE_DIGEST="'"${runtime_digest}"'"
               export AGENTOPS_REAL_RUNNER_IO_DEVICE="${io_device}"
               node deploy/byoc/openclaw-runtime-real-runner-contract.mjs --require-real-runner
