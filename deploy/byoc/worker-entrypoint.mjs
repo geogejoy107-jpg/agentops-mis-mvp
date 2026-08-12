@@ -191,7 +191,8 @@ function workerCommand(runtime) {
   }
   const command = [
     "node",
-    "node_modules/tsx/dist/cli.mjs",
+    "--import",
+    "tsx",
     "scripts/commercial-worker.ts",
     "--daemon",
     "--confirm-run",

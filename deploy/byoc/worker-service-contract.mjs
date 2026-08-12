@@ -80,6 +80,8 @@ try {
   assert.match(dockerfile, /openclaw-provider-contract\.mjs/);
   const entrypoint = readFileSync(join(moduleDirectory, "worker-entrypoint.mjs"), "utf8");
   assert.match(entrypoint, /detached: true/);
+  assert.match(entrypoint, /"--import",\s*\n\s*"tsx"/);
+  assert.doesNotMatch(entrypoint, /tsx\/dist\/cli\.mjs/);
   assert.match(entrypoint, /process\.kill\(-child\.pid, signal\)/);
   assert.match(entrypoint, /signalChild\(child, signal\)/);
   assert.match(entrypoint, /signalChildGroup\(child, "SIGKILL"\)/);

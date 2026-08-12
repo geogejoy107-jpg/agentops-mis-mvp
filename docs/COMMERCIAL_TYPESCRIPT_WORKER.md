@@ -128,10 +128,12 @@ Do not use that gate for hosted or shared deployments.
 The daemon uses the same one-task transaction repeatedly and stops cleanly on
 `SIGINT`, `SIGTERM`, or `SIGHUP`. Provider calls and retry/poll sleeps receive a
 cancellation signal, while post-provider failure evidence is still reconciled.
-The BYOC Worker supervisor forwards shutdown to its TypeScript Worker process
-group and applies a bounded forced-stop fallback inside the Compose grace
-period. Under the OpenClaw profile, Compose supervises the provider sidecar
-independently and the Worker cancels provider work over the Unix socket.
+The BYOC Worker supervisor first sends shutdown to the TypeScript Worker process
+that owns the cancellation handler. If it does not exit in time, the supervisor
+applies a bounded forced stop to the complete detached process group inside the
+Compose grace period. Under the OpenClaw profile, Compose supervises the
+provider sidecar independently and the Worker cancels provider work over the
+Unix socket.
 
 ```bash
 npm run worker:commercial -- \
