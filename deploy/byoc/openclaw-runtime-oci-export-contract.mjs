@@ -592,9 +592,16 @@ function createImageContext(context) {
 
 function createExtensionRequiredContext(context) {
   const root = path.join(context, "rootfs");
-  mkdirSync(path.join(root, "bin"), { recursive: true, mode: 0o555 });
-  mkdirSync(path.join(root, "opt/agentops-worker/workspace"), { recursive: true, mode: 0o555 });
-  mkdirSync(path.join(root, "run/secrets"), { recursive: true, mode: 0o555 });
+  for (const directory of [
+    "bin",
+    "opt/agentops-worker/workspace",
+    "run/openclaw-state",
+    "run/secrets",
+    "tmp",
+  ]) {
+    mkdirSync(path.join(root, directory), { recursive: true, mode: 0o555 });
+    chmodSync(path.join(root, directory), 0o555);
+  }
   writeFileSync(path.join(root, "bin/runtime"), "extension-contract-v1\n", { mode: 0o555 });
   chmodSync(path.join(root, "bin/runtime"), 0o555);
   writeFileSync(path.join(root, "run/secrets/openclaw_config"), "", { mode: 0o400 });
