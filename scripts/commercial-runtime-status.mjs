@@ -55,10 +55,11 @@ function validateReceipt(path, sha) {
   const providerServices = object(receipt.provider_services);
   const openClawProvider = object(providerServices.openclaw);
   const runtimeDependencyIdentity = object(receipt.runtime_dependency_identity);
+  const nextProcessStop = object(receipt.next_process_stop);
   const adapters = Array.isArray(receipt.adapters) ? receipt.adapters : [];
   const sharedChecks = [
     receipt.ok === true,
-    receipt.contract === "nextjs_postgres_real_worker_human_review_v5",
+    receipt.contract === "nextjs_postgres_real_worker_human_review_v6",
     String(receipt.source_commit || "").toLowerCase() === sha,
     receipt.tracked_worktree_clean === true,
     receipt.tracked_worktree_unchanged === true,
@@ -67,6 +68,20 @@ function validateReceipt(path, sha) {
     receipt.typescript_worker_started === true,
     receipt.python_worker_started === false,
     receipt.python_api_started === false,
+    receipt.postgres_dsn_source === "owner_only_file",
+    receipt.postgres_dsn_argv_omitted === true,
+    receipt.postgres_dsn_input_boundary_verified === true,
+    receipt.postgres_dsn_loopback_required === true,
+    receipt.postgres_dsn_source_unchanged === true,
+    receipt.direct_database_credentials_in_child_environment_omitted === true,
+    receipt.ephemeral_credential_files_removed === true,
+    nextProcessStop.stopped === true,
+    nextProcessStop.process_group_empty === true,
+    Array.isArray(nextProcessStop.errors) && nextProcessStop.errors.length === 0,
+    receipt.database_role_credentials_distinct === true,
+    receipt.credential_files_purpose_isolated === true,
+    receipt.credential_files_stage_scoped === true,
+    receipt.same_uid_os_credential_isolation_claimed === false,
     receipt.real_runtime_execution_performed === true,
     receipt.manifest_authority_guards_passed === true,
     receipt.real_run_bound_delivery_decisions_completed === true,

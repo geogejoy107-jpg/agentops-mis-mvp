@@ -36,7 +36,7 @@ function receipt() {
   };
   return {
     ok: true,
-    contract: "nextjs_postgres_real_worker_human_review_v5",
+    contract: "nextjs_postgres_real_worker_human_review_v6",
     source_commit: SHA,
     tracked_worktree_clean: true,
     tracked_worktree_unchanged: true,
@@ -45,6 +45,22 @@ function receipt() {
     typescript_worker_started: true,
     python_worker_started: false,
     python_api_started: false,
+    postgres_dsn_source: "owner_only_file",
+    postgres_dsn_argv_omitted: true,
+    postgres_dsn_input_boundary_verified: true,
+    postgres_dsn_loopback_required: true,
+    postgres_dsn_source_unchanged: true,
+    direct_database_credentials_in_child_environment_omitted: true,
+    ephemeral_credential_files_removed: true,
+    next_process_stop: {
+      stopped: true,
+      process_group_empty: true,
+      errors: [],
+    },
+    database_role_credentials_distinct: true,
+    credential_files_purpose_isolated: true,
+    credential_files_stage_scoped: true,
+    same_uid_os_credential_isolation_claimed: false,
     real_runtime_execution_performed: true,
     openclaw_provider_service_execution_verified: true,
     openclaw_provider_transport: "unix_socket",
@@ -265,6 +281,55 @@ process.stdout.write(response + "\\n");
   assert.equal(python.status, 1);
   assert.equal(python.payload.error, "runtime_status_receipt_shared_evidence_invalid");
 
+  const argvCredentialReceipt = receipt();
+  argvCredentialReceipt.postgres_dsn_source = "argument";
+  argvCredentialReceipt.postgres_dsn_argv_omitted = false;
+  const argvCredential = run(
+    ["validate", "--receipt", receiptPath, "--sha", SHA],
+    argvCredentialReceipt,
+  );
+  assert.equal(argvCredential.status, 1);
+  assert.equal(
+    argvCredential.payload.error,
+    "runtime_status_receipt_shared_evidence_invalid",
+  );
+
+  const retainedCredentialFilesReceipt = receipt();
+  retainedCredentialFilesReceipt.ephemeral_credential_files_removed = false;
+  const retainedCredentialFiles = run(
+    ["validate", "--receipt", receiptPath, "--sha", SHA],
+    retainedCredentialFilesReceipt,
+  );
+  assert.equal(retainedCredentialFiles.status, 1);
+  assert.equal(
+    retainedCredentialFiles.payload.error,
+    "runtime_status_receipt_shared_evidence_invalid",
+  );
+
+  const overclaimedIsolationReceipt = receipt();
+  overclaimedIsolationReceipt.same_uid_os_credential_isolation_claimed = true;
+  const overclaimedIsolation = run(
+    ["validate", "--receipt", receiptPath, "--sha", SHA],
+    overclaimedIsolationReceipt,
+  );
+  assert.equal(overclaimedIsolation.status, 1);
+  assert.equal(
+    overclaimedIsolation.payload.error,
+    "runtime_status_receipt_shared_evidence_invalid",
+  );
+
+  const descendantStillRunningReceipt = receipt();
+  descendantStillRunningReceipt.next_process_stop.process_group_empty = false;
+  const descendantStillRunning = run(
+    ["validate", "--receipt", receiptPath, "--sha", SHA],
+    descendantStillRunningReceipt,
+  );
+  assert.equal(descendantStillRunning.status, 1);
+  assert.equal(
+    descendantStillRunning.payload.error,
+    "runtime_status_receipt_shared_evidence_invalid",
+  );
+
   const directOpenClawReceipt = receipt();
   directOpenClawReceipt.openclaw_provider_transport = null;
   const directOpenClaw = run(
@@ -303,7 +368,7 @@ process.stdout.write(response + "\\n");
 
   process.stdout.write(`${JSON.stringify({
     ok: true,
-    contract: "agentops_commercial_runtime_exact_head_status_contract_v2",
+    contract: "agentops_commercial_runtime_exact_head_status_contract_v3",
     exact_sha_bound: true,
     receipt_sha256_bound: true,
     publisher_bound: true,
@@ -314,6 +379,12 @@ process.stdout.write(response + "\\n");
     openclaw_sidecar_receipt_required: true,
     openclaw_runtime_identity_required: true,
     typescript_worker_required: true,
+    postgres_dsn_owner_only_file_required: true,
+    postgres_dsn_argv_omission_required: true,
+    direct_child_database_credentials_omitted: true,
+    credential_file_cleanup_required: true,
+    same_uid_isolation_overclaim_rejected: true,
+    next_process_group_shutdown_required: true,
     hermes_openclaw_contexts_required: true,
     credentials_omitted: true,
   })}\n`);

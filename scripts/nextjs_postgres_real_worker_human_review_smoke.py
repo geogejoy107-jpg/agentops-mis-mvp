@@ -31,7 +31,8 @@ from typing import Any
 DEFAULT_SOURCE_ROOT = Path(__file__).resolve().parents[1]
 ROOT = DEFAULT_SOURCE_ROOT
 NEXT_APP = ROOT / "ui" / "next-app"
-CONTRACT_ID = "nextjs_postgres_real_worker_human_review_v5"
+CONTRACT_ID = "nextjs_postgres_real_worker_human_review_v6"
+MAX_POSTGRES_DSN_FILE_BYTES = 16 * 1024
 NEXT_RUNTIME_MUTABLE_ARTIFACT_PATHS = ("cache", "trace")
 WORKSPACE_ID = "ws_real_worker_human_review"
 OTHER_WORKSPACE_ID = "ws_real_worker_human_review_other"
@@ -62,6 +63,7 @@ NODE_PG_HELPER = r"""
 const fs = require('node:fs');
 const { Client } = require('./ui/next-app/node_modules/pg');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const dsn = fs.readFileSync(process.env.AGENTOPS_NODE_PG_DSN_FILE, 'utf8').replace(/\r?\n$/, '');
 
 function translateQmarks(sql) {
   let output = '';
@@ -89,7 +91,7 @@ function translateQmarks(sql) {
 
 (async () => {
   const client = new Client({
-    connectionString: process.env.AGENTOPS_NODE_PG_DSN,
+    connectionString: dsn,
     application_name: 'agentops-real-worker-human-review-smoke',
   });
   try {
@@ -120,13 +122,14 @@ class NodePgError(RuntimeError):
 class NodePgAdapter:
     """Test-only structured Postgres client using the Next runtime's pinned pg."""
 
-    def __init__(self, dsn: str, node_binary: str):
-        self.dsn = dsn
+    def __init__(self, dsn_file: Path, node_binary: str):
+        self.dsn_file = dsn_file
         self.node_binary = node_binary
 
     def _request(self, sql: str, params: tuple[Any, ...] = (), *, script: bool = False) -> dict[str, Any]:
         env = environment_without_privileged_control_plane_credentials()
-        env["AGENTOPS_NODE_PG_DSN"] = self.dsn
+        env["AGENTOPS_NODE_PG_DSN_FILE"] = str(self.dsn_file)
+        assert_direct_credentials_omitted(env)
         completed = subprocess.run(
             [self.node_binary, "-e", NODE_PG_HELPER],
             cwd=ROOT,
@@ -186,10 +189,222 @@ def result(payload: dict[str, Any], sensitive: list[str]) -> None:
     print(redact(rendered, sensitive))
 
 
+def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        left.st_dev == right.st_dev
+        and left.st_ino == right.st_ino
+        and left.st_mode == right.st_mode
+        and left.st_uid == right.st_uid
+        and left.st_gid == right.st_gid
+        and left.st_nlink == right.st_nlink
+        and left.st_size == right.st_size
+        and left.st_mtime_ns == right.st_mtime_ns
+        and left.st_ctime_ns == right.st_ctime_ns
+    )
+
+
+def _open_secure_secret_parent(value: str) -> tuple[Path, int]:
+    path = Path(value)
+    if not path.is_absolute():
+        raise ValueError("postgres_dsn_file_absolute_path_required")
+    path = Path(os.path.abspath(path))
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    if not nofollow or not directory:
+        raise ValueError("postgres_dsn_file_nofollow_unavailable")
+    descriptor = os.open(
+        path.anchor,
+        os.O_RDONLY | directory | nofollow | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        components = path.parts[1:-1]
+        for index, component in enumerate(components):
+            child = os.open(
+                component,
+                os.O_RDONLY
+                | directory
+                | nofollow
+                | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=descriptor,
+            )
+            os.close(descriptor)
+            descriptor = child
+            metadata = os.fstat(descriptor)
+            mode = stat.S_IMODE(metadata.st_mode)
+            immediate_parent = index == len(components) - 1
+            writable_ancestor_is_sticky_root = (
+                metadata.st_uid == 0
+                and bool(metadata.st_mode & stat.S_ISVTX)
+            )
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or (
+                    mode & 0o022
+                    and not writable_ancestor_is_sticky_root
+                )
+                or (immediate_parent and metadata.st_uid != os.getuid())
+            ):
+                raise ValueError("postgres_dsn_file_parent_security_invalid")
+        return path, descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _read_postgres_dsn_file_with_identity(
+    value: str,
+) -> tuple[str, os.stat_result]:
+    path, parent_descriptor = _open_secure_secret_parent(value)
+    try:
+        before = os.stat(
+            path.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise ValueError("postgres_dsn_file_regular_file_required")
+        if before.st_uid != os.getuid():
+            raise ValueError("postgres_dsn_file_owner_invalid")
+        if stat.S_IMODE(before.st_mode) not in {0o400, 0o600}:
+            raise ValueError("postgres_dsn_file_permissions_invalid")
+        if before.st_nlink != 1:
+            raise ValueError("postgres_dsn_file_link_count_invalid")
+        if before.st_size < 1 or before.st_size > MAX_POSTGRES_DSN_FILE_BYTES:
+            raise ValueError("postgres_dsn_file_size_invalid")
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        if not nofollow:
+            raise ValueError("postgres_dsn_file_nofollow_unavailable")
+        descriptor = os.open(
+            path.name,
+            os.O_RDONLY
+            | os.O_NONBLOCK
+            | nofollow
+            | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=parent_descriptor,
+        )
+    except Exception:
+        os.close(parent_descriptor)
+        raise
+    try:
+        descriptor_before = os.fstat(descriptor)
+        if not _same_file_identity(before, descriptor_before):
+            raise ValueError("postgres_dsn_file_identity_changed")
+        chunks: list[bytes] = []
+        remaining = MAX_POSTGRES_DSN_FILE_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        contents = b"".join(chunks)
+        if len(contents) > MAX_POSTGRES_DSN_FILE_BYTES:
+            raise ValueError("postgres_dsn_file_size_invalid")
+        descriptor_after = os.fstat(descriptor)
+        after = os.stat(
+            path.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            not _same_file_identity(descriptor_before, descriptor_after)
+            or not _same_file_identity(descriptor_after, after)
+        ):
+            raise ValueError("postgres_dsn_file_identity_changed")
+    finally:
+        os.close(descriptor)
+        os.close(parent_descriptor)
+    dsn = contents.decode("utf-8", errors="strict")
+    if dsn.endswith("\r\n"):
+        dsn = dsn[:-2]
+    elif dsn.endswith("\n"):
+        dsn = dsn[:-1]
+    if not dsn or "\x00" in dsn or "\r" in dsn or "\n" in dsn:
+        raise ValueError("postgres_dsn_file_contents_invalid")
+    parsed = urllib.parse.urlsplit(dsn)
+    if (
+        parsed.scheme not in {"postgres", "postgresql"}
+        or not parsed.hostname
+        or not parsed.username
+        or not parsed.password
+    ):
+        raise ValueError("postgres_dsn_file_url_invalid")
+    if parsed.hostname not in {"127.0.0.1", "::1", "localhost"}:
+        raise ValueError("postgres_dsn_file_loopback_required")
+    return dsn, descriptor_after
+
+
+def read_postgres_dsn_file(value: str) -> str:
+    return _read_postgres_dsn_file_with_identity(value)[0]
+
+
+def assert_postgres_dsn_file_unchanged(
+    value: str,
+    expected_dsn: str,
+    expected_identity: os.stat_result,
+) -> None:
+    current_dsn, current_identity = _read_postgres_dsn_file_with_identity(value)
+    if (
+        not _same_file_identity(expected_identity, current_identity)
+        or not secrets.compare_digest(expected_dsn, current_dsn)
+    ):
+        raise ValueError("postgres_dsn_file_changed_during_acceptance")
+
+
+def write_owner_only_secret(root: Path, name: str, value: str) -> Path:
+    path = root / name
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
+        0o600,
+    )
+    try:
+        payload = value.encode("utf-8")
+        written = 0
+        while written < len(payload):
+            written += os.write(descriptor, payload[written:])
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    return path
+
+
+def create_isolated_secret(label: str, value: str) -> tuple[Path, Path]:
+    root = Path(tempfile.mkdtemp(prefix=f"agentops-real-{label}-"))
+    root.chmod(0o700)
+    try:
+        path = write_owner_only_secret(root, "secret", value)
+        path.chmod(0o400)
+        root.chmod(0o500)
+        return root, path
+    except Exception:
+        root.chmod(0o700)
+        shutil.rmtree(root, ignore_errors=True)
+        raise
+
+
+def remove_isolated_secrets(roots: list[Path]) -> bool:
+    errors: list[str] = []
+    for root in roots:
+        try:
+            if root.exists():
+                root.chmod(0o700)
+                for path in root.iterdir():
+                    path.chmod(0o600)
+                shutil.rmtree(root)
+            if root.exists():
+                errors.append(root.name)
+        except Exception:
+            errors.append(root.name)
+    if errors:
+        raise RuntimeError("credential_root_cleanup_failed")
+    return True
+
+
 def dsn_with_search_path(dsn: str, schema: str) -> str:
     parsed = urllib.parse.urlsplit(dsn)
     if parsed.scheme not in {"postgres", "postgresql"}:
-        raise ValueError("--postgres-dsn must be a postgres URL")
+        raise ValueError("postgres DSN must use a postgres URL")
     query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
     existing = [value for key, value in query if key == "options"]
     query = [(key, value) for key, value in query if key != "options"]
@@ -206,7 +421,7 @@ def dsn_with_search_path(dsn: str, schema: str) -> str:
 def dsn_with_credentials(dsn: str, username: str, password: str) -> str:
     parsed = urllib.parse.urlsplit(dsn)
     if parsed.scheme not in {"postgres", "postgresql"} or not parsed.hostname:
-        raise ValueError("--postgres-dsn must be a postgres URL with a host")
+        raise ValueError("postgres DSN must use a postgres URL with a host")
     host = parsed.hostname
     if ":" in host:
         host = f"[{host}]"
@@ -400,44 +615,76 @@ def stop_process(
     timeout: int = 5,
 ) -> dict[str, Any]:
     errors: list[str] = []
+    process_group_id = proc.pid
+
+    def record(error: str) -> None:
+        if error not in errors:
+            errors.append(error)
 
     def exited() -> bool:
         try:
             return proc.poll() is not None
         except Exception as exc:
-            errors.append(f"poll:{exc.__class__.__name__}")
+            record(f"poll:{exc.__class__.__name__}")
             return False
 
-    if exited():
-        return {"stopped": True, "errors": errors}
+    def process_group_alive(label: str) -> bool:
+        try:
+            os.killpg(process_group_id, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except Exception as exc:
+            record(f"{label}:{exc.__class__.__name__}")
+            return True
+
+    def wait_for_process_group_exit(seconds: int, label: str) -> bool:
+        deadline = time.monotonic() + max(0, seconds)
+        while process_group_alive(label):
+            if time.monotonic() >= deadline:
+                return False
+            if not exited():
+                try:
+                    proc.wait(timeout=min(0.1, max(0.01, deadline - time.monotonic())))
+                except subprocess.TimeoutExpired:
+                    pass
+                except Exception as exc:
+                    record(f"wait:{exc.__class__.__name__}")
+            time.sleep(0.02)
+        if not exited():
+            try:
+                proc.wait(timeout=max(0.01, min(0.5, seconds)))
+            except subprocess.TimeoutExpired:
+                record("wait:TimeoutExpired")
+            except Exception as exc:
+                record(f"wait:{exc.__class__.__name__}")
+        return exited()
+
+    if exited() and not process_group_alive("initial_group_check"):
+        return {
+            "stopped": True,
+            "process_group_empty": True,
+            "errors": errors,
+        }
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
+        os.killpg(process_group_id, signal.SIGTERM)
     except ProcessLookupError:
         pass
     except Exception as exc:
-        errors.append(f"sigterm:{exc.__class__.__name__}")
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        pass
-    except Exception as exc:
-        errors.append(f"wait_after_sigterm:{exc.__class__.__name__}")
-    if not exited():
+        record(f"sigterm:{exc.__class__.__name__}")
+    group_stopped = wait_for_process_group_exit(timeout, "term_group_check")
+    if not group_stopped:
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
+            os.killpg(process_group_id, signal.SIGKILL)
         except ProcessLookupError:
             pass
         except Exception as exc:
-            errors.append(f"sigkill:{exc.__class__.__name__}")
-    if not exited():
-        try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            errors.append("wait:TimeoutExpired")
-        except Exception as exc:
-            errors.append(f"wait:{exc.__class__.__name__}")
+            record(f"sigkill:{exc.__class__.__name__}")
+        group_stopped = wait_for_process_group_exit(timeout, "kill_group_check")
+    process_group_empty = not process_group_alive("final_group_check")
     return {
-        "stopped": exited(),
+        "stopped": exited() and group_stopped and process_group_empty,
+        "process_group_empty": process_group_empty,
         "errors": errors,
     }
 
@@ -751,9 +998,28 @@ def assert_subprocess_environment_scrub() -> None:
         raise RuntimeError("privileged_subprocess_environment_scrub_failed")
 
 
+DIRECT_CREDENTIAL_ENVIRONMENT_NAMES = {
+    "AGENTOPS_NODE_PG_DSN",
+    "AGENTOPS_POSTGRES_DSN",
+    "AGENTOPS_POSTGRES_MIGRATOR_DSN",
+    "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_DSN",
+    "AGENTOPS_POSTGRES_RUNTIME_PASSWORD",
+    "AGENTOPS_POSTGRES_MIGRATOR_PASSWORD",
+    "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_PASSWORD",
+    "AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD",
+    "AGENTOPS_HUMAN_SESSION_HMAC_KEY",
+    "DATABASE_URL",
+}
+
+
+def assert_direct_credentials_omitted(environment: dict[str, str]) -> None:
+    if DIRECT_CREDENTIAL_ENVIRONMENT_NAMES.intersection(environment):
+        raise RuntimeError("direct_credential_child_environment_forbidden")
+
+
 def run_npm(
     npm: str,
-    postgres_dsn: str | None,
+    postgres_dsn_file: Path | None,
     args: list[str],
     *,
     stdin: str | None = None,
@@ -764,8 +1030,9 @@ def run_npm(
         "AGENTOPS_POSTGRES_SSL": "0",
         **(environment or {}),
     })
-    if postgres_dsn:
-        env["AGENTOPS_POSTGRES_DSN"] = postgres_dsn
+    if postgres_dsn_file:
+        env["AGENTOPS_POSTGRES_DSN_FILE"] = str(postgres_dsn_file)
+    assert_direct_credentials_omitted(env)
     return subprocess.run(
         [npm, "run", "--silent", *args],
         cwd=NEXT_APP,
@@ -803,8 +1070,8 @@ def assert_entitlement_admin_environment_isolated(
     environment: dict[str, str],
 ) -> None:
     required = {
-        "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_DSN",
-        "AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD",
+        "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_DSN_FILE",
+        "AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD_FILE",
         "AGENTOPS_ENTITLEMENT_OPERATOR_USERNAME",
         "AGENTOPS_ENTITLEMENT_CONTROL_PLANE_URL",
         "AGENTOPS_ENTITLEMENT_CONTROL_PLANE_ORIGIN",
@@ -816,6 +1083,8 @@ def assert_entitlement_admin_environment_isolated(
         "AGENTOPS_POSTGRES_DSN",
         "AGENTOPS_POSTGRES_MIGRATOR_DSN",
         "AGENTOPS_POSTGRES_RUNTIME_DSN",
+        "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_DSN",
+        "AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD",
         "AGENTOPS_POSTGRES_RUNTIME_ROLE",
         "AGENTOPS_POSTGRES_RUNTIME_PASSWORD",
         "AGENTOPS_POSTGRES_MIGRATOR_PASSWORD",
@@ -899,7 +1168,7 @@ def derived_postgres_function_owner_role(
 
 
 def cleanup_postgres_fixture(
-    base_dsn: str,
+    base_dsn_file: Path,
     node: str,
     application_schema: str,
     runtime_api_schema: str,
@@ -907,7 +1176,7 @@ def cleanup_postgres_fixture(
     entitlement_admin_role: str,
     function_owner_role: str,
 ) -> dict[str, bool]:
-    cleanup = NodePgAdapter(base_dsn, node)
+    cleanup = NodePgAdapter(base_dsn_file, node)
     errors: list[str] = []
     role_names = (
         ("runtime", runtime_role),
@@ -2418,7 +2687,11 @@ def main() -> int:
     global ROOT, NEXT_APP
 
     parser = argparse.ArgumentParser(description="Run real Hermes/OpenClaw Worker -> Human Review through Next/Postgres only.")
-    parser.add_argument("--postgres-dsn", required=True, help="External Postgres URL; the smoke uses and drops an isolated schema.")
+    parser.add_argument(
+        "--postgres-dsn-file",
+        required=True,
+        help="Absolute owner-only file containing the external Postgres URL.",
+    )
     parser.add_argument("--adapter", action="append", choices=["hermes", "openclaw"], default=[])
     parser.add_argument(
         "--worker-implementation",
@@ -2434,6 +2707,28 @@ def main() -> int:
         help="Candidate Git worktree root; defaults to the checkout containing this trusted harness.",
     )
     args = parser.parse_args()
+
+    try:
+        (
+            args.postgres_dsn,
+            postgres_dsn_file_identity,
+        ) = _read_postgres_dsn_file_with_identity(args.postgres_dsn_file)
+    except Exception as exc:
+        result({
+            "ok": False,
+            "contract": CONTRACT_ID,
+            "error_type": exc.__class__.__name__,
+            "error": str(exc),
+            "next_runtime_mode": "production_start",
+            "python_api_started": False,
+            "worker_implementation": args.worker_implementation,
+            "python_worker_started": False,
+            "postgres_dsn_source": "owner_only_file",
+            "postgres_dsn_argv_omitted": True,
+            "postgres_dsn_input_boundary_verified": False,
+            "credentials_omitted": True,
+        }, [])
+        return 1
 
     try:
         ROOT = resolve_source_root(args.source_root)
@@ -2521,6 +2816,11 @@ def main() -> int:
         source_commit_after_build, clean_after_build = git_source_state(ROOT)
         if source_commit_after_build != source_commit or not clean_after_build:
             raise RuntimeError("candidate_source_identity_changed_during_build")
+        assert_postgres_dsn_file_unchanged(
+            args.postgres_dsn_file,
+            args.postgres_dsn,
+            postgres_dsn_file_identity,
+        )
     except Exception as exc:
         original_traceback = traceback.format_exc()
         source_commit_after_failure = ""
@@ -2646,6 +2946,64 @@ def main() -> int:
         hmac_key,
         *tokens.values(),
     ]
+    credential_roots: list[Path] = []
+    try:
+        base_dsn_root, base_dsn_path = create_isolated_secret(
+            "postgres-base-dsn", args.postgres_dsn
+        )
+        credential_roots.append(base_dsn_root)
+        migrator_dsn_root, migrator_dsn_path = create_isolated_secret(
+            "postgres-migrator-dsn", migrator_dsn
+        )
+        credential_roots.append(migrator_dsn_root)
+        runtime_dsn_root, runtime_dsn_path = create_isolated_secret(
+            "postgres-runtime-dsn", runtime_dsn
+        )
+        credential_roots.append(runtime_dsn_root)
+        entitlement_admin_dsn_root, entitlement_admin_dsn_path = (
+            create_isolated_secret(
+                "postgres-entitlement-admin-dsn",
+                entitlement_admin_dsn,
+            )
+        )
+        credential_roots.append(entitlement_admin_dsn_root)
+        runtime_password_root, runtime_password_path = create_isolated_secret(
+            "postgres-runtime-password", runtime_password
+        )
+        credential_roots.append(runtime_password_root)
+        (
+            entitlement_admin_password_root,
+            entitlement_admin_password_path,
+        ) = create_isolated_secret(
+            "postgres-entitlement-admin-password",
+            entitlement_admin_password,
+        )
+        credential_roots.append(entitlement_admin_password_root)
+        owner_password_root, owner_password_path = create_isolated_secret(
+            "entitlement-operator-password", owner_password
+        )
+        credential_roots.append(owner_password_root)
+        hmac_key_root, hmac_key_path = create_isolated_secret(
+            "human-session-hmac-key", hmac_key
+        )
+        credential_roots.append(hmac_key_root)
+    except Exception:
+        try:
+            remove_isolated_secrets(credential_roots)
+        except Exception:
+            pass
+        raise
+    sensitive.extend([
+        *(str(root) for root in credential_roots),
+        str(base_dsn_path),
+        str(migrator_dsn_path),
+        str(runtime_dsn_path),
+        str(entitlement_admin_dsn_path),
+        str(runtime_password_path),
+        str(entitlement_admin_password_path),
+        str(owner_password_path),
+        str(hmac_key_path),
+    ])
     setup: NodePgAdapter | None = None
     adapter: NodePgAdapter | None = None
     next_proc: subprocess.Popen[str] | None = None
@@ -2660,8 +3018,9 @@ def main() -> int:
     tracked_after_acceptance = ""
     worker_process_started = False
     fixture_cleanup_complete = False
+    credential_roots_removed = False
     try:
-        setup = NodePgAdapter(args.postgres_dsn, node)
+        setup = NodePgAdapter(base_dsn_path, node)
         setup.execute(f'CREATE SCHEMA "{schema}"')
         setup.commit()
         setup.close()
@@ -2670,24 +3029,28 @@ def main() -> int:
         role_environment = {
             "AGENTOPS_DEPLOYMENT_MODE": "production",
             "AGENTOPS_CONTROL_PLANE_MODE": "postgres",
-            "AGENTOPS_POSTGRES_MIGRATOR_DSN": migrator_dsn,
+            "AGENTOPS_POSTGRES_MIGRATOR_DSN_FILE": str(migrator_dsn_path),
             "AGENTOPS_POSTGRES_SCHEMA": schema,
             "AGENTOPS_POSTGRES_RUNTIME_API_SCHEMA": runtime_api_schema,
             "AGENTOPS_POSTGRES_RUNTIME_ROLE": runtime_role,
-            "AGENTOPS_POSTGRES_RUNTIME_PASSWORD": runtime_password,
+            "AGENTOPS_POSTGRES_RUNTIME_PASSWORD_FILE": str(runtime_password_path),
             "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_ROLE":
                 entitlement_admin_role,
-            "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_PASSWORD":
-                entitlement_admin_password,
+            "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_PASSWORD_FILE":
+                str(entitlement_admin_password_path),
         }
         migrated = run_npm(
             npm,
-            migrator_dsn,
+            migrator_dsn_path,
             ["migrate:postgres"],
             environment=role_environment,
         )
         if migrated.returncode != 0:
             raise RuntimeError(redact(f"Commercial schema migration failed: {migrated.stdout} {migrated.stderr}", sensitive))
+        remove_isolated_secrets([
+            runtime_password_root,
+            entitlement_admin_password_root,
+        ])
         runtime_environment = {
             "AGENTOPS_DEPLOYMENT_MODE": "production",
             "AGENTOPS_CONTROL_PLANE_MODE": "postgres",
@@ -2697,7 +3060,7 @@ def main() -> int:
         }
         checked = run_npm(
             npm,
-            runtime_dsn,
+            runtime_dsn_path,
             ["check:postgres-schema"],
             environment=runtime_environment,
         )
@@ -2720,13 +3083,13 @@ def main() -> int:
                 is not True
         ):
             raise RuntimeError("restricted_runtime_role_boundary_unverified")
-        adapter = NodePgAdapter(runtime_dsn, node)
+        adapter = NodePgAdapter(runtime_dsn_path, node)
         seed_foundation(adapter)
         adapter.close()
         adapter = None
         bootstrapped = run_npm(
             npm,
-            migrator_dsn,
+            migrator_dsn_path,
             [
                 "bootstrap:owner",
                 "--",
@@ -2769,17 +3132,18 @@ def main() -> int:
             "AGENTOPS_DEPLOYMENT_MODE": "production",
             "AGENTOPS_CONTROL_PLANE_MODE": "postgres",
             "AGENTOPS_TS_CONTROL_PLANE_MODE": "postgres",
-            "AGENTOPS_POSTGRES_DSN": runtime_dsn,
+            "AGENTOPS_POSTGRES_DSN_FILE": str(runtime_dsn_path),
             "AGENTOPS_POSTGRES_SCHEMA": schema,
             "AGENTOPS_POSTGRES_RUNTIME_API_SCHEMA": runtime_api_schema,
             "AGENTOPS_POSTGRES_RUNTIME_ROLE": runtime_role,
             "AGENTOPS_POSTGRES_SSL": "0",
             "AGENTOPS_API_BASE": f"http://127.0.0.1:{free_port()}/api",
             "AGENTOPS_ALLOWED_ORIGINS": public_origin,
-            "AGENTOPS_HUMAN_SESSION_HMAC_KEY": hmac_key,
+            "AGENTOPS_HUMAN_SESSION_HMAC_KEY_FILE": str(hmac_key_path),
             "NEXT_TELEMETRY_DISABLED": "1",
             "NODE_ENV": "production",
         })
+        assert_direct_credentials_omitted(env)
         next_proc = subprocess.Popen(
             [
                 node,
@@ -2818,12 +3182,13 @@ def main() -> int:
             "AGENTOPS_POSTGRES_RUNTIME_API_SCHEMA": runtime_api_schema,
             "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_ROLE":
                 entitlement_admin_role,
-            "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_DSN":
-                entitlement_admin_dsn,
+            "AGENTOPS_POSTGRES_ENTITLEMENT_ADMIN_DSN_FILE":
+                str(entitlement_admin_dsn_path),
             "AGENTOPS_ENTITLEMENT_CONTROL_PLANE_URL": base_url,
             "AGENTOPS_ENTITLEMENT_CONTROL_PLANE_ORIGIN": public_origin,
             "AGENTOPS_ENTITLEMENT_OPERATOR_USERNAME": OWNER_USERNAME,
-            "AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD": owner_password,
+            "AGENTOPS_ENTITLEMENT_OPERATOR_PASSWORD_FILE":
+                str(owner_password_path),
         }
         assert_entitlement_admin_environment_isolated(
             entitlement_admin_environment
@@ -2888,7 +3253,7 @@ def main() -> int:
         )
 
         challenge_persistence = NodePgAdapter(
-            migrator_dsn,
+            migrator_dsn_path,
             node,
         ).fetchone(
             """SELECT
@@ -2931,8 +3296,9 @@ def main() -> int:
             raise RuntimeError(
                 "entitlement_challenge_persistence_boundary_unverified"
             )
+        remove_isolated_secrets([migrator_dsn_root])
 
-        admin_adapter = NodePgAdapter(entitlement_admin_dsn, node)
+        admin_adapter = NodePgAdapter(entitlement_admin_dsn_path, node)
         admin_search_path = admin_adapter.fetchone(
             "SELECT current_setting('search_path') AS search_path"
         )
@@ -3067,8 +3433,12 @@ def main() -> int:
             raise RuntimeError(
                 "entitlement_admin_forbidden_operation_matrix_unverified"
             )
+        remove_isolated_secrets([
+            entitlement_admin_dsn_root,
+            owner_password_root,
+        ])
 
-        adapter = NodePgAdapter(runtime_dsn, node)
+        adapter = NodePgAdapter(runtime_dsn_path, node)
         seed_workers(adapter, adapters, tokens)
 
         for runtime in adapters:
@@ -3115,12 +3485,12 @@ def main() -> int:
             )
 
         process_stop_receipt = stop_process(next_proc)
-        next_proc = None
         if (
             process_stop_receipt.get("stopped") is not True
             or process_stop_receipt.get("errors")
         ):
             raise RuntimeError("next_process_stop_failed")
+        next_proc = None
         next_artifact_after_acceptance_sha256 = stable_next_release_artifact_sha256(
             NEXT_APP / ".next"
         )
@@ -3133,7 +3503,7 @@ def main() -> int:
                 pass
             adapter = None
         cleanup_receipt = cleanup_postgres_fixture(
-            args.postgres_dsn,
+            base_dsn_path,
             node,
             schema,
             runtime_api_schema,
@@ -3163,6 +3533,12 @@ def main() -> int:
             raise RuntimeError(
                 "candidate_source_identity_changed_during_acceptance"
             )
+        assert_postgres_dsn_file_unchanged(
+            args.postgres_dsn_file,
+            args.postgres_dsn,
+            postgres_dsn_file_identity,
+        )
+        credential_roots_removed = remove_isolated_secrets(credential_roots)
         result({
             "ok": True,
             "contract": CONTRACT_ID,
@@ -3192,11 +3568,20 @@ def main() -> int:
             "python_or_sqlite_commercial_default": False,
             "database_role_boundary_verified": True,
             "migrator_runtime_roles_distinct": True,
-            "runtime_migrator_credentials_separated": True,
-            "runtime_entitlement_admin_credentials_separated": True,
+            "database_role_credentials_distinct": True,
+            "credential_files_purpose_isolated": True,
+            "credential_files_stage_scoped": True,
+            "same_uid_os_credential_isolation_claimed": False,
             "subprocess_environment_scrub_verified": True,
             "worker_database_credentials_omitted": True,
             "worker_human_session_credentials_omitted": True,
+            "postgres_dsn_source": "owner_only_file",
+            "postgres_dsn_argv_omitted": True,
+            "postgres_dsn_input_boundary_verified": True,
+            "postgres_dsn_loopback_required": True,
+            "postgres_dsn_source_unchanged": True,
+            "direct_database_credentials_in_child_environment_omitted": True,
+            "ephemeral_credential_files_removed": True,
             "entitlement_admin_executed": True,
             "entitlement_admin_online_human_challenge_verified": True,
             "entitlement_admin_environment_isolated": True,
@@ -3292,32 +3677,43 @@ def main() -> int:
         process_stop_error = ""
         if next_proc is not None:
             process_stop_receipt = stop_process(next_proc)
-            next_proc = None
             if (
                 process_stop_receipt.get("stopped") is not True
                 or process_stop_receipt.get("errors")
             ):
                 process_stop_error = "next_process_stop_failed"
+            if process_stop_receipt.get("stopped") is True:
+                next_proc = None
         if adapter is not None:
             adapter.close()
             adapter = None
         cleanup_error = ""
-        try:
-            cleanup_receipt = cleanup_postgres_fixture(
-                args.postgres_dsn,
-                node,
-                schema,
-                runtime_api_schema,
-                runtime_role,
-                entitlement_admin_role,
-                function_owner_role,
-            )
-            fixture_cleanup_complete = True
-            next_artifact_after_cleanup_sha256 = stable_next_release_artifact_sha256(
-                NEXT_APP / ".next"
-            )
-        except Exception as cleanup_exc:
-            cleanup_error = str(cleanup_exc)
+        if next_proc is None:
+            try:
+                cleanup_receipt = cleanup_postgres_fixture(
+                    base_dsn_path,
+                    node,
+                    schema,
+                    runtime_api_schema,
+                    runtime_role,
+                    entitlement_admin_role,
+                    function_owner_role,
+                )
+                fixture_cleanup_complete = True
+                next_artifact_after_cleanup_sha256 = stable_next_release_artifact_sha256(
+                    NEXT_APP / ".next"
+                )
+            except Exception as cleanup_exc:
+                cleanup_error = str(cleanup_exc)
+        else:
+            cleanup_error = "next_process_still_running"
+        if next_proc is None:
+            try:
+                credential_roots_removed = remove_isolated_secrets(
+                    credential_roots
+                )
+            except Exception:
+                credential_roots_removed = False
         fingerprint_error = ""
         source_state_error = ""
         source_commit_after_failure = ""
@@ -3393,13 +3789,15 @@ def main() -> int:
                 fixture_cleanup_complete,
             "next_process_stop": process_stop_receipt or None,
             "next_process_stop_error": process_stop_error or None,
+            "ephemeral_credential_files_removed": credential_roots_removed,
             "credentials_omitted": True,
         }, sensitive)
         return 1
     finally:
         if next_proc is not None:
-            stop_process(next_proc)
-            next_proc = None
+            final_stop_receipt = stop_process(next_proc, timeout=15)
+            if final_stop_receipt.get("stopped") is True:
+                next_proc = None
         if adapter is not None:
             try:
                 adapter.close()
@@ -3410,16 +3808,23 @@ def main() -> int:
                 setup.close()
             except Exception:
                 pass
-        if not fixture_cleanup_complete:
+        if next_proc is None and not fixture_cleanup_complete:
             try:
                 cleanup_postgres_fixture(
-                    args.postgres_dsn,
+                    base_dsn_path,
                     node,
                     schema,
                     runtime_api_schema,
                     runtime_role,
                     entitlement_admin_role,
                     function_owner_role,
+                )
+            except Exception:
+                pass
+        if next_proc is None and not credential_roots_removed:
+            try:
+                credential_roots_removed = remove_isolated_secrets(
+                    credential_roots
                 )
             except Exception:
                 pass

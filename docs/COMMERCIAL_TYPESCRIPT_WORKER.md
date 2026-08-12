@@ -215,11 +215,30 @@ source plus explicitly confirmed real Hermes and OpenClaw runs.
 
 Run the frozen-source acceptance harness against an isolated PostgreSQL
 database and the production Next.js server. Its current receipt contract is
-`nextjs_postgres_real_worker_human_review_v5`:
+`nextjs_postgres_real_worker_human_review_v6`:
+
+The harness accepts the PostgreSQL URL only through `--postgres-dsn-file`.
+The absolute file must live in a current-user-owned, non-group/world-writable
+directory and be a current-user-owned, non-symlink regular file with one link
+and mode `0400` or `0600`. This local acceptance accepts only a loopback
+PostgreSQL host. Credentialed URLs in process arguments are rejected by
+omission of an argv-based option; child processes receive owner-only file paths
+instead of direct database credentials. Promotion receipts also prove this
+input boundary, source stability, and ephemeral credential-file cleanup before
+they can be published. The trusted local acceptance separates each credential
+into a purpose-specific, stage-scoped file but does not claim hostile same-UID
+process isolation; that stronger boundary belongs to the broker/executor phase.
 
 ```bash
+dsn_root="$(mktemp -d -t agentops-postgres-dsn.XXXXXX)"
+chmod 700 "$dsn_root"
+dsn_file="$dsn_root/postgres.dsn"
+trap 'rm -rf "$dsn_root"' EXIT
+chmod 600 "$dsn_file"
+printf '%s\n' 'postgresql://<user>:<password>@127.0.0.1:<port>/<database>' > "$dsn_file"
+
 python3 scripts/nextjs_postgres_real_worker_human_review_smoke.py \
-  --postgres-dsn "postgresql://<user>:<password>@127.0.0.1:<port>/<database>" \
+  --postgres-dsn-file "$dsn_file" \
   --worker-implementation typescript \
   --adapter hermes \
   --adapter openclaw
@@ -273,9 +292,15 @@ candidate commit, then publish two bounded GitHub commit status contexts:
 ```bash
 head_sha="$(git rev-parse HEAD)"
 receipt="$(mktemp -t agentops-real-runtime.XXXXXX.json)"
+dsn_root="$(mktemp -d -t agentops-postgres-dsn.XXXXXX)"
+chmod 700 "$dsn_root"
+dsn_file="$dsn_root/postgres.dsn"
+trap 'rm -f "$receipt"; rm -rf "$dsn_root"' EXIT
+chmod 600 "$dsn_file"
+printf '%s\n' 'postgresql://<user>:<password>@127.0.0.1:<port>/<database>' > "$dsn_file"
 
 python3 scripts/nextjs_postgres_real_worker_human_review_smoke.py \
-  --postgres-dsn "postgresql://<user>:<password>@127.0.0.1:<port>/<database>" \
+  --postgres-dsn-file "$dsn_file" \
   --worker-implementation typescript \
   --adapter hermes \
   --adapter openclaw > "$receipt"
@@ -284,7 +309,6 @@ node scripts/commercial-runtime-status.mjs validate \
   --receipt "$receipt" --sha "$head_sha"
 node scripts/commercial-runtime-status.mjs publish \
   --receipt "$receipt" --sha "$head_sha"
-rm -f "$receipt"
 ```
 
 Publishing requires an authenticated `gh` CLI identity with commit-status write

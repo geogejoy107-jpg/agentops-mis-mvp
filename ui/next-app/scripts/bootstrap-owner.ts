@@ -12,6 +12,7 @@ import {
   HUMAN_PASSWORD_MIN_LENGTH,
   HUMAN_SCRYPT_PARAMS,
 } from "../src/server/controlPlane/humanPasswordPolicy";
+import { secretEnvironmentValue } from "../src/server/controlPlane/config";
 import { appendAudit } from "../src/server/controlPlane/ledger";
 import {
   runPostgresSchemaCommand,
@@ -193,8 +194,9 @@ function derivePassword(password: string, salt: Buffer) {
 
 async function bootstrap() {
   const args = parseArguments(process.argv.slice(2));
-  const dsn = String(
-    process.env.AGENTOPS_POSTGRES_DSN || process.env.DATABASE_URL || "",
+  const dsn = (
+    secretEnvironmentValue("AGENTOPS_POSTGRES_DSN")
+    || String(process.env.DATABASE_URL || "")
   ).trim();
   if (!dsn) {
     throw new BootstrapError(

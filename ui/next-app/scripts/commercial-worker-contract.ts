@@ -562,15 +562,22 @@ async function sourceBoundaryContract() {
   assert.doesNotMatch(realAcceptanceSource, /agent_worker\.py/);
   assert.match(
     realAcceptanceSource,
-    /nextjs_postgres_real_worker_human_review_v5/,
+    /nextjs_postgres_real_worker_human_review_v6/,
   );
   assert.match(realAcceptanceSource, /stable_next_release_artifact_sha256/);
   assert.match(realAcceptanceSource, /next_artifact_identity_verified/);
   assert.match(
     realAcceptanceSource,
-    /bootstrapped = run_npm\(\s*npm,\s*migrator_dsn,\s*\[\s*"bootstrap:owner"/,
+    /bootstrapped = run_npm\(\s*npm,\s*migrator_dsn_path,\s*\[\s*"bootstrap:owner"/,
   );
-  assert.match(realAcceptanceSource, /"AGENTOPS_POSTGRES_DSN": runtime_dsn/);
+  assert.match(
+    realAcceptanceSource,
+    /"AGENTOPS_POSTGRES_DSN_FILE": str\(runtime_dsn_path\)/,
+  );
+  assert.doesNotMatch(
+    realAcceptanceSource,
+    /env\["AGENTOPS_NODE_PG_DSN"\]|"AGENTOPS_POSTGRES_DSN": runtime_dsn/,
+  );
   assert.match(
     realAcceptanceSource,
     /next_runtime_mutable_artifact_paths_omitted/,

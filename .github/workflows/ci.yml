@@ -758,6 +758,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 scripts/nextjs_postgres_real_worker_dsn_file_contract.py
           node scripts/commercial-runtime-status-contract.mjs
           node scripts/commercial-runtime-status.mjs verify \
             --repo "$GITHUB_REPOSITORY" \

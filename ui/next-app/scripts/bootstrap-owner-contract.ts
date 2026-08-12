@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
+import {
+  chmodSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -8,13 +15,14 @@ import {
   POSTGRES_MIGRATION_MANIFEST,
   SCHEMA_CONTRACT,
 } from "../src/server/controlPlane/schemaReadiness";
+import { secretEnvironmentValue } from "../src/server/controlPlane/config";
 import {
   createPostgresRoleBoundaryFixture,
   type PostgresRoleBoundaryFixture,
 } from "./postgres-role-boundary-test-helper";
 
-const baseDsn = String(process.env.AGENTOPS_POSTGRES_DSN || "").trim();
-assert.ok(baseDsn, "AGENTOPS_POSTGRES_DSN is required");
+const baseDsn = secretEnvironmentValue("AGENTOPS_POSTGRES_DSN").trim();
+assert.ok(baseDsn, "AGENTOPS_POSTGRES_DSN(_FILE) is required");
 
 const scriptPath = fileURLToPath(
   new URL("./bootstrap-owner.ts", import.meta.url),
@@ -34,22 +42,32 @@ function runBootstrap(
   payload: Record<string, unknown>;
 }> {
   return new Promise((resolve, reject) => {
+    const credentialRoot = mkdtempSync(
+      path.join(tmpdir(), "agentops-owner-bootstrap-dsn-"),
+    );
+    chmodSync(credentialRoot, 0o700);
+    const dsnPath = path.join(credentialRoot, "postgres.dsn");
+    writeFileSync(dsnPath, dsn, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    const environment: NodeJS.ProcessEnv = {
+      ...process.env,
+      AGENTOPS_DEPLOYMENT_MODE: "production",
+      AGENTOPS_CONTROL_PLANE_MODE: "postgres",
+      AGENTOPS_POSTGRES_DSN_FILE: dsnPath,
+      ...(boundary
+        ? {
+            AGENTOPS_POSTGRES_SCHEMA: boundary.applicationSchema,
+            AGENTOPS_POSTGRES_RUNTIME_API_SCHEMA:
+              boundary.runtimeApiSchema,
+            AGENTOPS_POSTGRES_RUNTIME_ROLE: boundary.runtimeRole,
+          }
+        : {}),
+    };
+    delete environment.AGENTOPS_POSTGRES_DSN;
+    delete environment.DATABASE_URL;
+    const cleanup = () => rmSync(credentialRoot, { recursive: true, force: true });
     const child = spawn(process.execPath, [tsxPath, scriptPath, ...args], {
       cwd: appRoot,
-      env: {
-        ...process.env,
-        AGENTOPS_DEPLOYMENT_MODE: "production",
-        AGENTOPS_CONTROL_PLANE_MODE: "postgres",
-        AGENTOPS_POSTGRES_DSN: dsn,
-        ...(boundary
-          ? {
-              AGENTOPS_POSTGRES_SCHEMA: boundary.applicationSchema,
-              AGENTOPS_POSTGRES_RUNTIME_API_SCHEMA:
-                boundary.runtimeApiSchema,
-              AGENTOPS_POSTGRES_RUNTIME_ROLE: boundary.runtimeRole,
-            }
-          : {}),
-      },
+      env: environment,
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
@@ -62,8 +80,12 @@ function runBootstrap(
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
     });
-    child.on("error", reject);
+    child.on("error", (error) => {
+      cleanup();
+      reject(error);
+    });
     child.on("close", (code) => {
+      cleanup();
       let payload: Record<string, unknown> = {};
       try {
         payload = JSON.parse(stdout.trim() || "{}");
@@ -210,6 +232,7 @@ async function main() {
       audit_written: true,
       restricted_runtime_verified: true,
       migrator_runtime_distinct: true,
+      child_dsn_file_boundary_verified: true,
       credentials_omitted: true,
       python_started: false,
     });
