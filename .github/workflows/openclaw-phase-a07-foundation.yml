@@ -203,7 +203,7 @@ jobs:
           docker run --rm --read-only --network none --user 0:0 \
             --entrypoint /bin/sh \
             "${image}" -ec '
-              test -z "$(find / -xdev -type f -perm /6000 -print -quit)"
+              test -z "$(find / -xdev -perm /6000 -print -quit)"
               test -z "$(find / -xdev -type f -links +1 -print -quit)"
             '
 

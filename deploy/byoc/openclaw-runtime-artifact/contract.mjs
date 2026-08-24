@@ -82,7 +82,9 @@ assert.match(dockerfile, /useradd --uid 1200 --gid 1200 --home-dir \/run\/opencl
 assert.match(dockerfile, /install -d -o 1200 -g 1200 -m 0700 \/run\/openclaw-state/);
 assert.match(dockerfile, /\/opt\/agentops-worker \/opt\/agentops-worker\/workspace/);
 assert.match(dockerfile, /install -o 0 -g 0 -m 0400 \/dev\/null \/run\/secrets\/openclaw_config/);
-assert.match(dockerfile, /find \/ -xdev -type f -perm \/6000 -exec chmod a-s/);
+assert.match(dockerfile, /find \/ -xdev -perm \/6000 -exec chmod a-s/);
+assert.match(dockerfile, /test -z "\$\(find \/ -xdev -perm \/6000 -print -quit\)"/);
+assert.doesNotMatch(dockerfile, /find \/ -xdev -type f -perm \/6000/);
 assert.match(dockerfile, /find \/ -xdev -type f -links \+1 -exec sh -ec/);
 assert.match(dockerfile, /cp --reflink=never --preserve=mode,ownership,timestamps -- "\$file" "\$temporary"/);
 assert.match(dockerfile, /mv -fT -- "\$temporary" "\$file"/);
@@ -120,6 +122,7 @@ process.stdout.write(`${JSON.stringify({
   linux_arm64_v8_digest_declared: true,
   checked_in_adapter_guest_path_verified: true,
   global_install_copy_forbidden: true,
+  setid_bits_removed_from_all_rootfs_entry_types: true,
   hardlinks_expanded_before_export: true,
   credential_material_absent: true,
   artifact_built: false,
