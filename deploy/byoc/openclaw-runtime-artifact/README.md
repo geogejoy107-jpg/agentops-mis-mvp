@@ -24,6 +24,13 @@ digests. A build must select one platform and pass its exact `base_image` as
 the required `NODE_IMAGE` build argument; there is deliberately no mutable or
 index-only Dockerfile default. Later evidence must retain that child identity.
 
+Before the image becomes a guest-root release input, the build removes set-ID
+bits and expands every same-filesystem regular-file hardlink into an independent
+inode while preserving mode, ownership, and timestamps. The build and Linux CI
+both fail if a hardlink remains. This keeps the OCI exporter and rootfs Merkle
+scanner fail closed on hardlinks instead of weakening the signed tree boundary
+to accommodate links inherited from the base image.
+
 The offline contract requires registry URLs, SHA-512 integrity, and license
 metadata for every locked package. Release packaging must still generate and
 review the complete SBOM and third-party notices; lock metadata alone is not

@@ -28,7 +28,15 @@ RUN find /opt/openclaw /opt/agentops -xdev -type d -exec chmod 0555 {} + \
       /opt/agentops-worker /opt/agentops-worker/workspace \
     && install -o 0 -g 0 -m 0400 /dev/null /run/secrets/openclaw_config \
     && find / -xdev -type f -perm /6000 -exec chmod a-s {} + \
+    && find / -xdev -type f -links +1 -exec sh -ec '\
+      for file do \
+        temporary="$(mktemp --tmpdir="$(dirname "$file")" .agentops-unlink.XXXXXX)"; \
+        cp --reflink=never --preserve=mode,ownership,timestamps -- "$file" "$temporary"; \
+        mv -fT -- "$temporary" "$file"; \
+      done \
+    ' sh {} + \
     && test -z "$(find / -xdev -type f -perm /6000 -print -quit)" \
+    && test -z "$(find / -xdev -type f -links +1 -print -quit)" \
     && test -f /opt/openclaw/node_modules/openclaw/dist/plugin-sdk/agent-runtime.js
 
 USER 1200:1200

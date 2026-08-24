@@ -10,6 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const read = (name) => readFileSync(join(here, name), "utf8");
 const dockerfile = read("Dockerfile");
 const a07Dockerfile = read("openclaw-phase-a07.Dockerfile");
+const artifactDockerfile = read("openclaw-runtime-artifact/Dockerfile");
 const compose = read("compose.openclaw-phase-a07.yaml");
 const defaultCompose = read("compose.openclaw-phase-a04-a05.yaml");
 const artifact = JSON.parse(read("openclaw-runtime-artifact/artifact.json"));
@@ -72,6 +73,12 @@ assert.match(a07Dockerfile, /npm ci --ignore-scripts --omit=dev --no-audit --no-
 assert.match(a07Dockerfile, /test "\$\(node --version\)" = "v22\.23\.2"/);
 assert.match(a07Dockerfile, /find \/ -xdev -type f -links \+1 -exec sh -ec/);
 assert.match(a07Dockerfile, /test -z "\$\(find \/ -xdev -type f -links \+1 -print -quit\)"/);
+const hardlinkExpansion = /find \/ -xdev -type f -links \+1 -exec sh -ec '[\s\S]*?test -z "\$\(find \/ -xdev -type f -links \+1 -print -quit\)"/;
+assert.equal(
+  artifactDockerfile.match(hardlinkExpansion)?.[0],
+  a07Dockerfile.match(hardlinkExpansion)?.[0],
+  "guest_root_hardlink_expansion_must_match_release_artifact_input",
+);
 assert.match(a07Dockerfile, /\.version'\)" = "2026\.5\.4"/);
 assert.match(
   a07Dockerfile,

@@ -83,6 +83,10 @@ assert.match(dockerfile, /install -d -o 1200 -g 1200 -m 0700 \/run\/openclaw-sta
 assert.match(dockerfile, /\/opt\/agentops-worker \/opt\/agentops-worker\/workspace/);
 assert.match(dockerfile, /install -o 0 -g 0 -m 0400 \/dev\/null \/run\/secrets\/openclaw_config/);
 assert.match(dockerfile, /find \/ -xdev -type f -perm \/6000 -exec chmod a-s/);
+assert.match(dockerfile, /find \/ -xdev -type f -links \+1 -exec sh -ec/);
+assert.match(dockerfile, /cp --reflink=never --preserve=mode,ownership,timestamps -- "\$file" "\$temporary"/);
+assert.match(dockerfile, /mv -fT -- "\$temporary" "\$file"/);
+assert.match(dockerfile, /test -z "\$\(find \/ -xdev -type f -links \+1 -print -quit\)"/);
 
 assert.match(adapter, /import\("openclaw\/plugin-sdk\/agent-runtime"\)/);
 assert.match(adapter, /for await \(const chunk of stdin\)/);
@@ -116,6 +120,7 @@ process.stdout.write(`${JSON.stringify({
   linux_arm64_v8_digest_declared: true,
   checked_in_adapter_guest_path_verified: true,
   global_install_copy_forbidden: true,
+  hardlinks_expanded_before_export: true,
   credential_material_absent: true,
   artifact_built: false,
   artifact_published: false,
