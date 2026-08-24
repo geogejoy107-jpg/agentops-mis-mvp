@@ -21,6 +21,8 @@ const PROVIDER_EMPTY_RESPONSE =
   "Provider response omitted; no visible assistant content was returned.";
 const OPENCLAW_PROVIDER_REQUEST_SCHEMA =
   "agentops_openclaw_provider_request_v1";
+const OPENCLAW_EXECUTOR_PUBLIC_REQUEST_SCHEMA =
+  "agentops_openclaw_executor_public_request_v2";
 const OPENCLAW_PROVIDER_RESPONSE_SCHEMA =
   "agentops_openclaw_provider_response_v1";
 const SHA256_HEX = /^[a-f0-9]{64}$/;
@@ -314,11 +316,13 @@ export class OpenClawAdapter implements RuntimeAdapter {
   readonly #providerSocketPath: string;
   readonly #agentName: string;
   readonly #timeoutSeconds: number;
+  readonly #protocolVersion: "v1" | "v2";
 
   constructor(options: {
     providerSocketPath: string;
     agentName?: string;
     timeoutSeconds?: number;
+    protocolVersion?: "v1" | "v2";
   }) {
     if (!isAbsolute(options.providerSocketPath)) {
       throw new Error("openclaw_provider_socket_absolute_path_required");
@@ -332,6 +336,10 @@ export class OpenClawAdapter implements RuntimeAdapter {
       1,
       600,
     );
+    this.#protocolVersion = options.protocolVersion || "v1";
+    if (!(["v1", "v2"] as const).includes(this.#protocolVersion)) {
+      throw new Error("openclaw_provider_protocol_invalid");
+    }
   }
 
   async execute(bundle: PromptBundle, signal?: AbortSignal): Promise<RuntimeAdapterResult> {
@@ -351,6 +359,29 @@ export class OpenClawAdapter implements RuntimeAdapter {
       if (!socket.isSocket() || socket.isSymbolicLink()) {
         throw new Error("openclaw_provider_socket_invalid");
       }
+      const context = bundle.executionContext;
+      if (this.#protocolVersion === "v2" && !context) {
+        throw new Error("openclaw_executor_execution_context_required");
+      }
+      const body = this.#protocolVersion === "v2"
+        ? {
+          schema: OPENCLAW_EXECUTOR_PUBLIC_REQUEST_SCHEMA,
+          agent_name: this.#agentName,
+          prompt: bundle.prompt,
+          prompt_sha256: bundle.promptHash,
+          timeout_seconds: this.#timeoutSeconds,
+          request_id: context?.requestId,
+          run_id: context?.runId,
+          nonce: context?.nonce,
+          workspace_id_hash: context?.workspaceIdHash,
+        }
+        : {
+          schema: OPENCLAW_PROVIDER_REQUEST_SCHEMA,
+          agent_name: this.#agentName,
+          prompt: bundle.prompt,
+          prompt_hash: bundle.promptHash,
+          timeout_seconds: this.#timeoutSeconds,
+        };
       // Once dispatched, a lost or malformed reply cannot prove execution did not occur.
       providerCallPerformed = true;
       const payload = await unixSocketJson({
@@ -358,13 +389,7 @@ export class OpenClawAdapter implements RuntimeAdapter {
         path: "/v1/execute",
         timeoutMs: (this.#timeoutSeconds + 30) * 1000,
         signal,
-        body: {
-          schema: OPENCLAW_PROVIDER_REQUEST_SCHEMA,
-          agent_name: this.#agentName,
-          prompt: bundle.prompt,
-          prompt_hash: bundle.promptHash,
-          timeout_seconds: this.#timeoutSeconds,
-        },
+        body,
       });
       const responseKeys = Object.keys(payload).sort();
       if (

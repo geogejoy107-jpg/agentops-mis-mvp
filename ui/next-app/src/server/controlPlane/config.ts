@@ -225,7 +225,30 @@ export function postgresEntitlementAdminRole(
 }
 
 export function proxyBaseUrl() {
-  return String(process.env.AGENTOPS_API_BASE || "http://127.0.0.1:8765/api").replace(/\/$/, "");
+  const configured = String(
+    process.env.AGENTOPS_API_BASE || "http://127.0.0.1:8765/api",
+  ).trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(configured);
+  } catch {
+    throw new Error("AGENTOPS_API_BASE must be an absolute Free Local loopback URL.");
+  }
+  const loopback = new Set(["127.0.0.1", "[::1]"]);
+  if (
+    !["http:", "https:"].includes(parsed.protocol)
+    || !loopback.has(parsed.hostname.toLowerCase())
+    || parsed.username !== ""
+    || parsed.password !== ""
+    || parsed.search !== ""
+    || parsed.hash !== ""
+    || !["/api", "/api/"].includes(parsed.pathname)
+  ) {
+    throw new Error(
+      "AGENTOPS_API_BASE must use loopback HTTP(S), no credentials/query/fragment, and the /api path.",
+    );
+  }
+  return `${parsed.origin}/api`;
 }
 
 export function postgresSslEnabled() {

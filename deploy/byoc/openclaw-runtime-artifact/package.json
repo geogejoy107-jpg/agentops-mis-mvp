@@ -1,0 +1,13 @@
+{
+  "name": "agentops-openclaw-runtime-artifact",
+  "version": "2026.5.4-a07.1",
+  "private": true,
+  "description": "Reproducible dependency input for the A07 OpenClaw guest-root OCI artifact.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": "22.23.2"
+  },
+  "dependencies": {
+    "openclaw": "2026.5.4"
+  }
+}

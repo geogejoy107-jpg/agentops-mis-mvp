@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { listWorkspaceApprovals } from "@/server/controlPlane/approvalQueue";
+import { strictApprovalReadQuery } from "@/server/controlPlane/approvalReadBoundary";
 import {
   controlPlaneMode,
   legacyPythonProxyAllowed,
@@ -36,11 +37,16 @@ export async function GET(request: NextRequest) {
       proxied.headers.set("Vary", PRIVATE_HEADERS.Vary);
       return proxied;
     }
+    const query = strictApprovalReadQuery(request, [
+      "workspace_id",
+      "decision",
+      "limit",
+    ]);
     const result = await listWorkspaceApprovals(
       request.headers,
-      request.nextUrl.searchParams.get("workspace_id"),
-      request.nextUrl.searchParams.get("decision"),
-      request.nextUrl.searchParams.get("limit"),
+      query.workspace_id,
+      query.decision,
+      query.limit,
     );
     return NextResponse.json(result.body, {
       status: result.status,

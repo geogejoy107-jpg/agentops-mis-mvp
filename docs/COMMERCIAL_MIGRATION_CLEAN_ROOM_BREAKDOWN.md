@@ -162,7 +162,7 @@ Exit gate:
 
 ## Current Integration State
 
-As of 2026-07-31:
+As of 2026-08-12:
 
 - Lane 0 is implemented. Production and shared Vite builds resolve only to the
   Next.js `/api/mis` control plane and fail at build time if Python proxy mode,
@@ -190,10 +190,16 @@ As of 2026-07-31:
   OpenClaw Human review flows against one source fingerprint. Passing receipts
   require the TypeScript Worker, no Python Worker or Python API,
   `provider_call_performed=true`, and `dry_run=false`.
-- Lane 5 now has direct Human and Agent task, run, artifact, and evidence-graph
-  read owners. Commercial Vite builds use the Next `/api/mis` transport and
-  Human Session CSRF authority for review and enrollment mutations; Free Local
-  retains its explicit compatibility transport.
+- Lane 5 now has direct TypeScript/PostgreSQL owners for Human and Agent task,
+  run, artifact, evidence-graph, Worker Fleet, Memory list/export/review, and
+  Approval collection/detail reads. Memory review decisions enforce Human
+  Session, workspace, RBAC, origin/CSRF, active commercial entitlement,
+  idempotency, single-winner transactions, and append-only audit/runtime
+  evidence. Free Local retains its explicit Python compatibility transport.
+  A TypeScript AST contract inventories every remaining Python proxy call and
+  fails if production/shared/hosted can reach it or a proxy owner changes
+  without review; current coverage is 15 owner files and 17 Free Local-guarded
+  calls.
 - Lane 6 has direct Human enrollment create/list/revoke/rotate, approval-gated
   request/decision/issue, session lifecycle, one-time hash-only credentials,
   and PostgreSQL workspace entitlement/quota ownership. Enrollment,

@@ -18,6 +18,139 @@ descriptor sampling with monotonic `/v1/execute` request counters. This keeps
 the wrong-uid gate fail-closed while preventing the operational healthcheck's
 legitimate backend connection from being misclassified as an attack bypass.
 
+## A07 Foundation Status (2026-08-24)
+
+The commercial runtime remains Next.js/TypeScript/PostgreSQL; Python remains
+outside this commercial execution path. At exact source commit
+`608eb422c2552eaec979c8a9052c6477a6e78875`, the dual real Hermes/OpenClaw A06
+receipt is operator attestation, not cryptographic proof from the remote model
+Provider.
+
+The A07 candidate now has request-v2 governance binding, an append-only replay
+journal, a signed exact-tree runtime manifest with an immutable-directory
+policy, a native launcher that requires a real cgroup v2 file descriptor before
+uid/gid drop, root-Executor Supervisor/service preflight, a stdin-only runner,
+and a canonical Ed25519 Executor receipt verified by the Broker across a running
+HTTP-over-UDS integration. The service execute route is wired to the runner with
+bounded input and single-flight execution. A separate strict runner contract uses
+the production open/spawn path against an exported guest root on Linux; source
+and injected contracts remain supplemental rather than real-runtime evidence.
+
+The native launcher now receives a dedicated status pipe. It writes exactly
+`R` only after cgroup entry, identity drop, `no_new_privs`, capability clearing,
+resource limits, descriptor closure, and seccomp installation. The status fd is
+`CLOEXEC`, so a successful `execveat` produces `R` followed by EOF; a failed
+exec attempt appends `E`. The runner accepts a provider response only with the
+exact `R` milestone and otherwise records an uncertain execution without a
+receipt. This closes the earlier gap where a child-process spawn event could be
+mistaken for completed launcher isolation, but remains contract evidence until
+the exact-image Linux acceptance passes.
+
+The A07 image also packages a native `openat2` resolver foundation. Its Linux
+contract requires a root-owned inherited directory fd and independently checks
+`RESOLVE_IN_ROOT` and `RESOLVE_BENEATH` identity while denying symlinks, magic
+links, and mount crossings. That standalone diagnostic still closes its resolved
+fds and reports no handoff claim. The launcher now embeds the same guarded
+lookup and compares it to the inherited executable fd. The production service
+now consumes signed manifest v2, double-measures the rootfs and mount policy,
+retains the root/executable fds, and hands both to the launcher. Exact-head Linux
+attack acceptance and durable release provenance are still required, so
+`runtime_path_toctou_closed=false` remains mandatory. Caller-supplied preflight
+and owner/cgroup inspection dependencies are rejected.
+Client disconnect and shutdown propagate cancellation to the runner. Timeout,
+cancellation, and output overflow return control before pipe EOF so cgroup-wide
+cleanup cannot be held hostage by a detached descendant retaining a pipe.
+
+The next guest-root handoff slice is now wired in source: the TypeScript runner
+opens both the runtime root and executable, passes them as inherited fds while
+preserving guest argv, and the launcher re-resolves argv[0] with `openat2`,
+compares device/inode identity, then performs `fchdir`, `chroot`, and `chdir`
+before dropping to uid/gid 1200, clearing the effective, permitted, inheritable,
+and ambient capability vectors, and calling `execveat`.
+The A07 Compose candidate grants only the additional `SYS_CHROOT` capability to
+the root Executor; it is cleared before runtime execution. A strict privileged
+Linux contract covers the positive handoff plus outside-executable, traversal,
+and invalid-root attacks. Until the current exact head passes those attacks with
+the durable production release input, handoff and TOCTOU claims remain false.
+
+The A08 source candidate adds a fourth trusted service: a fixed-upstream Node
+egress gateway. Executor/runtime joins only an internal Docker network; the
+gateway alone joins that network and the Provider-egress network. Executor
+preflight requires replacement-mode model catalogs and rejects OpenClaw configs
+whose Provider API or `baseUrl` can bypass the internal gateway. The gateway
+pins public DNS results into the TLS lookup,
+rejects private, link-local, metadata, reserved, redirect, arbitrary-host, and
+unsupported-route requests, and applies bounded body, response, concurrency,
+and total-deadline cancellation. This is source and loopback contract evidence.
+The bootstrap source now mounts deterministic read-only guest `/etc/hosts` and
+`/etc/resolv.conf` files: the gateway name maps to its configured private
+`runtime-egress` address, while the default resolver points only to guest
+loopback. Manifest v2 signs the exact content hashes, and release signing takes
+the same private gateway IPv4 that bootstrap receives. Mount preflight reads the
+files through `O_NOFOLLOW` descriptors and rejects identity or digest changes.
+Compose also gives `provider-egress` the gateway's preferred default route. Real
+Linux name-resolution, direct-IP, Docker embedded-DNS, and
+connection-denial attacks remain open, so `runtime_network_policy_verified=false`.
+The strict-runner workflow uses separate runtime, gateway-fixture, and Provider
+fixture addresses plus a positive Docker-DNS canary. It can prove that the
+default guest resolver does not resolve that canary and that a nonce-bearing
+request crossed the fixture gateway. It deliberately reports both production
+gateway end-to-end execution and raw `127.0.0.11` DNS denial as false.
+
+OpenClaw 2026.5.4 still exposes the agent prompt only as CLI
+`--message <text>`; that CLI remains forbidden. A checked-in Node adapter now
+reads the canonical provider request from stdin and calls OpenClaw's published
+`openclaw/plugin-sdk/agent-runtime` `agentCommand` export. An operator-local,
+non-claim probe of the checked-in source completed a real `modelRun` turn
+through that API with canonical stdout, an empty ephemeral state root after
+response, and no prompt/response in the adapter output; no repository artifact
+or release claim is derived from that probe. The adapter disables owner
+authorization, model overrides,
+tools, workspace/chat prompt policy, and external delivery. It gives each
+one-shot run an isolated 0700 state subtree below a dedicated initially empty
+state root and removes every entry below that root before writing stdout; this
+also catches a same-uid runtime renaming the request subtree. Cleanup failure
+makes the process fail closed, and an OpenClaw `isError` payload is never
+reported as a successful Provider call. Adapter cleanup alone does not defeat a
+still-running same-uid descendant that writes after the final check; the root
+Executor must first quiesce the execution cgroup and then clean and verify the
+state root before it can earn the hostile-runtime claim.
+
+The adapter is now the sole source copied by a reproducible guest-root build
+input under `deploy/byoc/openclaw-runtime-artifact/`. That input locks
+OpenClaw 2026.5.4, Node 22.23.2, npm integrity, and separate Linux amd64 and
+arm64/v8 OCI child digests. Runtime manifest v2 binds the platform, OCI digest,
+rootfs Merkle identity, typed guest argv, immutable code roots, read-only
+workspace/config mounts, writable state mount, uid/gid 1200, and policy hashes
+inside a canonical Ed25519 envelope. The exact-head Linux workflow builds and
+imports an ephemeral amd64 image, exports and measures its rootfs, signs the
+ephemeral manifest, and feeds that exact input to the strict runner under a
+read-only root filesystem. This remains per-run CI evidence rather than a
+published, digest-addressed, durably signed customer release artifact. All
+current-head artifact, handoff, receipt, Provider, network-policy, and
+hostile-runtime claims therefore remain false until the corresponding gates
+pass on the same image and source commit.
+
+Earlier A07 foundation images and native launcher contracts passed Linux CI,
+and the current service now consumes manifest v2 and retains root/executable
+file descriptors through the launcher handoff. The signed runtime path audit in
+`docs/OPENCLAW_A07_SIGNED_RUNTIME_PATH_AUDIT.md` identifies unresolved
+durable release provenance and same-image acceptance gaps. The CLI
+`--message <prompt>` path remains forbidden. The checked-in stdin adapter is
+packaged in the ephemeral CI guest root and handed to the launcher through an
+opened guest-root fd, but the current exact head has not passed every required
+Linux attack, A08 network-policy, receipt, and real Provider gate on one durable
+release image. A01-A19 have not passed for this topology. The default release
+therefore remains A01/A02, and the A07/A08 candidate must continue to report:
+
+```text
+real_runtime_process_spawned=false
+runtime_receipt_verified=false
+hostile_runtime_isolation_verified=false
+provider_call_verified=false
+runtime_network_policy_verified=false
+```
+
 ## 1. Security Claims At The Current Baseline
 
 The current two-service topology must not claim hostile-runtime isolation.
@@ -191,12 +324,22 @@ or a runtime-owned `0400` secret mount; never mount that secret into Broker.
   MIS HTTPS origin and required DNS/CA endpoints. It has no Provider egress.
 - Broker uses `network_mode: none`. It communicates exclusively over the two
   UDS volumes and has no host port.
-- Executor/runtime joins only `openclaw_provider_egress`; it has no route or DNS
-  resolution to `control_plane`, PostgreSQL, MIS, Docker API, cloud metadata, or
-  host gateway addresses.
-- Provider egress is enforced by an external firewall or egress proxy allowlist,
-  not by a Docker network name alone. The allowlist is versioned deployment
-  input and defaults to deny.
+- Executor/runtime joins only the internal `runtime-egress` Docker network. It
+  receives a deterministic read-only hosts mapping for the fixed
+  `openclaw-egress-gateway` service and a loopback-only default resolver. It has
+  no direct membership in `control_plane` or `provider-egress`.
+- The trusted egress gateway is the only service that joins both
+  `runtime-egress` and `provider-egress`. It validates a single operator-set
+  HTTPS upstream origin, resolves only public addresses, pins the accepted DNS
+  result into the TLS connection, forwards only bounded allowlisted Provider
+  routes and headers, and rejects redirects. Its `provider-egress` attachment
+  has the higher default-gateway priority.
+- Docker network membership is only topology input, not acceptance evidence.
+  The deployment still needs a default-deny host/cloud policy around
+  `provider-egress`, guest-root DNS handoff, and active same-image connection
+  denial tests for MIS, PostgreSQL, Docker API, metadata, host gateways, private
+  addresses, arbitrary Internet destinations, and direct queries to Docker's
+  embedded DNS listener.
 - No service mounts `/var/run/docker.sock`, the host network namespace, host PID
   namespace, or a writable host path.
 
@@ -228,8 +371,9 @@ For every request the Executor performs this exact fail-closed sequence:
    group; clear supplementary groups; call `setresgid(1200,1200,1200)` and
    `setresuid(1200,1200,1200)`; set `PR_SET_NO_NEW_PRIVS`; clear all permitted,
    effective, inheritable, and ambient capabilities; install the runtime seccomp
-   profile; close all non-allowlisted descriptors; then exec a fixed absolute
-   argv template.
+   profile; close all non-allowlisted descriptors except the executable and
+   close-on-exec status descriptors; write one `R` status byte; then exec a fixed
+   absolute argv template. If exec returns, write `E` and fail.
 6. In the parent: close child-only descriptors, enforce the monotonic deadline,
    collect bounded stdout/stderr through pipes, hash raw output without storing
    it, and never return raw stderr.
@@ -242,7 +386,10 @@ For every request the Executor performs this exact fail-closed sequence:
    record is written.
 
 Executor PID 1 runs as `0:2200`, with `no-new-privileges` and only Linux
-capabilities `SETUID`, `SETGID`, and `KILL`. Its root filesystem is read-only;
+capabilities `SETUID`, `SETGID`, `SYS_CHROOT`, and `KILL`. The launcher clears
+the runtime process's effective, permitted, inheritable, and ambient vectors;
+the current contract does not claim that it clears the capability bounding set.
+Its root filesystem is read-only;
 `/tmp` and runtime state are bounded `noexec,nosuid,nodev` tmpfs mounts. Directory
 ownership must be supplied by image build or tmpfs mount options so `CHOWN`,
 `DAC_OVERRIDE`, `SYS_ADMIN`, `SYS_PTRACE`, and `NET_ADMIN` are not needed.
@@ -345,7 +492,7 @@ Replace the overloaded success signal with three independent booleans:
 
 | Field | Set true only when | Authority |
 | --- | --- | --- |
-| `runtime_process_spawned` | Executor successfully execs the measured child as uid/gid `1200:1200` inside the bound cgroup. | Executor observation; trustworthy only inside a verified receipt. |
+| `runtime_process_spawned` | Executor receives exact launcher status `R` followed by close-on-exec EOF, then a canonical bounded child response and exit code 0. | Executor observation; trustworthy only inside a verified receipt and exact-image acceptance. |
 | `runtime_receipt_verified` | Broker/control plane verifies the Executor signature and every request, manifest, policy, deadline, result, and cleanup binding. | Broker/control plane verifier. |
 | `provider_call_verified` | A configured remote Provider trust root verifies Provider/Gateway evidence bound to this execution. | Remote Provider/Gateway verifier. |
 

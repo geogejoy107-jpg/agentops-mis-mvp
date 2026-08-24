@@ -85,7 +85,7 @@ fs.appendFileSync(${JSON.stringify(paths.events)},"backend_started\\n");
 fs.writeFileSync(${JSON.stringify(paths.backendRecord)},JSON.stringify({argv:process.argv,env:process.env}));
 ${earlyExit ? "process.exit(23);" : ""}
 ${descendants ? `const d=cp.spawn(process.execPath,["-e","process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"],{stdio:"ignore"});fs.writeFileSync(${JSON.stringify(paths.backendPid)},String(d.pid));process.on("SIGTERM",()=>{});` : ""}
-const socket=process.env.AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_PATH||process.env.OPENCLAW_PROVIDER_SOCKET;
+const socket=process.env.AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_PATH||process.env.OPENCLAW_PROVIDER_SOCKET||process.env.OPENCLAW_EXECUTOR_SOCKET;
 const server=http.createServer((req,res)=>{const body=JSON.stringify({schema:${JSON.stringify(schema)},ok:true,ready:true,busy:false});res.writeHead(200,{"content-type":"application/json","content-length":Buffer.byteLength(body)});res.end(body)});
   server.listen(socket,()=>{fs.chownSync(socket,process.getuid(),process.getgid());fs.chmodSync(socket,0o660);fs.appendFileSync(${JSON.stringify(paths.events)},"backend_ready\\n")});
 process.on("SIGTERM",()=>server.close(()=>process.exit(0)));
@@ -135,7 +135,9 @@ function environment(role, paths, backend, gate, extra = {}) {
 function start(role, paths, options = {}) {
   const schema = role === "broker"
     ? "agentops_openclaw_broker_health_v1"
-    : "agentops_openclaw_provider_health_v1";
+    : role === "root-executor"
+      ? "agentops_openclaw_executor_health_v1"
+      : "agentops_openclaw_provider_health_v1";
   const backend = join(paths.fixture, "fake-backend.cjs");
   const gate = join(paths.fixture, "fake-gate.cjs");
   writeExecutable(backend, backendSource(paths, schema, options.backend));
@@ -174,11 +176,16 @@ async function successfulRole(role) {
   const process = start(role, paths, {
     backend: { descendants: true },
     gate: { descendants: true },
+    environment: role === "broker"
+      ? { AGENTOPS_OPENCLAW_RECEIPT_TRUST_ROOT_PATH: "/run/secrets/receipt-trust-root" }
+      : {},
   });
   const statePath = role === "broker" ? paths.brokerState : paths.executorState;
   const internalSocket = role === "broker"
     ? paths.brokerInternalSocket
-    : paths.executorInternalSocket;
+    : role === "root-executor"
+      ? join(paths.fixture, "provider-backend", "executor-backend.sock")
+      : paths.executorInternalSocket;
   await waitFor(() => {
     if (process.child.exitCode !== null) {
       throw new Error(`${role}_supervisor_early_exit:${process.output()}`);
@@ -225,15 +232,23 @@ async function successfulRole(role) {
   assert.equal(
     backend.env[role === "broker"
       ? "AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_PATH"
-      : "OPENCLAW_PROVIDER_SOCKET"],
+      : role === "root-executor" ? "OPENCLAW_EXECUTOR_SOCKET" : "OPENCLAW_PROVIDER_SOCKET"],
     internalSocket,
   );
-  assert.equal(
-    backend.env[role === "broker"
-      ? "AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_DIRECTORY_MODE"
-      : "OPENCLAW_PROVIDER_SOCKET_DIRECTORY_MODE"],
-    "448",
-  );
+  if (role !== "root-executor") {
+    assert.equal(
+      backend.env[role === "broker"
+        ? "AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_DIRECTORY_MODE"
+        : "OPENCLAW_PROVIDER_SOCKET_DIRECTORY_MODE"],
+      "448",
+    );
+  }
+  if (role === "broker") {
+    assert.equal(
+      backend.env.AGENTOPS_OPENCLAW_RECEIPT_TRUST_ROOT_PATH,
+      "/run/secrets/receipt-trust-root",
+    );
+  }
   const backendDescendant = Number(readFileSync(paths.backendPid, "utf8"));
   const gateDescendant = Number(readFileSync(paths.gatePid, "utf8"));
   process.child.kill("SIGTERM");
@@ -309,17 +324,19 @@ try {
 
   await successfulRole("broker");
   await successfulRole("executor");
+  await successfulRole("root-executor");
 
   process.stdout.write(`${JSON.stringify({
     contract: "agentops_openclaw_boundary_supervisor_contract_v1",
     ok: true,
-    modes_verified: ["broker", "executor"],
+    modes_verified: ["broker", "executor", "root-executor"],
   backend_health_before_gate_verified: true,
   external_gate_health_verified: false,
   external_gate_listener_metadata_verified: true,
     fixed_gate_argv_verified: true,
     gate_credential_environment_omitted: true,
     backend_environment_allowlisted: true,
+    broker_receipt_trust_root_forwarded: true,
     internal_root_process_identity_mode_0700_verified: true,
     production_test_override_rejected: true,
     early_backend_death_fail_closed: true,

@@ -715,6 +715,18 @@ async function main() {
       "owner",
       FOREIGN_WORKSPACE,
     );
+    await admin.query(
+      `INSERT INTO workspace_entitlements(
+        workspace_id,edition,status,capabilities_json,max_agents,
+        max_active_enrollments,max_active_sessions_per_agent,max_monthly_runs,
+        max_monthly_cost_usd,max_concurrent_runs,effective_at,expires_at
+      ) VALUES(
+        $1,'team_governance','active','{}',20,20,20,100,1000,10,
+        clock_timestamp()-interval '1 hour',
+        clock_timestamp()+interval '1 year'
+      )`,
+      [WORKSPACE],
+    );
     const fixtures: DeliveryFixture[] = [];
     fixtures.push(await seedDeliveryEvidence(admin, "replay", "hermes"));
     fixtures.push(await seedDeliveryEvidence(admin, "owner", "openclaw"));
@@ -966,6 +978,22 @@ async function main() {
         }),
         FOREIGN_WORKSPACE,
       ));
+    await admin.query(
+      "UPDATE workspace_entitlements SET status='suspended' WHERE workspace_id=$1",
+      [WORKSPACE],
+    );
+    await expectCode("workspace_entitlement_suspended", () =>
+      listWorkspaceMemoryCandidates(
+        browserHeaders(reviewer, {
+          workspaceId: WORKSPACE,
+          includeOrigin: false,
+        }),
+        WORKSPACE,
+      ));
+    await admin.query(
+      "UPDATE workspace_entitlements SET status='active' WHERE workspace_id=$1",
+      [WORKSPACE],
+    );
     await expectCode("machine_credential_not_allowed", () =>
       reviewWorkspaceMemory(
         new Request(

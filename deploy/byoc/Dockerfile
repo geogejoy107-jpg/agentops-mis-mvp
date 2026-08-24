@@ -12,6 +12,30 @@ RUN gcc -std=c11 -O2 -fPIE -fstack-protector-strong \
       -o /agentops-openclaw-peercred-gate openclaw-peercred-gate.c \
     && strip --strip-all /agentops-openclaw-peercred-gate
 
+FROM peercred-build AS runtime-launcher-build
+COPY deploy/byoc/openclaw-runtime-launcher.c ./
+RUN gcc -std=c11 -O2 -fPIE -fstack-protector-strong \
+      -D_FORTIFY_SOURCE=2 -Wall -Wextra -Werror \
+      -Wl,-z,relro,-z,now,-z,noexecstack -pie \
+      -o /agentops-openclaw-runtime-launcher openclaw-runtime-launcher.c \
+    && strip --strip-all /agentops-openclaw-runtime-launcher
+
+FROM peercred-build AS runtime-path-resolver-build
+COPY deploy/byoc/openclaw-runtime-path-resolver.c ./
+RUN gcc -std=c11 -O2 -fPIE -fstack-protector-strong \
+      -D_FORTIFY_SOURCE=2 -Wall -Wextra -Werror \
+      -Wl,-z,relro,-z,now,-z,noexecstack -pie \
+      -o /agentops-openclaw-runtime-path-resolver openclaw-runtime-path-resolver.c \
+    && strip --strip-all /agentops-openclaw-runtime-path-resolver
+
+FROM peercred-build AS mount-bootstrap-build
+COPY deploy/byoc/openclaw-mount-bootstrap.c ./
+RUN gcc -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -Wformat=2 \
+      -Wconversion -Wshadow -fstack-protector-strong -D_FORTIFY_SOURCE=3 \
+      -fPIE -pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack \
+      -o /agentops-openclaw-mount-bootstrap openclaw-mount-bootstrap.c \
+    && strip --strip-all /agentops-openclaw-mount-bootstrap
+
 FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS dependencies
 WORKDIR /opt/agentops/ui/next-app
 COPY ui/next-app/package.json ui/next-app/package-lock.json ./
@@ -42,6 +66,9 @@ WORKDIR /opt/agentops
 COPY --from=build /opt/agentops/ui/next-app ./ui/next-app
 COPY migrations/postgres ./migrations/postgres
 COPY --from=peercred-build --chmod=0555 /agentops-openclaw-peercred-gate /usr/local/bin/agentops-openclaw-peercred-gate
+COPY --from=runtime-launcher-build --chmod=0555 /agentops-openclaw-runtime-launcher /usr/local/bin/agentops-openclaw-runtime-launcher
+COPY --from=runtime-path-resolver-build --chmod=0555 /agentops-openclaw-runtime-path-resolver /usr/local/bin/agentops-openclaw-runtime-path-resolver
+COPY --from=mount-bootstrap-build --chmod=0555 /agentops-openclaw-mount-bootstrap /usr/local/bin/agentops-openclaw-mount-bootstrap
 COPY --chmod=0555 \
     deploy/byoc/node-healthcheck.mjs \
     deploy/byoc/node-secret-entrypoint.mjs \
@@ -50,13 +77,38 @@ COPY --chmod=0555 \
     deploy/byoc/openclaw-broker-contract.mjs \
     deploy/byoc/openclaw-boundary-supervisor.mjs \
     deploy/byoc/openclaw-boundary-supervisor-contract.mjs \
+    deploy/byoc/openclaw-cgroup-v2.mjs \
+    deploy/byoc/openclaw-cgroup-v2-contract.mjs \
+    deploy/byoc/openclaw-egress-config.mjs \
+    deploy/byoc/openclaw-egress-config-contract.mjs \
+    deploy/byoc/openclaw-egress-gateway.mjs \
+    deploy/byoc/openclaw-egress-gateway-contract.mjs \
+    deploy/byoc/openclaw-executor-request.mjs \
+    deploy/byoc/openclaw-executor-request-contract.mjs \
+    deploy/byoc/openclaw-executor-protocol.mjs \
+    deploy/byoc/openclaw-executor-protocol-contract.mjs \
+    deploy/byoc/openclaw-executor-receipt.mjs \
+    deploy/byoc/openclaw-executor-receipt-contract.mjs \
+    deploy/byoc/openclaw-executor-runner.mjs \
+    deploy/byoc/openclaw-executor-runner-contract.mjs \
+    deploy/byoc/openclaw-executor-healthcheck.mjs \
+    deploy/byoc/openclaw-executor-service.mjs \
+    deploy/byoc/openclaw-executor-service-contract.mjs \
     deploy/byoc/openclaw-peercred-gate-contract.mjs \
     deploy/byoc/openclaw-phase-a03-image-contract.mjs \
+    deploy/byoc/openclaw-phase-a07-image-contract.mjs \
     deploy/byoc/openclaw-provider-entrypoint.mjs \
     deploy/byoc/openclaw-provider-healthcheck.mjs \
     deploy/byoc/openclaw-provider-contract.mjs \
     deploy/byoc/openclaw-runtime-receipt.mjs \
     deploy/byoc/openclaw-runtime-receipt-contract.mjs \
+    deploy/byoc/openclaw-runtime-manifest.mjs \
+    deploy/byoc/openclaw-runtime-manifest-contract.mjs \
+    deploy/byoc/openclaw-runtime-manifest-v2.mjs \
+    deploy/byoc/openclaw-runtime-mount-policy.mjs \
+    deploy/byoc/openclaw-runtime-rootfs-merkle.mjs \
+    deploy/byoc/openclaw-runtime-release.mjs \
+    deploy/byoc/openclaw-runtime-path-resolver-contract.mjs \
     deploy/byoc/worker-entrypoint.mjs \
     deploy/byoc/worker-healthcheck.mjs \
     deploy/byoc/worker-service-contract.mjs \
@@ -71,7 +123,8 @@ RUN npm prune --omit=dev --ignore-scripts \
     && chown 1001:1000 /run/agentops-openclaw \
     && chmod 0750 /run/agentops-openclaw \
     && install -d -o 1100 -g 2100 -m 0750 /run/agentops-openclaw-public \
-    && install -d -o 0 -g 2200 -m 0750 /run/agentops-openclaw-private
+    && install -d -o 0 -g 2200 -m 0750 /run/agentops-openclaw-private \
+    && install -d -o 0 -g 2200 -m 0700 /var/lib/agentops-openclaw/replay
 ARG AGENTOPS_BUILD_IDENTITY=local
 ARG AGENTOPS_SOURCE_REVISION=unknown
 LABEL org.opencontainers.image.revision="${AGENTOPS_SOURCE_REVISION}" \

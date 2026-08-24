@@ -1,0 +1,268 @@
+name: agentops-openclaw-phase-a07
+
+# Source-only candidate. The runtime reaches only an internal fixed-upstream
+# gateway; real Linux A08 attack acceptance is still required before promotion.
+services:
+  worker:
+    image: ${AGENTOPS_A07_IMAGE:?set AGENTOPS_A07_IMAGE to an immutable name@sha256:digest reference}
+    init: true
+    restart: "no"
+    user: "1000:1000"
+    group_add:
+      - "2100"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run/agentops-worker:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=1000,gid=1000
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=1000,gid=1000
+    entrypoint: [node, /usr/local/lib/agentops/worker-entrypoint.mjs]
+    environment:
+      NODE_ENV: production
+      AGENTOPS_DEPLOYMENT_MODE: production
+      AGENTOPS_WORKER_ADAPTER: openclaw
+      AGENTOPS_AGENT_TOKEN_SOURCE_FILE: /run/secrets/agent_token
+      AGENTOPS_BASE_URL: ${AGENTOPS_A07_CONTROL_PLANE_URL:?set the commercial HTTPS control-plane URL}
+      AGENTOPS_WORKSPACE_ID: ${AGENTOPS_A07_WORKSPACE_ID:?set AGENTOPS_A07_WORKSPACE_ID}
+      AGENTOPS_AGENT_ID: ${AGENTOPS_A07_WORKER_AGENT_ID:?set AGENTOPS_A07_WORKER_AGENT_ID}
+      AGENTOPS_RUN_ESTIMATED_COST_USD: ${AGENTOPS_A07_ESTIMATED_COST_USD:?set AGENTOPS_A07_ESTIMATED_COST_USD}
+      AGENTOPS_POLL_INTERVAL_MS: ${AGENTOPS_A07_POLL_INTERVAL_MS:-5000}
+      AGENTOPS_ADAPTER_MAX_ATTEMPTS: ${AGENTOPS_A07_ADAPTER_MAX_ATTEMPTS:-2}
+      AGENTOPS_ALLOW_INSECURE_LOOPBACK: "false"
+      AGENTOPS_ALLOW_HIGH_RISK: ${AGENTOPS_A07_ALLOW_HIGH_RISK:-false}
+      OPENCLAW_PROVIDER_SOCKET: /run/agentops-openclaw-public/broker.sock
+      OPENCLAW_PROVIDER_PROTOCOL: v2
+      OPENCLAW_AGENT: ${AGENTOPS_A07_OPENCLAW_AGENT:-main}
+      OPENCLAW_TIMEOUT_SECONDS: ${AGENTOPS_A07_OPENCLAW_TIMEOUT_SECONDS:-180}
+    volumes:
+      - phase_a07_public_socket:/run/agentops-openclaw-public:ro
+      - type: bind
+        source: ${AGENTOPS_A07_AGENT_TOKEN_PATH:?set AGENTOPS_A07_AGENT_TOKEN_PATH}
+        target: /run/secrets/agent_token
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - control-plane
+
+  broker:
+    image: ${AGENTOPS_A07_IMAGE:?set AGENTOPS_A07_IMAGE to an immutable name@sha256:digest reference}
+    init: true
+    restart: "no"
+    user: "1100:1100"
+    group_add:
+      - "2100"
+      - "2200"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=1100,gid=1100
+      - /run/agentops-openclaw-broker-backend:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=1100,gid=1100
+    entrypoint: [node, /usr/local/lib/agentops/openclaw-boundary-supervisor.mjs]
+    environment:
+      AGENTOPS_OPENCLAW_BOUNDARY_ROLE: broker
+      AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_PATH: /run/agentops-openclaw-public/broker.sock
+      AGENTOPS_OPENCLAW_BROKER_PRIVATE_SOCKET_PATH: /run/agentops-openclaw-private/executor.sock
+      AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_GID: "2100"
+      AGENTOPS_OPENCLAW_BROKER_PRIVATE_SOCKET_GID: "2200"
+      AGENTOPS_OPENCLAW_BROKER_PRIVATE_SOCKET_UID: "0"
+      AGENTOPS_OPENCLAW_BROKER_RUNTIME_MANIFEST_SHA256: ${AGENTOPS_A07_RUNTIME_MANIFEST_SHA256:?set AGENTOPS_A07_RUNTIME_MANIFEST_SHA256}
+      AGENTOPS_OPENCLAW_BROKER_ISOLATION_POLICY_SHA256: ${AGENTOPS_A07_CGROUP_POLICY_SHA256:?set AGENTOPS_A07_CGROUP_POLICY_SHA256}
+      AGENTOPS_OPENCLAW_BROKER_SECCOMP_PROFILE_SHA256: ${AGENTOPS_A07_SECCOMP_PROFILE_SHA256:?set AGENTOPS_A07_SECCOMP_PROFILE_SHA256}
+      AGENTOPS_OPENCLAW_BROKER_EXECUTOR_IMAGE_REFERENCE: ${AGENTOPS_A07_IMAGE:?set the same immutable Executor image reference}
+      AGENTOPS_OPENCLAW_BROKER_RUNTIME_IMAGE_DIGEST: ${AGENTOPS_A07_RUNTIME_IMAGE_DIGEST:?set AGENTOPS_A07_RUNTIME_IMAGE_DIGEST}
+      AGENTOPS_OPENCLAW_BROKER_RECEIPT_KEY_ID: ${AGENTOPS_A07_RECEIPT_KEY_ID:?set AGENTOPS_A07_RECEIPT_KEY_ID}
+      AGENTOPS_OPENCLAW_RECEIPT_TRUST_ROOT_PATH: /run/secrets/openclaw_receipt_trust_root
+    volumes:
+      - phase_a07_public_socket:/run/agentops-openclaw-public:rw
+      - phase_a07_private_socket:/run/agentops-openclaw-private:ro
+      - type: bind
+        source: ${AGENTOPS_A07_RECEIPT_TRUST_ROOT_PATH:?set AGENTOPS_A07_RECEIPT_TRUST_ROOT_PATH}
+        target: /run/secrets/openclaw_receipt_trust_root
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      executor:
+        condition: service_healthy
+
+  executor:
+    image: ${AGENTOPS_A07_IMAGE:?set AGENTOPS_A07_IMAGE to an immutable name@sha256:digest reference}
+    init: false
+    restart: "no"
+    user: "0:2200"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add:
+      - SETUID
+      - SETGID
+      - SYS_CHROOT
+      - KILL
+      - SYS_ADMIN
+      - SETPCAP
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    stop_grace_period: 15s
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=0,gid=2200
+      - /run/agentops-openclaw-bootstrap:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=0,gid=2200
+      - /run/agentops-openclaw-provider-backend:rw,noexec,nosuid,nodev,size=2m,mode=0700,uid=0,gid=2200
+      - /opt/agentops-provider/openclaw/run/openclaw-state:rw,noexec,nosuid,nodev,size=32m,mode=0700,uid=1200,gid=1200
+      - /opt/agentops-provider/openclaw/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777,uid=1200,gid=1200
+    entrypoint: [/usr/local/bin/agentops-openclaw-mount-bootstrap]
+    environment:
+      NODE_ENV: production
+      AGENTOPS_OPENCLAW_BOUNDARY_ROLE: root-executor
+      OPENCLAW_EXECUTOR_JOURNAL_ROOT: /var/lib/agentops-openclaw/replay
+      OPENCLAW_EXECUTOR_LAUNCHER: /usr/local/bin/agentops-openclaw-runtime-launcher
+      OPENCLAW_CGROUP_ROOT: /sys/fs/cgroup/agentops-openclaw-executor
+      OPENCLAW_CGROUP_POLICY_PATH: /run/policies/openclaw-cgroup-policy.json
+      OPENCLAW_SECCOMP_PROFILE_PATH: /run/policies/openclaw-runtime-seccomp.json
+      OPENCLAW_RUNTIME_RELEASE_ROOT: /run/manifests/openclaw-runtime-release
+      OPENCLAW_RUNTIME_MANIFEST_TRUST_ROOT_PATH: /run/trust/openclaw-runtime-manifest-trust-roots.json
+      OPENCLAW_RUNTIME_MANIFEST_ISSUER: ${AGENTOPS_A07_RUNTIME_MANIFEST_ISSUER:?set AGENTOPS_A07_RUNTIME_MANIFEST_ISSUER}
+      OPENCLAW_RUNTIME_MANIFEST_KEY_ID: ${AGENTOPS_A07_RUNTIME_MANIFEST_KEY_ID:?set AGENTOPS_A07_RUNTIME_MANIFEST_KEY_ID}
+      OPENCLAW_RECEIPT_SIGNING_KEY_PATH: /run/secrets/openclaw_receipt_signing_key
+      OPENCLAW_RECEIPT_KEY_ID: ${AGENTOPS_A07_RECEIPT_KEY_ID:?set AGENTOPS_A07_RECEIPT_KEY_ID}
+      OPENCLAW_EXECUTOR_IMAGE_REFERENCE: ${AGENTOPS_A07_IMAGE:?set AGENTOPS_A07_IMAGE to the same immutable reference used by the service}
+      OPENCLAW_RUNTIME_IMAGE_DIGEST: ${AGENTOPS_A07_RUNTIME_IMAGE_DIGEST:?set AGENTOPS_A07_RUNTIME_IMAGE_DIGEST}
+      OPENCLAW_RUNTIME_IMAGE_NAME: ${AGENTOPS_A07_RUNTIME_IMAGE_NAME:?set AGENTOPS_A07_RUNTIME_IMAGE_NAME}
+      OPENCLAW_RUNTIME_ROOT: /opt/agentops-provider/openclaw
+      OPENCLAW_CONFIG_PATH: /run/secrets/openclaw_config
+      OPENCLAW_STATE_DIR: /run/openclaw-state
+      OPENCLAW_WORKSPACE: /opt/agentops-worker/workspace
+      OPENCLAW_RUNTIME_UID: "1200"
+      OPENCLAW_RUNTIME_GID: "1200"
+      OPENCLAW_EXTERNAL_PROVIDER_EGRESS_ATTESTED: ${AGENTOPS_A07_EXTERNAL_PROVIDER_EGRESS_ATTESTED:?set true only after the operator applies external default-deny enforcement}
+      OPENCLAW_EGRESS_GATEWAY_IPV4: ${AGENTOPS_A08_RUNTIME_GATEWAY_IPV4:-172.31.250.3}
+    volumes:
+      - phase_a07_private_socket:/run/agentops-openclaw-private:rw
+      - type: bind
+        source: ${AGENTOPS_A07_REPLAY_JOURNAL_PATH:?set AGENTOPS_A07_REPLAY_JOURNAL_PATH to a pre-provisioned root:2200 mode 0700 directory}
+        target: /var/lib/agentops-openclaw/replay
+        read_only: false
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /sys/fs/cgroup/agentops-openclaw-executor
+        target: /sys/fs/cgroup/agentops-openclaw-executor
+        read_only: false
+        bind:
+          create_host_path: false
+          propagation: rprivate
+      - type: bind
+        source: ${AGENTOPS_A07_CONFIG_PATH:?set AGENTOPS_A07_CONFIG_PATH}
+        target: /opt/agentops-provider/openclaw/run/secrets/openclaw_config
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AGENTOPS_A07_WORKSPACE_PATH:?set AGENTOPS_A07_WORKSPACE_PATH}
+        target: /opt/agentops-provider/openclaw/opt/agentops-worker/workspace
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AGENTOPS_A07_RUNTIME_RELEASE_ROOT:?set AGENTOPS_A07_RUNTIME_RELEASE_ROOT to the committed mode 0555 release directory}
+        target: /run/manifests/openclaw-runtime-release
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AGENTOPS_A07_RUNTIME_MANIFEST_TRUST_ROOT_PATH:?set AGENTOPS_A07_RUNTIME_MANIFEST_TRUST_ROOT_PATH}
+        target: /run/trust/openclaw-runtime-manifest-trust-roots.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AGENTOPS_A07_SIGNING_KEY_PATH:?set AGENTOPS_A07_SIGNING_KEY_PATH}
+        target: /run/secrets/openclaw_receipt_signing_key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AGENTOPS_A07_SECCOMP_PROFILE_PATH:?set AGENTOPS_A07_SECCOMP_PROFILE_PATH}
+        target: /run/policies/openclaw-runtime-seccomp.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AGENTOPS_A07_CGROUP_POLICY_PATH:?set AGENTOPS_A07_CGROUP_POLICY_PATH}
+        target: /run/policies/openclaw-cgroup-policy.json
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: [CMD, node, /usr/local/lib/agentops/openclaw-executor-healthcheck.mjs]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+    networks:
+      - runtime-egress
+    depends_on:
+      egress-gateway:
+        condition: service_healthy
+
+  egress-gateway:
+    image: ${AGENTOPS_A07_IMAGE:?set AGENTOPS_A07_IMAGE to an immutable name@sha256:digest reference}
+    init: true
+    restart: "no"
+    user: "1300:1300"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=1300,gid=1300
+    entrypoint: [node, /usr/local/lib/agentops/openclaw-egress-gateway.mjs]
+    environment:
+      NODE_ENV: production
+      OPENCLAW_EGRESS_GATEWAY_UPSTREAM_ORIGIN: ${AGENTOPS_A08_PROVIDER_ORIGIN:?set one approved HTTPS Provider origin}
+    healthcheck:
+      test: [CMD, node, /usr/local/lib/agentops/openclaw-egress-gateway.mjs, --healthcheck]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+    networks:
+      runtime-egress:
+        aliases:
+          - openclaw-egress-gateway
+        gw_priority: 0
+        ipv4_address: ${AGENTOPS_A08_RUNTIME_GATEWAY_IPV4:-172.31.250.3}
+      provider-egress:
+        gw_priority: 1
+
+volumes:
+  phase_a07_public_socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=1100,gid=2100,mode=0750,nosuid,nodev,noexec,size=1m
+  phase_a07_private_socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=0,gid=2200,mode=0750,nosuid,nodev,noexec,size=1m
+networks:
+  control-plane:
+    driver: bridge
+    internal: false
+  runtime-egress:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: ${AGENTOPS_A08_RUNTIME_SUBNET:-172.31.250.0/29}
+  provider-egress:
+    driver: bridge
+    internal: false

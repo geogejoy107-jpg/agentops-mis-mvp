@@ -1,6 +1,13 @@
 import { withPostgresTransaction } from "./db";
 import { authenticateHumanMember } from "./humanSession";
 import { ControlPlaneHttpError } from "./http";
+import { appendAudit, stableHash } from "./ledger";
+import {
+  assertActiveApprovalReadEntitlement,
+  assertApprovalReadRole,
+  boundedApprovalReadText,
+  boundedApprovalReadTimestamp,
+} from "./approvalReadBoundary";
 
 type ApprovalDecision = "pending" | "approved" | "rejected" | "expired";
 
@@ -13,7 +20,6 @@ type ApprovalQueueRow = {
   requested_by_agent_id: string | null;
   approver_user_id: string | null;
   decision: ApprovalDecision;
-  reason: string | null;
   expires_at: string | null;
   created_at: string;
   decided_at: string | null;
@@ -25,17 +31,15 @@ type ApprovalQueueRow = {
   action_id: string | null;
   action_tool_call_id: string | null;
   action_type: string | null;
-  target_resource: string | null;
   risk_level: string | null;
   policy_version: string | null;
   action_hash: string | null;
   prepared_action_status: string | null;
-  provider_side_effect_id: string | null;
 };
 
 function decisionFilter(value: unknown): ApprovalDecision | null {
-  const normalized = String(value ?? "").trim().toLowerCase();
-  if (!normalized) return null;
+  if (value === undefined || value === null || value === "") return null;
+  const normalized = String(value);
   if (
     normalized === "pending"
     || normalized === "approved"
@@ -52,9 +56,9 @@ function decisionFilter(value: unknown): ApprovalDecision | null {
 }
 
 function boundedLimit(value: unknown) {
-  const normalized = String(value ?? "").trim();
-  if (!normalized) return 200;
-  if (!/^[1-9][0-9]{0,2}$/.test(normalized)) {
+  if (value === undefined || value === null || value === "") return 200;
+  const normalized = String(value);
+  if (!/^(?:[1-9]|[1-9][0-9]|1[0-9]{2}|200)$/.test(normalized)) {
     throw new ControlPlaneHttpError(
       400,
       "approval_limit_invalid",
@@ -62,13 +66,6 @@ function boundedLimit(value: unknown) {
     );
   }
   const parsed = Number(normalized);
-  if (parsed > 200) {
-    throw new ControlPlaneHttpError(
-      400,
-      "approval_limit_invalid",
-      "Approval limit must be an integer between 1 and 200.",
-    );
-  }
   return parsed;
 }
 
@@ -105,32 +102,61 @@ function publicApproval(row: ApprovalQueueRow) {
   }
 
   return {
-    approval_id: row.approval_id,
-    approval_kind: row.approval_kind,
-    task_id: row.task_id,
-    run_id: row.run_id,
-    tool_call_id: row.tool_call_id,
-    requested_by_agent_id: row.requested_by_agent_id,
-    approver_user_id: row.approver_user_id,
-    decision: row.decision,
-    reason: row.reason,
-    expires_at: row.expires_at,
-    created_at: row.created_at,
-    decided_at: row.decided_at,
-    task_status: row.task_status,
-    run_status: row.run_status,
-    runtime_type: row.runtime_type,
-    model_provider: row.model_provider,
+    approval_id: boundedApprovalReadText(row.approval_id, "approval_id", 128),
+    approval_kind: boundedApprovalReadText(
+      row.approval_kind,
+      "approval_kind",
+      32,
+    ),
+    task_id: boundedApprovalReadText(row.task_id, "task_id", 128),
+    run_id: boundedApprovalReadText(row.run_id, "run_id", 128),
+    tool_call_id: boundedApprovalReadText(
+      row.tool_call_id,
+      "tool_call_id",
+      128,
+      true,
+    ),
+    requested_by_agent_id: boundedApprovalReadText(
+      row.requested_by_agent_id,
+      "requested_by_agent_id",
+      128,
+      true,
+    ),
+    approver_user_id: boundedApprovalReadText(
+      row.approver_user_id,
+      "approver_user_id",
+      128,
+      true,
+    ),
+    decision: boundedApprovalReadText(row.decision, "decision", 32),
+    expires_at: boundedApprovalReadTimestamp(row.expires_at, "expires_at", true),
+    created_at: boundedApprovalReadTimestamp(row.created_at, "created_at"),
+    decided_at: boundedApprovalReadTimestamp(row.decided_at, "decided_at", true),
+    task_status: boundedApprovalReadText(row.task_status, "task_status", 64),
+    run_status: boundedApprovalReadText(row.run_status, "run_status", 64),
+    runtime_type: boundedApprovalReadText(row.runtime_type, "runtime_type", 64),
+    model_provider: boundedApprovalReadText(
+      row.model_provider,
+      "model_provider",
+      128,
+      true,
+    ),
     prepared_action: preparedAction
       ? {
-        action_id: row.action_id,
-        action_type: row.action_type,
-        target_resource: row.target_resource,
-        risk_level: row.risk_level,
-        policy_version: row.policy_version,
-        action_hash: row.action_hash,
-        status: row.prepared_action_status,
-        provider_side_effect_id: row.provider_side_effect_id,
+        action_id: boundedApprovalReadText(row.action_id, "action_id", 128),
+        action_type: boundedApprovalReadText(row.action_type, "action_type", 128),
+        risk_level: boundedApprovalReadText(row.risk_level, "risk_level", 32),
+        policy_version: boundedApprovalReadText(
+          row.policy_version,
+          "policy_version",
+          128,
+        ),
+        action_hash: boundedApprovalReadText(row.action_hash, "action_hash", 128),
+        status: boundedApprovalReadText(
+          row.prepared_action_status,
+          "prepared_action_status",
+          64,
+        ),
       }
       : null,
     review_supported: true,
@@ -140,6 +166,9 @@ function publicApproval(row: ApprovalQueueRow) {
     raw_prompt_omitted: true,
     raw_response_omitted: true,
     raw_provider_output_omitted: true,
+    reason_omitted: true,
+    target_resource_omitted: true,
+    provider_side_effect_id_omitted: true,
     token_omitted: true,
   };
 }
@@ -158,6 +187,8 @@ export async function listWorkspaceApprovals(
       headers,
       workspaceId,
     );
+    const role = assertApprovalReadRole(identity);
+    await assertActiveApprovalReadEntitlement(client, identity.workspaceId);
     const rows = await client.query<ApprovalQueueRow>(
       `SELECT
         approval.approval_id,
@@ -168,7 +199,6 @@ export async function listWorkspaceApprovals(
         approval.requested_by_agent_id,
         approval.approver_user_id,
         approval.decision,
-        approval.reason,
         approval.expires_at,
         approval.created_at,
         approval.decided_at,
@@ -180,12 +210,10 @@ export async function listWorkspaceApprovals(
         action.action_id,
         action.tool_call_id AS action_tool_call_id,
         action.action_type,
-        action.target_resource,
         action.risk_level,
         action.policy_version,
         action.action_hash,
-        action.status AS prepared_action_status,
-        action.provider_side_effect_id
+        action.status AS prepared_action_status
       FROM approvals approval
       JOIN tasks task
         ON task.task_id=approval.task_id
@@ -214,6 +242,31 @@ export async function listWorkspaceApprovals(
       LIMIT $3`,
       [identity.workspaceId, decision, limit],
     );
+    await appendAudit(client, {
+      workspaceId: identity.workspaceId,
+      actorType: "user",
+      actorId: identity.userId,
+      action: "human.approval_collection_read",
+      entityType: "approvals",
+      entityId: identity.workspaceId,
+      metadata: {
+        membership_role: role,
+        decision_filter: decision,
+        result_limit: limit,
+        result_count: rows.rows.length,
+        route: "GET /api/mis/approvals",
+        sensitive_fields_omitted: true,
+        session_credential_omitted: true,
+        token_omitted: true,
+      },
+      requestHash: stableHash({
+        workspace_id: identity.workspaceId,
+        user_id: identity.userId,
+        decision,
+        limit,
+        operation: "human.approval_collection_read",
+      }),
+    });
     return {
       status: 200,
       body: rows.rows.map(publicApproval),

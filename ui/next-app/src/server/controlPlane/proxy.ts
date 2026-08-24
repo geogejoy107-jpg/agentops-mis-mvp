@@ -3,7 +3,7 @@ import https from "node:https";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-import { isProductionDeployment, proxyBaseUrl } from "./config";
+import { legacyPythonProxyAllowed, proxyBaseUrl } from "./config";
 import { removeHumanSessionCookie, removeHumanSessionSetCookie } from "./proxyHeaders";
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -17,12 +17,24 @@ const HOP_BY_HOP_HEADERS = new Set([
   "upgrade",
 ]);
 
+export type ProxyControlPlaneResponse = Readonly<{
+  status: number;
+  statusText: string;
+  headers: Headers;
+  body: Buffer;
+}>;
+
+export type ProxyControlPlaneResponseHandler = (
+  upstream: ProxyControlPlaneResponse,
+) => NextResponse;
+
 export async function proxyControlPlaneRequest(
   request: NextRequest,
   upstreamPath: string,
   boundedBody?: Buffer,
+  responseHandler?: ProxyControlPlaneResponseHandler,
 ) {
-  if (isProductionDeployment()) {
+  if (!legacyPythonProxyAllowed()) {
     return NextResponse.json(
       {
         ok: false,
@@ -90,9 +102,12 @@ export async function proxyControlPlaneRequest(
   for (const key of HOP_BY_HOP_HEADERS) responseHeaders.delete(key);
   responseHeaders.delete("content-length");
   removeHumanSessionSetCookie(responseHeaders);
-  return new NextResponse(upstream.body.byteLength > 0 ? upstream.body : null, {
-    status: upstream.status,
-    statusText: upstream.statusText,
-    headers: responseHeaders,
-  });
+  const sanitized = Object.freeze({ ...upstream, headers: responseHeaders });
+  return responseHandler
+    ? responseHandler(sanitized)
+    : new NextResponse(upstream.body.byteLength > 0 ? upstream.body : null, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers: responseHeaders,
+      });
 }

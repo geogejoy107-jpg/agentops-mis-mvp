@@ -623,6 +623,7 @@ jobs:
           npm run typecheck
           npm run test:supply-chain-contract
           npm run test:control-plane-mode-contract
+          npm run test:commercial-api-ownership-contract
           npm run test:configuration-secrets-contract
           npm run test:postgres-role-boundary-contract
           npm run test:byoc-packaging-contract
@@ -654,6 +655,10 @@ jobs:
           npm run test:human-task-run-read-postgres-contract
           npm run test:human-task-dispatch-postgres-contract
           npm run test:human-run-evidence-graph-postgres-contract
+          npm run test:human-worker-fleet-postgres-contract
+          npm run test:human-memory-export-postgres-contract
+          npm run test:human-memory-review-postgres-contract
+          npm run test:human-approval-read-postgres-contract
           npm run test:prepared-action-owner-contract
           npm run test:owner-bootstrap-contract
           npm run test:human-session-approval-contract

@@ -1,150 +1,105 @@
 # 系统架构
 
+AgentOps MIS 当前采用双轨产品架构，不再把 Python/SQLite 视为商业版目标栈：
+
+- **Free Local**：Python + SQLite，面向单机、离线开发、兼容回滚和确定性测试。
+- **Commercial / BYOC**：Next.js 16 + TypeScript + PostgreSQL 16，面向 Team、Enterprise 和客户自托管部署。
+- **真实执行层**：商业 TypeScript Worker 通过 Agent Gateway 调用 Hermes 或 OpenClaw；MIS 只持久化受治理的摘要、哈希和证据，不保存原始 prompt、response 或 transcript。
+- **生产边界**：`production`、`shared`、`hosted` 模式必须使用 TypeScript/PostgreSQL owner。未知或尚未迁移的路由 fail closed，不能回落到 Python/SQLite。
+
+迁移尚未完成，当前进度和退出门槛以
+[`COMMERCIAL_MIGRATION_CLEAN_ROOM_BREAKDOWN.md`](./COMMERCIAL_MIGRATION_CLEAN_ROOM_BREAKDOWN.md)
+为准。
+
+## 产品拓扑
+
 ```mermaid
 flowchart TB
-  U[Founder / Team User] --> UI[Web Dashboard]
-  UI --> API[Local Control Plane API]
+  U[Human User] --> UI[Next.js 16 Web UI]
+  UI --> API[TypeScript API /api/mis]
 
-  API --> AR[Agent Registry]
-  API --> TM[Task Management]
-  API --> RL[Run Ledger]
-  API --> TL[Tool Call Ledger]
-  API --> AP[Approval Workflow]
-  API --> MM[Memory Governance]
-  API --> EV[Evaluation / Quality Gate]
-  API --> AU[Audit Log]
-  API --> IN[Integration Layer]
-
-  TM --> RT[Mock Runtime Adapter]
-  RT --> RL
-  RT --> TL
-  TL --> AP
-  AP --> RT
-  RT --> EV
-  RT --> MM
-  AR --> RT
-
-  AR --> DB[(SQLite)]
-  TM --> DB
-  RL --> DB
-  TL --> DB
-  AP --> DB
-  MM --> DB
-  EV --> DB
-  AU --> DB
-  IN --> DB
-
-  IN --> NT[Notion Export Connector]
-
-  subgraph Future Runtime Adapters
-    CC[Claude Code]
-    CD[Codex]
-    OH[OpenHands]
-    CR[CrewAI]
-    LG[LangGraph]
-    OC[OpenClaw]
-    HM[Hermes]
+  subgraph Commercial / BYOC
+    API --> HS[Human Session + RBAC]
+    API --> GW[Agent Gateway]
+    API --> GOV[Approval + Memory + Audit]
+    API --> PG[(PostgreSQL 16 authority)]
+    HS --> PG
+    GW --> PG
+    GOV --> PG
+    TW[TypeScript Worker] --> GW
+    TW --> HA[Hermes Adapter]
+    TW --> OA[OpenClaw Broker / Executor]
+    OA --> GR[Signed or measured guest root]
   end
 
-  RT -.phase 2.-> CC
-  RT -.phase 2.-> CD
-  RT -.phase 2.-> OH
-  RT -.phase 2.-> CR
-  RT -.phase 2.-> LG
-  RT -.phase 2.-> OC
-  RT -.phase 2.-> HM
-
-  subgraph External Knowledge / Workspaces
-    NO[Notion]
-    FG[Figma]
-    GH[GitHub]
+  subgraph Free Local compatibility
+    FLUI[Local UI] --> PY[Python API]
+    PY --> SQ[(SQLite)]
+    FLW[Python Worker] --> PY
   end
 
-  NT -.configured export.-> NO
-  IN -.future.-> FG
-  IN -.future.-> GH
+  UI -. non-production local compatibility only .-> PY
+  API -. no production fallback .-> PY
 ```
 
-## 控制面分层
+## 权威边界
+
+| 运行模式 | Web/API owner | Worker | 权威数据源 | Python 代理 |
+| --- | --- | --- | --- | --- |
+| Free Local | 本地 UI + Python API，或非生产本地兼容模式的 Next.js | Python Worker | SQLite | 仅 loopback allowlist |
+| Commercial / BYOC | Next.js 16 App Router + TypeScript | TypeScript Worker | PostgreSQL 16 | 禁止，未迁移路由 fail closed |
+
+商业控制面直接持有 Agent identity、task/run lifecycle、Human Session、RBAC、entitlement、approval、prepared action、Memory review、audit 和 evidence。商业 Worker 不直连数据库，只调用受版本约束的 Agent Gateway HTTP contract。
+
+## 商业执行流
+
+```mermaid
+sequenceDiagram
+  participant Human
+  participant Next as Next.js / TypeScript
+  participant PG as PostgreSQL 16
+  participant Worker as TypeScript Worker
+  participant Runtime as Hermes / OpenClaw
+
+  Human->>Next: Create or dispatch governed task
+  Next->>PG: Authoritative task + audit transaction
+  Worker->>Next: Pull, claim, plan, and start run
+  Next->>PG: Bind workspace, agent, plan, and run
+  Worker->>Runtime: Real provider call after explicit authorization
+  Runtime-->>Worker: Runtime result
+  Worker->>Next: Bounded evidence, hashes, evaluation, memory candidate
+  Next->>PG: Append runtime and audit evidence
+  Next-->>Human: Human review queue
+  Human->>Next: Session-bound approve or reject
+  Next->>PG: RBAC, entitlement, idempotency, decision, and audit
+```
+
+原始 provider 输入输出不进入 committed project state。产品就绪声明必须来自同一 source SHA 上的真实 Hermes 和 OpenClaw 闭环，mock 只用于 CI/offline fallback。
+
+## OpenClaw 隔离与供应链
 
 ```mermaid
 flowchart LR
-  A[Execution Runtime<br/>OpenClaw / Hermes / Mock] --> B[Adapter Layer<br/>safe metadata import/export]
-  B --> C[Agent-MIS Control Plane<br/>registry / task / run / approval / memory / evaluation / audit]
-  C --> D[Knowledge & Report Layer<br/>Notion export / docs / presentation]
-  C --> E[Governance Layer<br/>policy / privacy / risk / HITL]
+  OCI[Digest-pinned OCI image] --> EX[Strict OCI exporter]
+  EX --> ROOT[Immutable guest root]
+  EX --> PROV[Rootfs Merkle + provenance]
+  PROV --> REL[Production signature / release gate]
+  ROOT --> EXEC[Linux root Executor]
+  REL --> EXEC
+  EXEC --> BR[OpenClaw broker]
+  BR --> TW[TypeScript Worker]
 ```
 
-## 并行交付架构
+本地 loopback registry 只可用于 Linux CI contract，生成的 provenance 不能通过生产签名和发布读取器。生产发布要求非 loopback 的可信 OCI transport、内容寻址 guest root、可重测 provenance 和签名 release；任何尚未闭合的声明保持 `false`。
+
+## 外部系统
 
 ```mermaid
-flowchart TB
-  M[Main Thread<br/>integration owner] --> R[Research Thread<br/>market + evidence]
-  M --> A[Architecture Thread<br/>schema + diagrams]
-  M --> I[Integration Thread<br/>OpenClaw / Hermes / Notion]
-  M --> Q[QA Thread<br/>smoke + demo checks]
-
-  R --> MR[Merge Gate]
-  A --> MR
-  I --> MR
-  Q --> MR
-  MR --> D[Runnable Demo + Report Package]
+flowchart LR
+  CP[AgentOps MIS Control Plane] --> N[Notion export]
+  CP --> G[GitHub evidence / CI]
+  CP --> K[Knowledge sources]
+  CP --> O[Observability]
 ```
 
-## 数据流
-
-```mermaid
-sequenceDiagram
-  participant User
-  participant UI
-  participant API
-  participant Runtime as Mock Runtime
-  participant DB as SQLite
-  participant Approver
-
-  User->>UI: Create Task
-  UI->>API: POST /api/tasks
-  API->>DB: insert task + audit
-  User->>UI: Start mock run
-  UI->>API: POST /api/mock-runs/start
-  API->>Runtime: create run
-  Runtime->>DB: insert run + tool calls + audit
-  alt high-risk tool exists
-    Runtime->>DB: create approval
-    UI->>Approver: show approval queue
-    Approver->>API: approve / reject
-    API->>DB: update approval + audit
-    API->>Runtime: continue / block run
-  else no high-risk tool
-    Runtime->>DB: complete run
-  end
-  Runtime->>DB: evaluation + memory candidate + audit
-  UI->>API: GET dashboard metrics
-```
-
-## Notion 导出流
-
-```mermaid
-sequenceDiagram
-  participant User
-  participant UI
-  participant API
-  participant DB as SQLite
-  participant Notion
-
-  User->>UI: Open /integrations
-  UI->>API: GET /api/integrations/notion/status
-  API-->>UI: configured / dry-run status
-  UI->>API: GET /api/integrations/notion/export-preview
-  API->>DB: read metrics, runs, evaluations, memory
-  API-->>UI: report markdown preview
-  alt token and parent configured
-    User->>UI: Export to Notion
-    UI->>API: POST /api/integrations/notion/export-report
-    API->>Notion: create page
-    API->>DB: audit notion.export
-  else not configured
-    User->>UI: Dry run
-    API-->>UI: preview only, no network call
-  end
-```
+外部系统不是 MIS 权威账本。导入和导出必须经过 workspace scope、provenance、最小数据和审计边界。

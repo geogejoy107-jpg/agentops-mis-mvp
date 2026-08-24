@@ -1,0 +1,786 @@
+#define _GNU_SOURCE
+
+#ifndef __linux__
+#error "openclaw-mount-bootstrap requires Linux"
+#endif
+
+#include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <linux/capability.h>
+#include <linux/mount.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <sys/mount.h>
+#include <sys/prctl.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#define CONFIG_TARGET "/opt/agentops-provider/openclaw/run/secrets/openclaw_config"
+#define HOSTS_SOURCE "/run/agentops-openclaw-bootstrap/hosts"
+#define HOSTS_TARGET "/opt/agentops-provider/openclaw/etc/hosts"
+#define RESOLVER_SOURCE "/run/agentops-openclaw-bootstrap/resolv.conf"
+#define RESOLVER_TARGET "/opt/agentops-provider/openclaw/etc/resolv.conf"
+#define WORKSPACE_TARGET "/opt/agentops-provider/openclaw/opt/agentops-worker/workspace"
+#define NODE_PATH "/usr/local/bin/node"
+#define SUPERVISOR_PATH "/usr/local/lib/agentops/openclaw-boundary-supervisor.mjs"
+#define MAX_MOUNTINFO_BYTES (1024U * 1024U)
+#define PRIVATE_GID ((gid_t)2200)
+
+/* Production wiring must use executor init:false so this bootstrap is PID 1. */
+#define EXECUTOR_INIT_FALSE_REQUIRED 1
+
+extern char **environ;
+
+static const char *const allowed_prefixed_environment[] = {
+    "AGENTOPS_OPENCLAW_BOUNDARY_ROLE",
+    "OPENCLAW_CGROUP_POLICY_PATH",
+    "OPENCLAW_CGROUP_ROOT",
+    "OPENCLAW_CONFIG_PATH",
+    "OPENCLAW_EXECUTOR_IMAGE_REFERENCE",
+    "OPENCLAW_EXECUTOR_JOURNAL_ROOT",
+    "OPENCLAW_EXECUTOR_LAUNCHER",
+    "OPENCLAW_EXTERNAL_PROVIDER_EGRESS_ATTESTED",
+    "OPENCLAW_EGRESS_GATEWAY_IPV4",
+    "OPENCLAW_RECEIPT_KEY_ID",
+    "OPENCLAW_RECEIPT_SIGNING_KEY_PATH",
+    "OPENCLAW_RUNTIME_GID",
+    "OPENCLAW_RUNTIME_IMAGE_DIGEST",
+    "OPENCLAW_RUNTIME_IMAGE_NAME",
+    "OPENCLAW_RUNTIME_MANIFEST_ISSUER",
+    "OPENCLAW_RUNTIME_MANIFEST_KEY_ID",
+    "OPENCLAW_RUNTIME_RELEASE_ROOT",
+    "OPENCLAW_RUNTIME_MANIFEST_TRUST_ROOT_PATH",
+    "OPENCLAW_RUNTIME_ROOT",
+    "OPENCLAW_RUNTIME_UID",
+    "OPENCLAW_SECCOMP_PROFILE_PATH",
+    "OPENCLAW_STATE_DIR",
+    "OPENCLAW_WORKSPACE",
+};
+
+static const char *const allowed_system_environment[] = {
+    "LANG",
+    "LC_ALL",
+    "NODE_ENV",
+    "PATH",
+    "TZ",
+};
+
+static void fixed_error(const char *code) {
+    (void)fprintf(stderr, "%s\n", code);
+}
+
+static int starts_with(const char *value, const char *prefix) {
+    size_t prefix_length = strlen(prefix);
+    return strncmp(value, prefix, prefix_length) == 0;
+}
+
+static int environment_name_equals(const char *entry, const char *name) {
+    size_t name_length = strlen(name);
+    return strncmp(entry, name, name_length) == 0 && entry[name_length] == '=';
+}
+
+static int prefixed_environment_name_allowed(const char *entry) {
+    size_t index;
+    for (index = 0;
+         index < sizeof(allowed_prefixed_environment) / sizeof(allowed_prefixed_environment[0]);
+         index += 1) {
+        if (environment_name_equals(entry, allowed_prefixed_environment[index])) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int validate_prefixed_environment(void) {
+    size_t index;
+    const char *role = getenv("AGENTOPS_OPENCLAW_BOUNDARY_ROLE");
+    const char *config_path = getenv("OPENCLAW_CONFIG_PATH");
+    const char *egress_gateway_ipv4 = getenv("OPENCLAW_EGRESS_GATEWAY_IPV4");
+    const char *state_directory = getenv("OPENCLAW_STATE_DIR");
+    const char *workspace = getenv("OPENCLAW_WORKSPACE");
+    if (role == NULL || strcmp(role, "root-executor") != 0
+        || config_path == NULL || strcmp(config_path, "/run/secrets/openclaw_config") != 0
+        || egress_gateway_ipv4 == NULL || *egress_gateway_ipv4 == '\0'
+        || state_directory == NULL || strcmp(state_directory, "/run/openclaw-state") != 0
+        || workspace == NULL || strcmp(workspace, "/opt/agentops-worker/workspace") != 0) {
+        return -1;
+    }
+    for (index = 0; environ[index] != NULL; index += 1) {
+        const char *entry = environ[index];
+        if ((starts_with(entry, "AGENTOPS_") || starts_with(entry, "OPENCLAW_"))
+            && !prefixed_environment_name_allowed(entry)) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static char **build_environment(void) {
+    long system_argument_limit = sysconf(_SC_ARG_MAX);
+    size_t argument_limit = system_argument_limit > 0 && system_argument_limit <= (long)(16U * 1024U * 1024U)
+        ? (size_t)system_argument_limit
+        : (size_t)(128U * 1024U);
+    size_t capacity = sizeof(allowed_prefixed_environment) / sizeof(allowed_prefixed_environment[0])
+        + sizeof(allowed_system_environment) / sizeof(allowed_system_environment[0]) + 1U;
+    char **clean_environment = calloc(capacity, sizeof(*clean_environment));
+    size_t output_index = 0;
+    size_t index;
+
+    if (clean_environment == NULL) {
+        return NULL;
+    }
+    for (index = 0;
+         index < sizeof(allowed_system_environment) / sizeof(allowed_system_environment[0]);
+         index += 1) {
+        char *value = getenv(allowed_system_environment[index]);
+        if (value != NULL) {
+            size_t name_length = strlen(allowed_system_environment[index]);
+            size_t value_length = strlen(value);
+            char *entry;
+            if (value_length > argument_limit
+                || name_length > argument_limit - value_length - 2U) {
+                free(clean_environment);
+                return NULL;
+            }
+            entry = malloc(name_length + value_length + 2U);
+            if (entry == NULL) {
+                free(clean_environment);
+                return NULL;
+            }
+            (void)memcpy(entry, allowed_system_environment[index], name_length);
+            entry[name_length] = '=';
+            (void)memcpy(entry + name_length + 1U, value, value_length + 1U);
+            clean_environment[output_index] = entry;
+            output_index += 1U;
+        }
+    }
+    for (index = 0;
+         index < sizeof(allowed_prefixed_environment) / sizeof(allowed_prefixed_environment[0]);
+         index += 1) {
+        char *value = getenv(allowed_prefixed_environment[index]);
+        if (value != NULL) {
+            size_t name_length = strlen(allowed_prefixed_environment[index]);
+            size_t value_length = strlen(value);
+            char *entry;
+            if (value_length > argument_limit
+                || name_length > argument_limit - value_length - 2U) {
+                free(clean_environment);
+                return NULL;
+            }
+            entry = malloc(name_length + value_length + 2U);
+            if (entry == NULL) {
+                free(clean_environment);
+                return NULL;
+            }
+            (void)memcpy(entry, allowed_prefixed_environment[index], name_length);
+            entry[name_length] = '=';
+            (void)memcpy(entry + name_length + 1U, value, value_length + 1U);
+            clean_environment[output_index] = entry;
+            output_index += 1U;
+        }
+    }
+    clean_environment[output_index] = NULL;
+    return clean_environment;
+}
+
+static int validate_self_executable(void) {
+    struct stat executable_metadata;
+    struct stat path_metadata;
+    int executable_fd = open("/proc/self/exe", O_PATH | O_CLOEXEC);
+    int result = -1;
+
+    if (executable_fd < 0) {
+        return -1;
+    }
+    if (fstat(executable_fd, &executable_metadata) == 0
+        && stat("/proc/self/exe", &path_metadata) == 0
+        && S_ISREG(executable_metadata.st_mode)
+        && executable_metadata.st_uid == (uid_t)0
+        && (executable_metadata.st_mode & (S_IWGRP | S_IWOTH)) == 0
+        && (executable_metadata.st_mode & 0111) != 0
+        && executable_metadata.st_nlink == (nlink_t)1
+        && executable_metadata.st_dev == path_metadata.st_dev
+        && executable_metadata.st_ino == path_metadata.st_ino) {
+        result = 0;
+    }
+    if (close(executable_fd) < 0) {
+        return -1;
+    }
+    return result;
+}
+
+static int harden_mount(const char *source, const char *target, int recursive_bind) {
+    const unsigned long bind_flags = MS_BIND | (recursive_bind ? MS_REC : 0UL);
+    const struct mount_attr attributes = {
+        .attr_set = MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID
+            | MOUNT_ATTR_NODEV | MOUNT_ATTR_NOEXEC,
+    };
+    const unsigned int recursive_flags = recursive_bind ? AT_RECURSIVE : 0U;
+
+    if (mount(source, target, NULL, bind_flags, NULL) < 0) {
+        return -1;
+    }
+    if (mount(NULL, target, NULL, MS_PRIVATE | (recursive_bind ? MS_REC : 0UL), NULL) < 0) {
+        return -1;
+    }
+    if (syscall(
+        SYS_mount_setattr,
+        AT_FDCWD,
+        target,
+        recursive_flags,
+        &attributes,
+        sizeof(attributes)
+    ) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int private_ipv4(const char *value) {
+    struct in_addr address;
+    uint32_t host;
+    unsigned int final_octet;
+    if (value == NULL || inet_pton(AF_INET, value, &address) != 1) return 0;
+    host = ntohl(address.s_addr);
+    final_octet = host & 0xffU;
+    if (final_octet == 0U || final_octet == 1U || final_octet == 255U) return 0;
+    return (host & 0xff000000U) == 0x0a000000U
+        || (host & 0xfff00000U) == 0xac100000U
+        || (host & 0xffff0000U) == 0xc0a80000U;
+}
+
+static int write_all(int descriptor, const char *value, size_t length) {
+    size_t offset = 0U;
+    while (offset < length) {
+        ssize_t count = write(descriptor, value + offset, length - offset);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) return -1;
+        offset += (size_t)count;
+    }
+    return 0;
+}
+
+static int create_fixed_file(const char *path, const char *contents, size_t length) {
+    int descriptor = open(
+        path,
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+        0444
+    );
+    struct stat metadata;
+    int result = -1;
+    if (descriptor < 0) return -1;
+    if (fchmod(descriptor, 0444) < 0 || write_all(descriptor, contents, length) < 0
+        || fsync(descriptor) < 0 || fstat(descriptor, &metadata) < 0
+        || !S_ISREG(metadata.st_mode) || metadata.st_uid != (uid_t)0
+        || metadata.st_gid != PRIVATE_GID || metadata.st_nlink != (nlink_t)1
+        || (metadata.st_mode & 0777) != 0444 || metadata.st_size != (off_t)length) {
+        goto cleanup;
+    }
+    result = 0;
+cleanup:
+    if (close(descriptor) < 0) result = -1;
+    return result;
+}
+
+static int immutable_regular_target(const char *path) {
+    struct stat metadata;
+    return lstat(path, &metadata) == 0
+        && S_ISREG(metadata.st_mode)
+        && metadata.st_uid == (uid_t)0
+        && metadata.st_gid == (gid_t)0
+        && metadata.st_nlink == (nlink_t)1
+        && (metadata.st_mode & (S_IWGRP | S_IWOTH)) == 0;
+}
+
+static int prepare_guest_name_service(const char *gateway_ipv4) {
+    static const char resolver[] =
+        "nameserver 127.0.0.1\n"
+        "options timeout:1 attempts:1 ndots:0\n";
+    char hosts[256];
+    int hosts_length;
+    struct stat directory_metadata;
+    if (!private_ipv4(gateway_ipv4)
+        || lstat("/run/agentops-openclaw-bootstrap", &directory_metadata) < 0
+        || !S_ISDIR(directory_metadata.st_mode)
+        || directory_metadata.st_uid != (uid_t)0
+        || directory_metadata.st_gid != PRIVATE_GID
+        || (directory_metadata.st_mode & 0777) != 0700
+        || !immutable_regular_target(HOSTS_TARGET)
+        || !immutable_regular_target(RESOLVER_TARGET)) return -1;
+    hosts_length = snprintf(
+        hosts,
+        sizeof(hosts),
+        "127.0.0.1 localhost\n::1 localhost\n%s openclaw-egress-gateway\n",
+        gateway_ipv4
+    );
+    if (hosts_length <= 0 || (size_t)hosts_length >= sizeof(hosts)) return -1;
+    if (create_fixed_file(HOSTS_SOURCE, hosts, (size_t)hosts_length) < 0
+        || create_fixed_file(RESOLVER_SOURCE, resolver, sizeof(resolver) - 1U) < 0
+        || harden_mount(HOSTS_SOURCE, HOSTS_TARGET, 0) < 0
+        || harden_mount(RESOLVER_SOURCE, RESOLVER_TARGET, 0) < 0) return -1;
+    return 0;
+}
+
+static int decode_mountinfo_field(const char *source, char *destination, size_t capacity) {
+    size_t source_length = strlen(source);
+    size_t input_index = 0;
+    size_t output_index = 0;
+    while (source[input_index] != '\0') {
+        unsigned char value;
+        if (output_index + 1U >= capacity) {
+            return -1;
+        }
+        if (source[input_index] != '\\') {
+            destination[output_index] = source[input_index];
+            input_index += 1U;
+            output_index += 1U;
+            continue;
+        }
+        if (input_index + 3U >= source_length
+            || source[input_index + 1U] < '0' || source[input_index + 1U] > '7'
+            || source[input_index + 2U] < '0' || source[input_index + 2U] > '7'
+            || source[input_index + 3U] < '0' || source[input_index + 3U] > '7') {
+            return -1;
+        }
+        value = (unsigned char)(((unsigned int)(source[input_index + 1U] - '0') << 6U)
+            | ((unsigned int)(source[input_index + 2U] - '0') << 3U)
+            | (unsigned int)(source[input_index + 3U] - '0'));
+        if (value != (unsigned char)' ' && value != (unsigned char)'\t'
+            && value != (unsigned char)'\n' && value != (unsigned char)'\\') {
+            return -1;
+        }
+        destination[output_index] = (char)value;
+        input_index += 4U;
+        output_index += 1U;
+    }
+    destination[output_index] = '\0';
+    return 0;
+}
+
+static int option_present(const char *options, const char *expected) {
+    const char *cursor = options;
+    size_t expected_length = strlen(expected);
+    while (*cursor != '\0') {
+        const char *separator = strchr(cursor, ',');
+        size_t length = separator == NULL ? strlen(cursor) : (size_t)(separator - cursor);
+        if (length == expected_length && strncmp(cursor, expected, length) == 0) {
+            return 1;
+        }
+        if (separator == NULL) {
+            return 0;
+        }
+        cursor = separator + 1;
+    }
+    return 0;
+}
+
+static int mount_point_in_tree(const char *mount_point, const char *target, int recursive) {
+    size_t target_length = strlen(target);
+    return strcmp(mount_point, target) == 0
+        || (recursive && strncmp(mount_point, target, target_length) == 0
+            && mount_point[target_length] == '/');
+}
+
+struct mount_record {
+    unsigned long mount_id;
+    unsigned long parent_id;
+    char *mount_point;
+    char *mount_options;
+};
+
+static int parse_mountinfo_line(char *line, struct mount_record *record) {
+    char *save_pointer = NULL;
+    char *mount_id_text = strtok_r(line, " ", &save_pointer);
+    char *parent_id_text = strtok_r(NULL, " ", &save_pointer);
+    char *device_text = strtok_r(NULL, " ", &save_pointer);
+    char *root_text = strtok_r(NULL, " ", &save_pointer);
+    char *mount_point_text = strtok_r(NULL, " ", &save_pointer);
+    char *mount_options = strtok_r(NULL, " ", &save_pointer);
+    char decoded_mount_point[PATH_MAX];
+    char *end_pointer = NULL;
+    unsigned long mount_id;
+    unsigned long parsed_parent_id;
+
+    (void)device_text;
+    (void)root_text;
+    if (mount_id_text == NULL || parent_id_text == NULL || mount_point_text == NULL
+        || mount_options == NULL || decode_mountinfo_field(
+            mount_point_text,
+            decoded_mount_point,
+            sizeof(decoded_mount_point)
+        ) < 0) return -1;
+    errno = 0;
+    mount_id = strtoul(mount_id_text, &end_pointer, 10);
+    if (errno != 0 || end_pointer == mount_id_text || *end_pointer != '\0' || mount_id == 0UL) {
+        return -1;
+    }
+    errno = 0;
+    parsed_parent_id = strtoul(parent_id_text, &end_pointer, 10);
+    if (errno != 0 || end_pointer == parent_id_text || *end_pointer != '\0'
+        || parsed_parent_id == 0UL || mount_id == parsed_parent_id) {
+        return -1;
+    }
+    record->mount_id = mount_id;
+    record->parent_id = parsed_parent_id;
+    record->mount_point = strdup(decoded_mount_point);
+    record->mount_options = strdup(mount_options);
+    return record->mount_point != NULL && record->mount_options != NULL ? 0 : -1;
+}
+
+static const struct mount_record *find_mount_record(
+    const struct mount_record *records,
+    size_t count,
+    unsigned long mount_id
+) {
+    size_t index;
+    for (index = 0; index < count; index += 1) {
+        if (records[index].mount_id == mount_id) return &records[index];
+    }
+    return NULL;
+}
+
+static int mount_descends_from(
+    const struct mount_record *records,
+    size_t count,
+    const struct mount_record *candidate,
+    unsigned long root_mount_id
+) {
+    unsigned long current = candidate->mount_id;
+    size_t depth;
+    for (depth = 0; depth <= count; depth += 1) {
+        const struct mount_record *record;
+        if (current == root_mount_id) return 1;
+        record = find_mount_record(records, count, current);
+        if (record == NULL || record->parent_id == current) return 0;
+        current = record->parent_id;
+    }
+    return 0;
+}
+
+static int mount_options_hardened(const char *mount_options) {
+    return option_present(mount_options, "ro") && option_present(mount_options, "nosuid")
+        && option_present(mount_options, "nodev") && option_present(mount_options, "noexec")
+        && !option_present(mount_options, "rw") && !option_present(mount_options, "suid")
+        && !option_present(mount_options, "dev") && !option_present(mount_options, "exec");
+}
+
+static unsigned long visible_mount_id(const char *target, int directory) {
+    int descriptor = open(target, O_PATH | O_CLOEXEC | O_NOFOLLOW | (directory ? O_DIRECTORY : 0));
+    char fdinfo_path[64];
+    FILE *fdinfo;
+    char *line = NULL;
+    size_t capacity = 0;
+    unsigned long mount_id = 0UL;
+    int fdinfo_path_length;
+    if (descriptor < 0) return 0UL;
+    fdinfo_path_length = snprintf(
+        fdinfo_path,
+        sizeof(fdinfo_path),
+        "/proc/self/fdinfo/%d",
+        descriptor
+    );
+    if (fdinfo_path_length <= 0 || (size_t)fdinfo_path_length >= sizeof(fdinfo_path)) {
+        if (descriptor >= 0) (void)close(descriptor);
+        return 0UL;
+    }
+    fdinfo = fopen(fdinfo_path, "re");
+    if (fdinfo != NULL) {
+        while (getline(&line, &capacity, fdinfo) >= 0) {
+            if (sscanf(line, "mnt_id:\t%lu", &mount_id) == 1 && mount_id != 0UL) break;
+            mount_id = 0UL;
+        }
+        free(line);
+        if (fclose(fdinfo) != 0) mount_id = 0UL;
+    }
+    if (close(descriptor) < 0) return 0UL;
+    return mount_id;
+}
+
+static int verify_hardened_mounts(void) {
+    int descriptor = open("/proc/self/mountinfo", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    char *contents;
+    size_t used = 0;
+    struct mount_record *records = NULL;
+    size_t record_count = 0;
+    size_t record_capacity = 0;
+    unsigned long config_mount_id = visible_mount_id(CONFIG_TARGET, 0);
+    unsigned long hosts_mount_id = visible_mount_id(HOSTS_TARGET, 0);
+    unsigned long resolver_mount_id = visible_mount_id(RESOLVER_TARGET, 0);
+    unsigned long workspace_mount_id = visible_mount_id(WORKSPACE_TARGET, 1);
+    int result = -1;
+
+    if (descriptor < 0) {
+        return -1;
+    }
+    contents = malloc(MAX_MOUNTINFO_BYTES + 1U);
+    if (contents == NULL) {
+        (void)close(descriptor);
+        return -1;
+    }
+    while (used < MAX_MOUNTINFO_BYTES) {
+        ssize_t count = read(descriptor, contents + used, MAX_MOUNTINFO_BYTES - used);
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count < 0) {
+            goto cleanup;
+        }
+        if (count == 0) {
+            break;
+        }
+        used += (size_t)count;
+    }
+    if (used == MAX_MOUNTINFO_BYTES) {
+        char overflow_byte;
+        if (read(descriptor, &overflow_byte, 1U) != 0) {
+            goto cleanup;
+        }
+    }
+    contents[used] = '\0';
+    {
+        char *line_save_pointer = NULL;
+        char *line = strtok_r(contents, "\n", &line_save_pointer);
+        while (line != NULL) {
+            struct mount_record record = {0};
+            if (record_count == record_capacity) {
+                size_t next_capacity = record_capacity == 0U ? 64U : record_capacity * 2U;
+                struct mount_record *next_records;
+                if (next_capacity < record_capacity) goto cleanup;
+                next_records = realloc(records, next_capacity * sizeof(*records));
+                if (next_records == NULL) goto cleanup;
+                records = next_records;
+                record_capacity = next_capacity;
+            }
+            if (parse_mountinfo_line(line, &record) < 0) {
+                free(record.mount_point);
+                free(record.mount_options);
+                goto cleanup;
+            }
+            records[record_count] = record;
+            record_count += 1U;
+            line = strtok_r(NULL, "\n", &line_save_pointer);
+        }
+    }
+    if (config_mount_id != 0UL && hosts_mount_id != 0UL
+        && resolver_mount_id != 0UL && workspace_mount_id != 0UL
+        && config_mount_id != hosts_mount_id
+        && config_mount_id != resolver_mount_id
+        && config_mount_id != workspace_mount_id
+        && hosts_mount_id != resolver_mount_id
+        && hosts_mount_id != workspace_mount_id
+        && resolver_mount_id != workspace_mount_id) {
+        size_t index;
+        int config_verified = 0;
+        int hosts_verified = 0;
+        int resolver_verified = 0;
+        int workspace_verified = 0;
+        result = 0;
+        for (index = 0; index < record_count; index += 1) {
+            const struct mount_record *record = &records[index];
+            if (record->mount_id == config_mount_id) {
+                if (config_verified || strcmp(record->mount_point, CONFIG_TARGET) != 0
+                    || !mount_options_hardened(record->mount_options)) result = -1;
+                config_verified = 1;
+            }
+            if (record->mount_id == hosts_mount_id) {
+                if (hosts_verified || strcmp(record->mount_point, HOSTS_TARGET) != 0
+                    || !mount_options_hardened(record->mount_options)) result = -1;
+                hosts_verified = 1;
+            }
+            if (record->mount_id == resolver_mount_id) {
+                if (resolver_verified || strcmp(record->mount_point, RESOLVER_TARGET) != 0
+                    || !mount_options_hardened(record->mount_options)) result = -1;
+                resolver_verified = 1;
+            }
+            if (mount_descends_from(records, record_count, record, workspace_mount_id)) {
+                if (!mount_point_in_tree(record->mount_point, WORKSPACE_TARGET, 1)
+                    || !mount_options_hardened(record->mount_options)) result = -1;
+                if (record->mount_id == workspace_mount_id) workspace_verified = 1;
+            }
+        }
+        if (!config_verified || !hosts_verified || !resolver_verified || !workspace_verified) {
+            result = -1;
+        }
+    }
+
+cleanup:
+    for (size_t index = 0; index < record_count; index += 1) {
+        free(records[index].mount_point);
+        free(records[index].mount_options);
+    }
+    free(records);
+    free(contents);
+    if (close(descriptor) < 0) {
+        return -1;
+    }
+    return result;
+}
+
+static int capability_bit_set(const struct __user_cap_data_struct data[2], int capability, int field) {
+    unsigned int index = (unsigned int)capability / 32U;
+    unsigned int mask = 1U << ((unsigned int)capability % 32U);
+    if (field == 0) {
+        return (data[index].effective & mask) != 0U;
+    }
+    if (field == 1) {
+        return (data[index].permitted & mask) != 0U;
+    }
+    return (data[index].inheritable & mask) != 0U;
+}
+
+static void clear_capability_bit(struct __user_cap_data_struct data[2], int capability) {
+    unsigned int index = (unsigned int)capability / 32U;
+    unsigned int mask = ~(1U << ((unsigned int)capability % 32U));
+    data[index].effective &= mask;
+    data[index].permitted &= mask;
+    data[index].inheritable &= mask;
+}
+
+static int retained_capability(int capability) {
+    return capability == CAP_SETUID
+        || capability == CAP_SETGID
+        || capability == CAP_SYS_CHROOT
+        || capability == CAP_KILL;
+}
+
+static int reduce_to_launcher_capabilities(void) {
+    static const int retained_capabilities[] = {
+        CAP_SETUID,
+        CAP_SETGID,
+        CAP_SYS_CHROOT,
+        CAP_KILL,
+    };
+    struct __user_cap_header_struct header;
+    struct __user_cap_data_struct data[2];
+    size_t index;
+
+    memset(&header, 0, sizeof(header));
+    memset(data, 0, sizeof(data));
+    header.version = _LINUX_CAPABILITY_VERSION_3;
+    header.pid = 0;
+    if (syscall(SYS_capget, &header, data) < 0) {
+        return -1;
+    }
+    for (index = 0; index < sizeof(retained_capabilities) / sizeof(retained_capabilities[0]); index += 1) {
+        int capability = retained_capabilities[index];
+        if (!capability_bit_set(data, capability, 0)
+            || !capability_bit_set(data, capability, 1)
+            || prctl(PR_CAPBSET_READ, capability, 0L, 0L, 0L) != 1) {
+            return -1;
+        }
+    }
+    if (!capability_bit_set(data, CAP_SYS_ADMIN, 0)
+        || !capability_bit_set(data, CAP_SYS_ADMIN, 1)
+        || !capability_bit_set(data, CAP_SETPCAP, 0)
+        || !capability_bit_set(data, CAP_SETPCAP, 1)) {
+        return -1;
+    }
+    for (int capability = 0; capability <= CAP_LAST_CAP; capability += 1) {
+        if (prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_LOWER, capability, 0L, 0L) < 0
+            && errno != EINVAL) {
+            return -1;
+        }
+        if (!retained_capability(capability)) {
+            if (prctl(PR_CAPBSET_DROP, capability, 0L, 0L, 0L) < 0) {
+                return -1;
+            }
+            clear_capability_bit(data, capability);
+        }
+    }
+    data[0].inheritable = 0U;
+    data[1].inheritable = 0U;
+    if (syscall(SYS_capset, &header, data) < 0) {
+        return -1;
+    }
+    memset(data, 0, sizeof(data));
+    if (syscall(SYS_capget, &header, data) < 0) {
+        return -1;
+    }
+    for (int capability = 0; capability <= CAP_LAST_CAP; capability += 1) {
+        int retained = retained_capability(capability);
+        errno = 0;
+        if (capability_bit_set(data, capability, 0) != retained
+            || capability_bit_set(data, capability, 1) != retained
+            || capability_bit_set(data, capability, 2)
+            || prctl(PR_CAPBSET_READ, capability, 0L, 0L, 0L) != retained
+            || prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_IS_SET, capability, 0L, 0L) != 0) {
+            return -1;
+        }
+    }
+    for (index = 0; index < sizeof(retained_capabilities) / sizeof(retained_capabilities[0]); index += 1) {
+        int capability = retained_capabilities[index];
+        if (!capability_bit_set(data, capability, 0)
+            || !capability_bit_set(data, capability, 1)
+            || prctl(PR_CAPBSET_READ, capability, 0L, 0L, 0L) != 1) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    char **clean_environment;
+    static char *const child_argv[] = {
+        (char *)NODE_PATH,
+        (char *)SUPERVISOR_PATH,
+        NULL,
+    };
+    const char *egress_gateway_ipv4;
+
+    (void)argv;
+    (void)EXECUTOR_INIT_FALSE_REQUIRED;
+    if (argc != 1) {
+        fixed_error("mount_bootstrap_arguments_forbidden");
+        return 64;
+    }
+    if (getpid() != (pid_t)1 || getuid() != (uid_t)0 || geteuid() != (uid_t)0
+        || getgid() != PRIVATE_GID || getegid() != PRIVATE_GID) {
+        fixed_error("mount_bootstrap_pid1_root_required");
+        return 77;
+    }
+    if (validate_self_executable() < 0) {
+        fixed_error("mount_bootstrap_self_invalid");
+        return 65;
+    }
+    if (validate_prefixed_environment() < 0) {
+        fixed_error("mount_bootstrap_environment_forbidden");
+        return 78;
+    }
+    egress_gateway_ipv4 = getenv("OPENCLAW_EGRESS_GATEWAY_IPV4");
+    clean_environment = build_environment();
+    if (clean_environment == NULL) {
+        fixed_error("mount_bootstrap_environment_build_failed");
+        return 70;
+    }
+    if (prepare_guest_name_service(egress_gateway_ipv4) < 0) {
+        fixed_error("mount_bootstrap_name_service_failed");
+        return 70;
+    }
+    if (harden_mount(CONFIG_TARGET, CONFIG_TARGET, 0) < 0
+        || harden_mount(WORKSPACE_TARGET, WORKSPACE_TARGET, 1) < 0) {
+        fixed_error("mount_bootstrap_mount_hardening_failed");
+        return 70;
+    }
+    if (verify_hardened_mounts() < 0) {
+        fixed_error("mount_bootstrap_mount_verification_failed");
+        return 70;
+    }
+    if (reduce_to_launcher_capabilities() < 0) {
+        fixed_error("mount_bootstrap_capability_drop_failed");
+        return 70;
+    }
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1L, 0L, 0L, 0L) < 0
+        || prctl(PR_GET_NO_NEW_PRIVS, 0L, 0L, 0L, 0L) != 1) {
+        fixed_error("mount_bootstrap_no_new_privs_failed");
+        return 70;
+    }
+    (void)execve(NODE_PATH, child_argv, clean_environment);
+    fixed_error("mount_bootstrap_exec_failed");
+    return 71;
+}
