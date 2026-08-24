@@ -776,6 +776,7 @@ jobs:
             and .dynamic_node_openclaw_entrypoint_executed == true
             and .guest_config_state_workspace_tmp_visible == true
             and .host_path_invisible == true
+            and .runtime_sensitive_path_open_denials_verified == true
             and .runtime_uid_gid_1200_verified == true
             and .status_handshake_r_verified == true
             and .fake_handles_injected == false

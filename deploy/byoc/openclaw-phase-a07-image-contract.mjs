@@ -12,6 +12,7 @@ const dockerfile = read("Dockerfile");
 const a07Dockerfile = read("openclaw-phase-a07.Dockerfile");
 const artifactDockerfile = read("openclaw-runtime-artifact/Dockerfile");
 const a07Workflow = read("../../.github/workflows/openclaw-phase-a07-foundation.yml");
+const realRunner = read("openclaw-runtime-real-runner-contract.mjs");
 const compose = read("compose.openclaw-phase-a07.yaml");
 const defaultCompose = read("compose.openclaw-phase-a04-a05.yaml");
 const artifact = JSON.parse(read("openclaw-runtime-artifact/artifact.json"));
@@ -223,6 +224,20 @@ assert.doesNotMatch(executor, /OPENCLAW_RUNTIME_RECEIPT_VERIFIED/);
 assert.doesNotMatch(executor, /OPENCLAW_HOSTILE_RUNTIME_ISOLATION_VERIFIED/);
 assert.doesNotMatch(compose, /\/var\/run\/docker\.sock|network_mode:\s*host|pid:\s*host|privileged:\s*true/);
 assert.doesNotMatch(compose, /OPENCLAW_(?:RUNTIME_RECEIPT|HOSTILE_RUNTIME_ISOLATION)_VERIFIED: "true"/);
+for (const sensitivePath of [
+  "/run/agentops-openclaw-public/broker.sock",
+  "/run/agentops-openclaw-private/executor.sock",
+  "/run/secrets/agent_token",
+  "/run/secrets/openclaw_receipt_signing_key",
+  "/run/secrets/openclaw_receipt_trust_root",
+  "/run/trust/openclaw-runtime-manifest-trust-roots.json",
+  "/run/policies/openclaw-runtime-seccomp.json",
+  "/run/policies/openclaw-cgroup-policy.json",
+  "/var/lib/agentops-openclaw/replay",
+]) assert.match(realRunner, new RegExp(sensitivePath.replaceAll("/", "\\/")));
+assert.match(realRunner, /constants\.O_RDONLY \| constants\.O_NOFOLLOW/);
+assert.match(realRunner, /\["EACCES", "ENOENT", "EPERM"\]/);
+assert.match(a07Workflow, /\.runtime_sensitive_path_open_denials_verified == true/);
 
 process.stdout.write(`${JSON.stringify({
   contract: "agentops_openclaw_phase_a07_image_topology_v1",
@@ -244,6 +259,7 @@ process.stdout.write(`${JSON.stringify({
   runtime_path_toctou_closed: false,
   external_provider_egress_operator_attestation_required: true,
   real_typescript_worker_entrypoint_configured: true,
+  runtime_sensitive_path_open_denial_contract_wired: true,
   candidate_source_only: true,
   real_linux_acceptance_performed: false,
   runtime_receipt_verified: false,

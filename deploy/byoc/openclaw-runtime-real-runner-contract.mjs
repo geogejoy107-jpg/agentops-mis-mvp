@@ -44,6 +44,17 @@ const GUEST = Object.freeze({
   workspaceMarker: "/opt/agentops-worker/workspace/contract-marker",
   wrapper: "/opt/agentops/real-runner/openclaw-runtime-real-runner-contract.mjs",
 });
+const GUEST_FORBIDDEN_PATHS = Object.freeze([
+  "/run/agentops-openclaw-public/broker.sock",
+  "/run/agentops-openclaw-private/executor.sock",
+  "/run/secrets/agent_token",
+  "/run/secrets/openclaw_receipt_signing_key",
+  "/run/secrets/openclaw_receipt_trust_root",
+  "/run/trust/openclaw-runtime-manifest-trust-roots.json",
+  "/run/policies/openclaw-runtime-seccomp.json",
+  "/run/policies/openclaw-cgroup-policy.json",
+  "/var/lib/agentops-openclaw/replay",
+]);
 
 function fail(code, cause) {
   const error = new Error(code, cause === undefined ? undefined : { cause });
@@ -116,6 +127,18 @@ function ownedDirectory(target, expectedOwner, expectedMode = null) {
     && (expectedMode === null || (metadata.mode & 0o7777) === expectedMode);
 }
 
+function assertGuestPathOpenDenied(target) {
+  let descriptor;
+  try {
+    descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    if (["EACCES", "ENOENT", "EPERM"].includes(error?.code)) return;
+    fail("real_runner_guest_sensitive_path_probe_failed", error);
+  }
+  try { closeSync(descriptor); } catch {}
+  fail("real_runner_guest_sensitive_path_visible");
+}
+
 function writeGuestEvidence(value) {
   writeFileSync(GUEST.evidence, jsonLine(value), { encoding: "utf8", mode: 0o600 });
   chmodSync(GUEST.evidence, 0o600);
@@ -139,6 +162,7 @@ async function runGuestWrapper() {
     || Object.keys(process.env).some((name) => name.startsWith("AGENTOPS_"))
   ) fail("real_runner_guest_fixed_environment_invalid");
   if (existsSync(GUEST.hostCanary)) fail("real_runner_guest_host_canary_visible");
+  for (const target of GUEST_FORBIDDEN_PATHS) assertGuestPathOpenDenied(target);
   if (!regularReadableFile(GUEST.config)) fail("real_runner_guest_config_unavailable");
   const guestConfig = JSON.parse(readFileSync(GUEST.config, "utf8"));
   if (
@@ -164,6 +188,8 @@ async function runGuestWrapper() {
     cwd: "/",
     fixed_environment_verified: true,
     host_canary_visible: false,
+    sensitive_path_open_denials_verified: true,
+    sensitive_path_probe_count: GUEST_FORBIDDEN_PATHS.length,
     state_visible_and_empty: true,
     tmp_visible_and_node_writable: true,
     uid: 1200,
@@ -228,6 +254,7 @@ async function sourceAudit() {
     production_export: PRODUCTION_EXPORT,
     production_export_present: true,
     real_default_open_spawn_executed: false,
+    runtime_sensitive_path_open_denials_verified: false,
     runtime_path_toctou_closed: false,
     strict_linux_execution_performed: false,
   });
@@ -431,6 +458,8 @@ async function runStrictContract() {
       cwd: "/",
       fixed_environment_verified: true,
       host_canary_visible: false,
+      sensitive_path_open_denials_verified: true,
+      sensitive_path_probe_count: GUEST_FORBIDDEN_PATHS.length,
       state_visible_and_empty: true,
       tmp_visible_and_node_writable: true,
       uid: 1200,
@@ -460,6 +489,7 @@ async function runStrictContract() {
       production_export: PRODUCTION_EXPORT,
       provider_call_observed: true,
       real_default_open_spawn_executed: true,
+      runtime_sensitive_path_open_denials_verified: true,
       runtime_path_toctou_closed: false,
       runtime_uid_gid_1200_verified: true,
       status_handshake_r_verified: true,
