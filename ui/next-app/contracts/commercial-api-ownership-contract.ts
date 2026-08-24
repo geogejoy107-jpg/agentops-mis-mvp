@@ -632,6 +632,24 @@ function assertProxyCallOwnership() {
   return { owners: actualOwners.size, guardedCalls };
 }
 
+function assertMigrationLedgerCoverage(coverage: Readonly<{
+  owners: number;
+  guardedCalls: number;
+}>) {
+  const ledger = readFileSync(resolve(
+    APP_ROOT,
+    "../../docs/COMMERCIAL_MIGRATION_CLEAN_ROOM_BREAKDOWN.md",
+  ), "utf8");
+  const recordedCoverage = new RegExp(
+    `current coverage is ${coverage.owners} owner files and `
+      + `${coverage.guardedCalls} Free Local-guarded\\s+calls\\.`,
+  );
+  assert(
+    recordedCoverage.test(ledger),
+    "commercial migration ledger proxy coverage is stale",
+  );
+}
+
 function main() {
   assertExitAnalysisFailsClosed();
   assertTrustedGuardBindingFailsClosed();
@@ -639,11 +657,13 @@ function main() {
   assertProxyHelperFailsClosed();
   assertCatchAllFailsClosed();
   const coverage = assertProxyCallOwnership();
+  assertMigrationLedgerCoverage(coverage);
   process.stdout.write(`${JSON.stringify({
     contract: "commercial_api_ownership_v1",
     production_shared_postgres_owner_required: true,
     catch_all_python_fallback_fail_closed: true,
     free_local_python_compatibility_preserved: true,
+    migration_ledger_coverage_bound: true,
     proxy_owner_files: coverage.owners,
     guarded_proxy_calls: coverage.guardedCalls,
   })}\n`);

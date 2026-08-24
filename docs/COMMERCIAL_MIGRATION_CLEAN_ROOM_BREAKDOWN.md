@@ -198,7 +198,7 @@ As of 2026-08-12:
   evidence. Free Local retains its explicit Python compatibility transport.
   A TypeScript AST contract inventories every remaining Python proxy call and
   fails if production/shared/hosted can reach it or a proxy owner changes
-  without review; current coverage is 14 owner files and 16 Free Local-guarded
+  without review; current coverage is 15 owner files and 17 Free Local-guarded
   calls.
 - Lane 6 has direct Human enrollment create/list/revoke/rotate, approval-gated
   request/decision/issue, session lifecycle, one-time hash-only credentials,
