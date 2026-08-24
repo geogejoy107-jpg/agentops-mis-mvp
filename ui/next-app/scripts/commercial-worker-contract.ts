@@ -16,7 +16,10 @@ import type {
   RuntimeAdapter,
   RuntimeAdapterResult,
 } from "../src/worker/contracts";
-import { CommercialWorker } from "../src/worker/commercialWorker";
+import {
+  CommercialWorker,
+  normalizedErrorType,
+} from "../src/worker/commercialWorker";
 import {
   GatewayHttpError,
   HttpGatewayClient,
@@ -38,6 +41,25 @@ const OMITTED_SUMMARY =
 const WORKSPACE_ID = "ws_commercial_ts_contract";
 const AGENT_ID = "agt_commercial_ts_contract";
 const PLAN_HASH = "a".repeat(64);
+
+for (const errorType of [
+  "OpenClawBinaryIdentityFailure",
+  "OpenClawEmptyResponse",
+  "OpenClawExecutionFailed",
+  "OpenClawExitFailure",
+  "OpenClawInterrupted",
+  "OpenClawInvalidResponse",
+  "OpenClawOutputTooLarge",
+  "OpenClawProviderFailed",
+  "OpenClawProviderUnavailable",
+  "OpenClawSpawnFailure",
+  "OpenClawTimeout",
+]) assert.equal(normalizedErrorType(errorType, "openclaw", false), errorType);
+assert.equal(
+  normalizedErrorType("OpenClawUnboundedProviderDetail", "openclaw", false),
+  "RuntimeAdapterError",
+);
+assert.equal(normalizedErrorType("OpenClawTimeout", "openclaw", true), null);
 
 type RecordedRequest = {
   method: string;

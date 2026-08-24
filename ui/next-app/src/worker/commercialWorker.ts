@@ -158,7 +158,7 @@ const PROVIDER_ATTESTATION_REJECTED_SUMMARY =
 const PROVIDER_ERROR_OMITTED =
   "Provider error detail omitted; inspect bounded error type and execution metadata.";
 
-function normalizedErrorType(
+export function normalizedErrorType(
   value: unknown,
   runtime: CommercialWorkerConfig["runtime"],
   ok: boolean,
@@ -167,7 +167,7 @@ function normalizedErrorType(
   const candidate = String(value ?? "").trim();
   const allowed = runtime === "hermes"
     ? /^Hermes(?:HTTP[1-5][0-9]{2}|Timeout|ExecutionFailed|EmptyResponse)$/
-    : /^OpenClaw(?:ExecutionFailed|EmptyResponse)$/;
+    : /^OpenClaw(?:BinaryIdentityFailure|EmptyResponse|ExecutionFailed|ExitFailure|Interrupted|InvalidResponse|OutputTooLarge|ProviderFailed|ProviderUnavailable|SpawnFailure|Timeout)$/;
   return allowed.test(candidate)
     ? candidate
     : "RuntimeAdapterError";
