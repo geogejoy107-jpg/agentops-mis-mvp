@@ -85,8 +85,9 @@ for (const excludedPath of [
   assert.match(a07Dockerfile, exclusion);
   assert.match(a07Workflow, exclusion);
 }
-assert.match(a07Dockerfile, /-perm \/0022 -exec chmod go-w \{\} \+/);
-assert.match(a07Dockerfile, /-perm \/0022 -print -quit\)"/);
+assert.match(a07Dockerfile, /\\\( -type f -o -type d \\\) \\\s+-perm \/0022 -exec chmod go-w \{\} \+/);
+assert.match(a07Dockerfile, /\\\( -type f -o -type d \\\) \\\s+-perm \/0022 -print -quit\)"/);
+assert.doesNotMatch(a07Dockerfile, /-path \/tmp -prune -o \\\s+-perm \/0022/);
 assert.match(a07Dockerfile, /find \/ -xdev -type f -links \+1 -exec sh -ec/);
 assert.match(a07Dockerfile, /test -z "\$\(find \/ -xdev -type f -links \+1 -print -quit\)"/);
 const hardlinkExpansion = /find \/ -xdev -type f -links \+1 -exec sh -ec '[\s\S]*?test -z "\$\(find \/ -xdev -type f -links \+1 -print -quit\)"/;
@@ -110,7 +111,8 @@ assert.equal(
 );
 assert.match(a07Workflow, /test -z "\$\(find \/ -xdev -perm \/6000 -print -quit\)"/);
 assert.doesNotMatch(a07Workflow, /find \/ -xdev -type f -perm \/6000/);
-assert.match(a07Workflow, /-perm \/0022 -print -quit\)"/);
+assert.match(a07Workflow, /\\\( -type f -o -type d \\\) \\\s+-perm \/0022 -print -quit\)"/);
+assert.doesNotMatch(a07Workflow, /-path \/tmp -prune -o \\\s+-perm \/0022/);
 assert.ok(
   a07Workflow.indexOf('test -z "$(find / -xdev -perm /6000 -print -quit)"')
     < a07Workflow.indexOf("            deploy/byoc/openclaw-runtime-oci-export.mjs"),

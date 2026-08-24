@@ -27,9 +27,11 @@ index-only Dockerfile default. Later evidence must retain that child identity.
 Before the image becomes a guest-root release input, the build removes set-ID
 bits and expands every same-filesystem regular-file hardlink into an independent
 inode while preserving mode, ownership, and timestamps. It also removes group
-and world write access from every immutable rootfs entry while preserving the
-four declared mutable mount placeholders. The build and Linux CI fail if any
-set-ID bit, immutable writable entry, or hardlink remains. This keeps the OCI
+and world write access from every immutable rootfs regular file and directory
+while preserving the four declared mutable mount placeholders. Symlink modes
+are not chmod targets; their targets and ancestry are validated separately.
+The build and Linux CI fail if any set-ID bit, immutable writable file or
+directory, or hardlink remains. This keeps the OCI
 exporter and rootfs Merkle scanner fail closed instead of weakening the signed
 tree boundary to accommodate metadata inherited from the base image.
 

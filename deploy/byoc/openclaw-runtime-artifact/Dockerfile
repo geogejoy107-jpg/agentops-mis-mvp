@@ -33,6 +33,7 @@ RUN find /opt/openclaw /opt/agentops -xdev -type d -exec chmod 0555 {} + \
       -path /run/openclaw-state -prune -o \
       -path /run/secrets/openclaw_config -prune -o \
       -path /tmp -prune -o \
+      \( -type f -o -type d \) \
       -perm /0022 -exec chmod go-w {} + \
     && find / -xdev -type f -links +1 -exec sh -ec '\
       for file do \
@@ -47,6 +48,7 @@ RUN find /opt/openclaw /opt/agentops -xdev -type d -exec chmod 0555 {} + \
       -path /run/openclaw-state -prune -o \
       -path /run/secrets/openclaw_config -prune -o \
       -path /tmp -prune -o \
+      \( -type f -o -type d \) \
       -perm /0022 -print -quit)" \
     && test -z "$(find / -xdev -type f -links +1 -print -quit)" \
     && test -f /opt/openclaw/node_modules/openclaw/dist/plugin-sdk/agent-runtime.js

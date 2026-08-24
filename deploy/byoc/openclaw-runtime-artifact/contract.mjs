@@ -91,8 +91,9 @@ for (const excludedPath of [
   "/run/secrets/openclaw_config",
   "/tmp",
 ]) assert.match(dockerfile, new RegExp(`-path ${excludedPath.replaceAll("/", "\\/")} -prune -o`));
-assert.match(dockerfile, /-perm \/0022 -exec chmod go-w \{\} \+/);
-assert.match(dockerfile, /-perm \/0022 -print -quit\)"/);
+assert.match(dockerfile, /\\\( -type f -o -type d \\\) \\\s+-perm \/0022 -exec chmod go-w \{\} \+/);
+assert.match(dockerfile, /\\\( -type f -o -type d \\\) \\\s+-perm \/0022 -print -quit\)"/);
+assert.doesNotMatch(dockerfile, /-path \/tmp -prune -o \\\s+-perm \/0022/);
 assert.match(dockerfile, /find \/ -xdev -type f -links \+1 -exec sh -ec/);
 assert.match(dockerfile, /cp --reflink=never --preserve=mode,ownership,timestamps -- "\$file" "\$temporary"/);
 assert.match(dockerfile, /mv -fT -- "\$temporary" "\$file"/);
@@ -132,6 +133,7 @@ process.stdout.write(`${JSON.stringify({
   global_install_copy_forbidden: true,
   all_entry_setid_scrub_source_verified: true,
   immutable_root_group_world_write_scrub_source_verified: true,
+  immutable_root_symlink_chmod_omitted: true,
   hardlink_expansion_source_verified: true,
   credential_material_absent: true,
   artifact_built: false,

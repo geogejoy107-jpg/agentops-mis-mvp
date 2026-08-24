@@ -209,6 +209,7 @@ jobs:
                 -path /run/openclaw-state -prune -o \
                 -path /run/secrets/openclaw_config -prune -o \
                 -path /tmp -prune -o \
+                \( -type f -o -type d \) \
                 -perm /0022 -print -quit)"
               test -z "$(find / -xdev -type f -links +1 -print -quit)"
             '
