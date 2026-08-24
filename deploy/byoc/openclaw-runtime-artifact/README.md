@@ -26,10 +26,12 @@ index-only Dockerfile default. Later evidence must retain that child identity.
 
 Before the image becomes a guest-root release input, the build removes set-ID
 bits and expands every same-filesystem regular-file hardlink into an independent
-inode while preserving mode, ownership, and timestamps. The build and Linux CI
-both fail if a hardlink remains. This keeps the OCI exporter and rootfs Merkle
-scanner fail closed on hardlinks instead of weakening the signed tree boundary
-to accommodate links inherited from the base image.
+inode while preserving mode, ownership, and timestamps. It also removes group
+and world write access from every immutable rootfs entry while preserving the
+four declared mutable mount placeholders. The build and Linux CI fail if any
+set-ID bit, immutable writable entry, or hardlink remains. This keeps the OCI
+exporter and rootfs Merkle scanner fail closed instead of weakening the signed
+tree boundary to accommodate metadata inherited from the base image.
 
 The offline contract requires registry URLs, SHA-512 integrity, and license
 metadata for every locked package. Release packaging must still generate and

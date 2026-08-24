@@ -204,6 +204,12 @@ jobs:
             --entrypoint /bin/sh \
             "${image}" -ec '
               test -z "$(find / -xdev -perm /6000 -print -quit)"
+              test -z "$(find / -xdev \
+                -path /opt/agentops-worker/workspace -prune -o \
+                -path /run/openclaw-state -prune -o \
+                -path /run/secrets/openclaw_config -prune -o \
+                -path /tmp -prune -o \
+                -perm /0022 -print -quit)"
               test -z "$(find / -xdev -type f -links +1 -print -quit)"
             '
 

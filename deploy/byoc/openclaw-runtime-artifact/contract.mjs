@@ -85,6 +85,14 @@ assert.match(dockerfile, /install -o 0 -g 0 -m 0400 \/dev\/null \/run\/secrets\/
 assert.match(dockerfile, /find \/ -xdev -perm \/6000 -exec chmod a-s/);
 assert.match(dockerfile, /test -z "\$\(find \/ -xdev -perm \/6000 -print -quit\)"/);
 assert.doesNotMatch(dockerfile, /find \/ -xdev -type f -perm \/6000/);
+for (const excludedPath of [
+  "/opt/agentops-worker/workspace",
+  "/run/openclaw-state",
+  "/run/secrets/openclaw_config",
+  "/tmp",
+]) assert.match(dockerfile, new RegExp(`-path ${excludedPath.replaceAll("/", "\\/")} -prune -o`));
+assert.match(dockerfile, /-perm \/0022 -exec chmod go-w \{\} \+/);
+assert.match(dockerfile, /-perm \/0022 -print -quit\)"/);
 assert.match(dockerfile, /find \/ -xdev -type f -links \+1 -exec sh -ec/);
 assert.match(dockerfile, /cp --reflink=never --preserve=mode,ownership,timestamps -- "\$file" "\$temporary"/);
 assert.match(dockerfile, /mv -fT -- "\$temporary" "\$file"/);
@@ -122,8 +130,9 @@ process.stdout.write(`${JSON.stringify({
   linux_arm64_v8_digest_declared: true,
   checked_in_adapter_guest_path_verified: true,
   global_install_copy_forbidden: true,
-  setid_bits_removed_from_all_rootfs_entry_types: true,
-  hardlinks_expanded_before_export: true,
+  all_entry_setid_scrub_source_verified: true,
+  immutable_root_group_world_write_scrub_source_verified: true,
+  hardlink_expansion_source_verified: true,
   credential_material_absent: true,
   artifact_built: false,
   artifact_published: false,

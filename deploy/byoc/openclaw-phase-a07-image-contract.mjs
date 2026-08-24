@@ -11,6 +11,7 @@ const read = (name) => readFileSync(join(here, name), "utf8");
 const dockerfile = read("Dockerfile");
 const a07Dockerfile = read("openclaw-phase-a07.Dockerfile");
 const artifactDockerfile = read("openclaw-runtime-artifact/Dockerfile");
+const a07Workflow = read("../../.github/workflows/openclaw-phase-a07-foundation.yml");
 const compose = read("compose.openclaw-phase-a07.yaml");
 const defaultCompose = read("compose.openclaw-phase-a04-a05.yaml");
 const artifact = JSON.parse(read("openclaw-runtime-artifact/artifact.json"));
@@ -74,6 +75,18 @@ assert.match(a07Dockerfile, /test "\$\(node --version\)" = "v22\.23\.2"/);
 assert.match(a07Dockerfile, /find \/ -xdev -perm \/6000 -exec chmod a-s/);
 assert.match(a07Dockerfile, /test -z "\$\(find \/ -xdev -perm \/6000 -print -quit\)"/);
 assert.doesNotMatch(a07Dockerfile, /find \/ -xdev -type f -perm \/6000/);
+for (const excludedPath of [
+  "/opt/agentops-worker/workspace",
+  "/run/openclaw-state",
+  "/run/secrets/openclaw_config",
+  "/tmp",
+]) {
+  const exclusion = new RegExp(`-path ${excludedPath.replaceAll("/", "\\/")} -prune -o`);
+  assert.match(a07Dockerfile, exclusion);
+  assert.match(a07Workflow, exclusion);
+}
+assert.match(a07Dockerfile, /-perm \/0022 -exec chmod go-w \{\} \+/);
+assert.match(a07Dockerfile, /-perm \/0022 -print -quit\)"/);
 assert.match(a07Dockerfile, /find \/ -xdev -type f -links \+1 -exec sh -ec/);
 assert.match(a07Dockerfile, /test -z "\$\(find \/ -xdev -type f -links \+1 -print -quit\)"/);
 const hardlinkExpansion = /find \/ -xdev -type f -links \+1 -exec sh -ec '[\s\S]*?test -z "\$\(find \/ -xdev -type f -links \+1 -print -quit\)"/;
@@ -81,6 +94,27 @@ assert.equal(
   artifactDockerfile.match(hardlinkExpansion)?.[0],
   a07Dockerfile.match(hardlinkExpansion)?.[0],
   "guest_root_hardlink_expansion_must_match_release_artifact_input",
+);
+function immutableRootSanitization(source) {
+  const startNeedle = "find / -xdev -perm /6000 -exec chmod a-s {} + \\";
+  const endNeedle = 'test -z "$(find / -xdev -perm /6000 -print -quit)"';
+  const start = source.indexOf(startNeedle);
+  const end = source.indexOf(endNeedle, start);
+  assert.ok(start >= 0 && end >= start, "guest_root_immutable_sanitization_required");
+  return source.slice(start, end + endNeedle.length);
+}
+assert.equal(
+  immutableRootSanitization(artifactDockerfile),
+  immutableRootSanitization(a07Dockerfile),
+  "guest_root_immutable_sanitization_must_match_release_artifact_input",
+);
+assert.match(a07Workflow, /test -z "\$\(find \/ -xdev -perm \/6000 -print -quit\)"/);
+assert.doesNotMatch(a07Workflow, /find \/ -xdev -type f -perm \/6000/);
+assert.match(a07Workflow, /-perm \/0022 -print -quit\)"/);
+assert.ok(
+  a07Workflow.indexOf('test -z "$(find / -xdev -perm /6000 -print -quit)"')
+    < a07Workflow.indexOf("            deploy/byoc/openclaw-runtime-oci-export.mjs"),
+  "guest_root_runtime_metadata_checks_must_precede_exporter",
 );
 assert.match(a07Dockerfile, /\.version'\)" = "2026\.5\.4"/);
 assert.match(
