@@ -860,12 +860,10 @@ function tarOwnerAndMode(block) {
   const mode = tarOctal(block.subarray(100, 108), "runtime_oci_export_tar_mode_invalid");
   const uid = tarOctal(block.subarray(108, 116), "runtime_oci_export_tar_owner_invalid");
   const gid = tarOctal(block.subarray(116, 124), "runtime_oci_export_tar_owner_invalid");
-  if (
-    mode > 0o7777
-    || (mode & 0o6000) !== 0
-    || uid > 0xffff
-    || gid > 0xffff
-  ) fail("runtime_oci_export_tar_owner_or_mode_rejected");
+  if (mode > 0o7777) fail("runtime_oci_export_tar_mode_range_rejected");
+  if ((mode & 0o6000) !== 0) fail("runtime_oci_export_tar_setid_rejected");
+  if (uid > 0xffff) fail("runtime_oci_export_tar_uid_range_rejected");
+  if (gid > 0xffff) fail("runtime_oci_export_tar_gid_range_rejected");
 }
 
 function parseLocalPaxHeader(block) {
