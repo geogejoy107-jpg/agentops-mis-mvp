@@ -57,6 +57,7 @@ const OCI_IMAGE_FIELDS = fields("digest", "name");
 const ROOTFS_FIELDS = fields("byte_count", "file_count", "merkle_sha256");
 const ARGV_FIELDS = fields("kind", "value");
 const MUTABLE_MOUNT_FIELDS = fields("kind", "path", "read_only");
+const CONTENT_BOUND_MUTABLE_MOUNT_FIELDS = fields("kind", "path", "read_only", "sha256");
 const CLAIM_FIELDS = fields(
   "guest_root_artifact_built",
   "guest_root_immutability_verified",
@@ -91,10 +92,12 @@ const MAX_ROOTFS_FILES = 1_000_000;
 const MAX_ROOTFS_BYTES = 16 * 1024 * 1024 * 1024;
 const SUPPORTED_ARCHES = Object.freeze(new Set(["amd64", "arm64"]));
 const REQUIRED_MOUNT_POLICY = Object.freeze({
-  config_file: true,
-  state_directory: false,
-  temp_directory: false,
-  workspace_directory: true,
+  config_file: Object.freeze({ path: "/run/secrets/openclaw_config", readOnly: true }),
+  hosts_file: Object.freeze({ path: "/etc/hosts", readOnly: true, contentBound: true }),
+  resolver_config_file: Object.freeze({ path: "/etc/resolv.conf", readOnly: true, contentBound: true }),
+  state_directory: Object.freeze({ path: "/run/openclaw-state", readOnly: false }),
+  temp_directory: Object.freeze({ path: "/tmp", readOnly: false }),
+  workspace_directory: Object.freeze({ path: "/opt/agentops-worker/workspace", readOnly: true }),
 });
 
 function fail(code) {
@@ -271,20 +274,31 @@ function validateImmutableRoots(value) {
 }
 
 function validateMutableMounts(value) {
-  if (!Array.isArray(value) || value.length !== 4) fail("runtime_manifest_v2_mutable_mounts_invalid");
+  if (!Array.isArray(value) || value.length !== 6) fail("runtime_manifest_v2_mutable_mounts_invalid");
   const seenKinds = new Set();
   let previousPath = null;
   const mounts = value.map((item) => {
     const mount = plainObject(item, "runtime_manifest_v2_mutable_mount_invalid");
-    exactFields(mount, MUTABLE_MOUNT_FIELDS, "runtime_manifest_v2_mutable_mount_fields_invalid");
-    const mountPath = absoluteGuestPath(mount.path, "runtime_manifest_v2_mutable_mount_path");
     if (!Object.hasOwn(REQUIRED_MOUNT_POLICY, mount.kind)) {
       fail("runtime_manifest_v2_mutable_mount_kind_invalid");
     }
+    const policy = REQUIRED_MOUNT_POLICY[mount.kind];
+    exactFields(
+      mount,
+      policy.contentBound ? CONTENT_BOUND_MUTABLE_MOUNT_FIELDS : MUTABLE_MOUNT_FIELDS,
+      "runtime_manifest_v2_mutable_mount_fields_invalid",
+    );
+    const mountPath = absoluteGuestPath(mount.path, "runtime_manifest_v2_mutable_mount_path");
     if (seenKinds.has(mount.kind)) fail("runtime_manifest_v2_mutable_mount_kind_duplicate");
     seenKinds.add(mount.kind);
-    if (mount.read_only !== REQUIRED_MOUNT_POLICY[mount.kind]) {
+    if (mountPath !== policy.path) {
+      fail("runtime_manifest_v2_mutable_mount_path_mismatch");
+    }
+    if (mount.read_only !== policy.readOnly) {
       fail("runtime_manifest_v2_mutable_mount_read_only_invalid");
+    }
+    if (policy.contentBound) {
+      sha256(mount.sha256, "runtime_manifest_v2_mutable_mount_sha256");
     }
     if (previousPath !== null && compareStrings(previousPath, mountPath) >= 0) {
       fail("runtime_manifest_v2_mutable_mounts_order_invalid");

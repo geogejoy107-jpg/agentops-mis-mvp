@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  chownSync,
   copyFileSync,
   linkSync,
   lstatSync,
@@ -43,6 +44,10 @@ const compileFlags = [
   "-Wl,-z,noexecstack",
 ];
 const configTarget = "/opt/agentops-provider/openclaw/run/secrets/openclaw_config";
+const hostsSource = "/run/agentops-openclaw-bootstrap/hosts";
+const hostsTarget = "/opt/agentops-provider/openclaw/etc/hosts";
+const resolverSource = "/run/agentops-openclaw-bootstrap/resolv.conf";
+const resolverTarget = "/opt/agentops-provider/openclaw/etc/resolv.conf";
 const workspaceTarget = "/opt/agentops-provider/openclaw/opt/agentops-worker/workspace";
 const supervisorPath = "/usr/local/lib/agentops/openclaw-boundary-supervisor.mjs";
 const expectedPrefixedEnvironment = [
@@ -54,6 +59,7 @@ const expectedPrefixedEnvironment = [
   "OPENCLAW_EXECUTOR_JOURNAL_ROOT",
   "OPENCLAW_EXECUTOR_LAUNCHER",
   "OPENCLAW_EXTERNAL_PROVIDER_EGRESS_ATTESTED",
+  "OPENCLAW_EGRESS_GATEWAY_IPV4",
   "OPENCLAW_RECEIPT_KEY_ID",
   "OPENCLAW_RECEIPT_SIGNING_KEY_PATH",
   "OPENCLAW_RUNTIME_GID",
@@ -93,7 +99,32 @@ function embeddedProbeSourceAudit() {
   assert.match(probeSourceText, /probe_mount_descends_from/);
   assert.match(probeSourceText, /probe_mount_options_hardened/);
   assert.match(probeSourceText, /record->mount_id == config_mount_id/);
+  assert.match(probeSourceText, /record->mount_id == hosts_mount_id/);
+  assert.match(probeSourceText, /record->mount_id == resolver_mount_id/);
   assert.match(probeSourceText, /workspace_visible_mounts < 2U/);
+  assert.match(probeSourceText, /172\.31\.250\.3 openclaw-egress-gateway/);
+  assert.match(probeSourceText, /nameserver 127\.0\.0\.1\\noptions timeout:1 attempts:1 ndots:0/);
+  assert.match(probeSourceText, /metadata\.st_uid == 0 && metadata\.st_gid == 2200/);
+  assert.match(probeSourceText, /\(metadata\.st_mode & 0777\) == 0444/);
+  for (const comparison of [
+    "config_mount_id == hosts_mount_id",
+    "config_mount_id == resolver_mount_id",
+    "config_mount_id == workspace_mount_id",
+    "hosts_mount_id == resolver_mount_id",
+    "hosts_mount_id == workspace_mount_id",
+    "resolver_mount_id == workspace_mount_id",
+  ]) {
+    assert.match(probeSourceText, new RegExp(comparison));
+  }
+  for (const rejectedIpv4 of [
+    "8.8.8.8",
+    "127.0.0.1",
+    "169.254.169.254",
+    "172.31.250.3/29",
+  ]) {
+    assert(contractText.includes(`"${rejectedIpv4}"`));
+  }
+  assert.match(contractText, /rejectedGateway\.stderr, "mount_bootstrap_name_service_failed\\n"/);
   assert.doesNotMatch(probeSourceText, /\bmatches\b/);
 }
 
@@ -113,11 +144,36 @@ function sourceAudit() {
   assert.match(sourceText, /S_IWGRP \| S_IWOTH/);
   assert.match(sourceText, /executable_metadata\.st_mode & 0111/);
   assert.match(sourceText, /executable_metadata\.st_nlink == \(nlink_t\)1/);
-  assert.match(sourceText, new RegExp(configTarget.replaceAll("/", "\\/")));
-  assert.match(sourceText, new RegExp(workspaceTarget.replaceAll("/", "\\/")));
+  for (const path of [
+    configTarget,
+    hostsSource,
+    hostsTarget,
+    resolverSource,
+    resolverTarget,
+    workspaceTarget,
+  ]) {
+    assert.match(sourceText, new RegExp(path.replaceAll("/", "\\/")));
+  }
   assert.match(sourceText, /MS_BIND \| \(recursive_bind \? MS_REC : 0UL\)/);
-  assert.match(sourceText, /harden_mount\(CONFIG_TARGET, 0\)/);
-  assert.match(sourceText, /harden_mount\(WORKSPACE_TARGET, 1\)/);
+  assert.match(sourceText, /harden_mount\(HOSTS_SOURCE, HOSTS_TARGET, 0\)/);
+  assert.match(sourceText, /harden_mount\(RESOLVER_SOURCE, RESOLVER_TARGET, 0\)/);
+  assert.match(sourceText, /harden_mount\(CONFIG_TARGET, CONFIG_TARGET, 0\)/);
+  assert.match(sourceText, /harden_mount\(WORKSPACE_TARGET, WORKSPACE_TARGET, 1\)/);
+  assert.match(
+    sourceText,
+    /"nameserver 127\.0\.0\.1\\n"\s*"options timeout:1 attempts:1 ndots:0\\n"/,
+  );
+  assert.match(sourceText, /inet_pton\(AF_INET, value, &address\) != 1/);
+  assert.match(sourceText, /final_octet == 0U \|\| final_octet == 1U \|\| final_octet == 255U/);
+  assert.match(sourceText, /\(host & 0xff000000U\) == 0x0a000000U/);
+  assert.match(sourceText, /\(host & 0xfff00000U\) == 0xac100000U/);
+  assert.match(sourceText, /\(host & 0xffff0000U\) == 0xc0a80000U/);
+  assert.match(sourceText, /O_WRONLY \| O_CREAT \| O_EXCL \| O_CLOEXEC \| O_NOFOLLOW/);
+  assert.match(sourceText, /fchmod\(descriptor, 0444\)/);
+  assert.match(sourceText, /metadata\.st_uid != \(uid_t\)0/);
+  assert.match(sourceText, /metadata\.st_gid != PRIVATE_GID/);
+  assert.match(sourceText, /metadata\.st_nlink != \(nlink_t\)1/);
+  assert.match(sourceText, /\(metadata\.st_mode & 0777\) != 0444/);
   assert.match(sourceText, /SYS_mount_setattr/);
   assert.match(sourceText, /AT_RECURSIVE/);
   assert.match(sourceText, /MOUNT_ATTR_RDONLY \| MOUNT_ATTR_NOSUID/);
@@ -125,6 +181,8 @@ function sourceAudit() {
   assert.match(sourceText, /mount_point_in_tree/);
   assert.match(sourceText, /\/proc\/self\/fdinfo\/%d/);
   assert.match(sourceText, /visible_mount_id\(CONFIG_TARGET, 0\)/);
+  assert.match(sourceText, /visible_mount_id\(HOSTS_TARGET, 0\)/);
+  assert.match(sourceText, /visible_mount_id\(RESOLVER_TARGET, 0\)/);
   assert.match(sourceText, /visible_mount_id\(WORKSPACE_TARGET, 1\)/);
   assert.match(sourceText, /mount_descends_from/);
   assert.match(sourceText, /mount_options_hardened/);
@@ -132,7 +190,16 @@ function sourceAudit() {
   assert.equal((sourceText.match(/SYS_mount_setattr/g) || []).length, 1);
   assert.match(sourceText, /MS_PRIVATE \| \(recursive_bind \? MS_REC : 0UL\)/);
   assert.match(sourceText, /open\("\/proc\/self\/mountinfo", O_RDONLY \| O_CLOEXEC \| O_NOFOLLOW\)/);
-  assert.match(sourceText, /config_mount_id != workspace_mount_id/);
+  for (const comparison of [
+    "config_mount_id != hosts_mount_id",
+    "config_mount_id != resolver_mount_id",
+    "config_mount_id != workspace_mount_id",
+    "hosts_mount_id != resolver_mount_id",
+    "hosts_mount_id != workspace_mount_id",
+    "resolver_mount_id != workspace_mount_id",
+  ]) {
+    assert.match(sourceText, new RegExp(comparison));
+  }
   for (const option of ["ro", "nosuid", "nodev", "noexec"]) {
     assert.match(sourceText, new RegExp(`option_present\\(mount_options, "${option}"\\)`));
   }
@@ -166,9 +233,10 @@ function sourceAudit() {
   const stderrWrites = [...sourceText.matchAll(/fprintf\(stderr,\s*([^\n]+)\)/g)].map((match) => match[1]);
   assert.deepEqual(stderrWrites, ['"%s\\n", code']);
   const emittedCodes = [...sourceText.matchAll(/fixed_error\("([a-z0-9_]+)"\)/g)].map((match) => match[1]);
-  assert.equal(emittedCodes.length, 10);
+  assert.equal(emittedCodes.length, 11);
   assert.equal(new Set(emittedCodes).size, emittedCodes.length);
   assert(emittedCodes.every((code) => code.startsWith("mount_bootstrap_")));
+  assert(emittedCodes.includes("mount_bootstrap_name_service_failed"));
   assert.match(dockerfileText, /FROM peercred-build AS mount-bootstrap-build/);
   assert.match(
     dockerfileText,
@@ -178,6 +246,22 @@ function sourceAudit() {
   assert.match(executor, /init: false/);
   assert.match(executor, /entrypoint: \[\/usr\/local\/bin\/agentops-openclaw-mount-bootstrap\]/);
   assert.match(executor, /cap_add:\s*\n(?:\s+- [A-Z_]+\s*\n)*\s+- SYS_ADMIN\s*\n\s+- SETPCAP/);
+  assert.match(
+    executor,
+    /\/run\/agentops-openclaw-bootstrap:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=0,gid=2200/,
+  );
+  assert.match(
+    executor,
+    /OPENCLAW_EGRESS_GATEWAY_IPV4: \$\{AGENTOPS_A08_RUNTIME_GATEWAY_IPV4:-172\.31\.250\.3\}/,
+  );
+  assert.match(
+    composeText,
+    /ipv4_address: \$\{AGENTOPS_A08_RUNTIME_GATEWAY_IPV4:-172\.31\.250\.3\}/,
+  );
+  assert.match(
+    composeText,
+    /subnet: \$\{AGENTOPS_A08_RUNTIME_SUBNET:-172\.31\.250\.0\/29\}/,
+  );
   assert.match(supervisorText, /const ROOT_EXECUTOR_ENTRYPOINT = "\/usr\/local\/lib\/agentops\/openclaw-executor-service\.mjs"/);
   assert.match(supervisorText, /if \(role === "root-executor"\)/);
 }
@@ -192,6 +276,9 @@ function stableResult(overrides = {}) {
     linux_runtime_executed: false,
     bind_remount_verified: false,
     mountinfo_flags_verified: false,
+    guest_name_service_files_verified: false,
+    gateway_ipv4_rejections_verified: false,
+    bootstrap_tmpfs_verified: false,
     capability_drop_verified: false,
     required_launcher_capabilities_retained: false,
     no_new_privs_verified: false,
@@ -257,14 +344,31 @@ if (insideLinuxRuntime) {
     killSignal: "SIGKILL",
   });
   try {
-    for (const target of ["/opt", "/usr/local"]) {
+    for (const target of ["/opt", "/run", "/usr/local"]) {
       const mounted = spawnSync("mount", ["-t", "tmpfs", "-o", "mode=755,nosuid,nodev", "tmpfs", target], {
         encoding: "utf8",
         env: { PATH: process.env.PATH },
       });
       assert.equal(mounted.status, 0, mounted.stderr);
     }
+    const bootstrapSourceDirectory = dirname(hostsSource);
+    mkdirSync(bootstrapSourceDirectory, { recursive: true, mode: 0o700 });
+    chownSync(bootstrapSourceDirectory, 0, 2200);
+    const bootstrapMounted = spawnSync(
+      "mount",
+      [
+        "-t",
+        "tmpfs",
+        "-o",
+        "mode=0700,uid=0,gid=2200,nosuid,nodev,noexec",
+        "tmpfs",
+        bootstrapSourceDirectory,
+      ],
+      { encoding: "utf8", env: { PATH: process.env.PATH } },
+    );
+    assert.equal(bootstrapMounted.status, 0, bootstrapMounted.stderr);
     mkdirSync(dirname(configTarget), { recursive: true, mode: 0o755 });
+    mkdirSync(dirname(hostsTarget), { recursive: true, mode: 0o755 });
     mkdirSync(workspaceTarget, { recursive: true, mode: 0o555 });
     const nestedWorkspaceMount = join(workspaceTarget, "nested-mount");
     mkdirSync(nestedWorkspaceMount, { recursive: true, mode: 0o755 });
@@ -276,6 +380,11 @@ if (insideLinuxRuntime) {
     assert.equal(nestedMounted.status, 0, nestedMounted.stderr);
     mkdirSync(dirname(supervisorPath), { recursive: true, mode: 0o755 });
     writeFileSync(configTarget, "fixture-not-a-secret\n", { mode: 0o400 });
+    for (const target of [hostsTarget, resolverTarget]) {
+      writeFileSync(target, "", { mode: 0o444 });
+      chownSync(target, 0, 0);
+      chmodSync(target, 0o444);
+    }
     writeFileSync(supervisorPath, "fixture\n", { mode: 0o444 });
     writeFileSync(probeSource, String.raw`
 #define _GNU_SOURCE
@@ -287,11 +396,34 @@ if (insideLinuxRuntime) {
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
 #define CONFIG_TARGET "/opt/agentops-provider/openclaw/run/secrets/openclaw_config"
+#define HOSTS_TARGET "/opt/agentops-provider/openclaw/etc/hosts"
+#define RESOLVER_TARGET "/opt/agentops-provider/openclaw/etc/resolv.conf"
 #define WORKSPACE_TARGET "/opt/agentops-provider/openclaw/opt/agentops-worker/workspace"
+
+static int fixed_file_verified(const char *path, const char *expected) {
+    int descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    struct stat metadata;
+    char contents[512];
+    size_t expected_length = strlen(expected);
+    ssize_t count;
+    int result = 0;
+    if (descriptor < 0 || expected_length >= sizeof(contents)) return 0;
+    do {
+        count = read(descriptor, contents, sizeof(contents));
+    } while (count < 0 && errno == EINTR);
+    if (count >= 0 && (size_t)count == expected_length
+        && memcmp(contents, expected, expected_length) == 0
+        && fstat(descriptor, &metadata) == 0
+        && S_ISREG(metadata.st_mode) && metadata.st_uid == 0 && metadata.st_gid == 2200
+        && metadata.st_nlink == 1 && (metadata.st_mode & 0777) == 0444) result = 1;
+    if (close(descriptor) != 0) result = 0;
+    return result;
+}
 
 static int bit(const struct __user_cap_data_struct data[2], int capability, int field) {
     unsigned int index = (unsigned int)capability / 32U;
@@ -472,16 +604,26 @@ static int options_verified(void) {
     size_t record_count = 0U;
     size_t record_capacity = 0U;
     unsigned long config_mount_id = probe_visible_mount_id(CONFIG_TARGET, 0);
+    unsigned long hosts_mount_id = probe_visible_mount_id(HOSTS_TARGET, 0);
+    unsigned long resolver_mount_id = probe_visible_mount_id(RESOLVER_TARGET, 0);
     unsigned long workspace_mount_id = probe_visible_mount_id(WORKSPACE_TARGET, 1);
     size_t workspace_visible_mounts = 0U;
     int config_verified = 0;
+    int hosts_verified = 0;
+    int resolver_verified = 0;
     int workspace_verified = 0;
     int result = 0;
     char *line = NULL;
     size_t line_capacity = 0U;
     size_t record_index;
-    if (descriptor < 0 || config_mount_id == 0UL || workspace_mount_id == 0UL
-        || config_mount_id == workspace_mount_id) goto cleanup;
+    if (descriptor < 0 || config_mount_id == 0UL || hosts_mount_id == 0UL
+        || resolver_mount_id == 0UL || workspace_mount_id == 0UL
+        || config_mount_id == hosts_mount_id
+        || config_mount_id == resolver_mount_id
+        || config_mount_id == workspace_mount_id
+        || hosts_mount_id == resolver_mount_id
+        || hosts_mount_id == workspace_mount_id
+        || resolver_mount_id == workspace_mount_id) goto cleanup;
     input = fdopen(descriptor, "r");
     if (input == NULL) goto cleanup;
     descriptor = -1;
@@ -512,6 +654,16 @@ static int options_verified(void) {
                 || !probe_mount_options_hardened(record->mount_options)) goto cleanup;
             config_verified = 1;
         }
+        if (record->mount_id == hosts_mount_id) {
+            if (hosts_verified || strcmp(record->mount_point, HOSTS_TARGET) != 0
+                || !probe_mount_options_hardened(record->mount_options)) goto cleanup;
+            hosts_verified = 1;
+        }
+        if (record->mount_id == resolver_mount_id) {
+            if (resolver_verified || strcmp(record->mount_point, RESOLVER_TARGET) != 0
+                || !probe_mount_options_hardened(record->mount_options)) goto cleanup;
+            resolver_verified = 1;
+        }
         if (probe_mount_descends_from(records, record_count, record, workspace_mount_id)) {
             if (!probe_mount_point_in_tree(record->mount_point, WORKSPACE_TARGET)
                 || !probe_mount_options_hardened(record->mount_options)) goto cleanup;
@@ -519,7 +671,8 @@ static int options_verified(void) {
             if (record->mount_id == workspace_mount_id) workspace_verified = 1;
         }
     }
-    if (!config_verified || !workspace_verified || workspace_visible_mounts < 2U) goto cleanup;
+    if (!config_verified || !hosts_verified || !resolver_verified
+        || !workspace_verified || workspace_visible_mounts < 2U) goto cleanup;
     result = 1;
 
 cleanup:
@@ -545,6 +698,7 @@ int main(int argc, char **argv) {
     size_t index;
     const char *role = getenv("AGENTOPS_OPENCLAW_BOUNDARY_ROLE");
     const char *config = getenv("OPENCLAW_CONFIG_PATH");
+    const char *gateway_ipv4 = getenv("OPENCLAW_EGRESS_GATEWAY_IPV4");
     const char *state = getenv("OPENCLAW_STATE_DIR");
     const char *workspace = getenv("OPENCLAW_WORKSPACE");
     if (getuid() != 0 || geteuid() != 0 || getgid() != 2200 || getegid() != 2200) return 9;
@@ -552,10 +706,18 @@ int main(int argc, char **argv) {
     if (getenv("AGENTOPS_UNKNOWN_CANARY") != NULL || getenv("SECRET_CANARY") != NULL) return 11;
     if (role == NULL || strcmp(role, "root-executor") != 0
         || config == NULL || strcmp(config, "/run/secrets/openclaw_config") != 0
+        || gateway_ipv4 == NULL || strcmp(gateway_ipv4, "172.31.250.3") != 0
         || state == NULL || strcmp(state, "/run/openclaw-state") != 0
         || workspace == NULL || strcmp(workspace, "/opt/agentops-worker/workspace") != 0) return 21;
     if (getenv("AGENTOPS_OPENCLAW_BROKER_PUBLIC_SOCKET_PATH") != NULL
         || getenv("OPENCLAW_PROVIDER_SOCKET") != NULL) return 22;
+    if (!fixed_file_verified(
+            HOSTS_TARGET,
+            "127.0.0.1 localhost\n::1 localhost\n172.31.250.3 openclaw-egress-gateway\n"
+        ) || !fixed_file_verified(
+            RESOLVER_TARGET,
+            "nameserver 127.0.0.1\noptions timeout:1 attempts:1 ndots:0\n"
+        )) return 23;
     if (!options_verified()) return 20;
     header.version = _LINUX_CAPABILITY_VERSION_3;
     if (syscall(SYS_capget, &header, data) != 0) return 12;
@@ -591,6 +753,7 @@ int main(int argc, char **argv) {
       AGENTOPS_OPENCLAW_BOUNDARY_ROLE: "root-executor",
       LANG: "C",
       OPENCLAW_CONFIG_PATH: "/run/secrets/openclaw_config",
+      OPENCLAW_EGRESS_GATEWAY_IPV4: "172.31.250.3",
       OPENCLAW_STATE_DIR: "/run/openclaw-state",
       OPENCLAW_WORKSPACE: "/opt/agentops-worker/workspace",
       PATH: "/usr/bin:/bin",
@@ -629,11 +792,29 @@ int main(int argc, char **argv) {
     assert.equal(wrongGuestPath.status, 78);
     assert.equal(wrongGuestPath.stderr, "mount_bootstrap_environment_forbidden\n");
 
+    for (const rejectedIpv4 of [
+      "8.8.8.8",
+      "127.0.0.1",
+      "169.254.169.254",
+      "172.31.250.3/29",
+    ]) {
+      const rejectedGateway = runAsPid1({
+        ...environment,
+        OPENCLAW_EGRESS_GATEWAY_IPV4: rejectedIpv4,
+      });
+      assert.equal(rejectedGateway.status, 70);
+      assert.equal(rejectedGateway.stderr, "mount_bootstrap_name_service_failed\n");
+      assert(!rejectedGateway.stderr.includes(rejectedIpv4));
+    }
+
     process.stdout.write(`${JSON.stringify(stableResult({
       linux_native_compile_verified: true,
       linux_runtime_executed: true,
       bind_remount_verified: true,
       mountinfo_flags_verified: true,
+      guest_name_service_files_verified: true,
+      gateway_ipv4_rejections_verified: true,
+      bootstrap_tmpfs_verified: true,
       capability_drop_verified: true,
       required_launcher_capabilities_retained: true,
       temporary_cap_setpcap_removed: true,

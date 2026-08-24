@@ -56,5 +56,11 @@ USER root
 RUN test "${TARGETPLATFORM}" = "linux/amd64"
 COPY --from=openclaw-guest-root / /opt/agentops-provider/openclaw/
 RUN find /opt/agentops-provider/openclaw -xdev -type d -exec chmod a-w {} + \
-    && find /opt/agentops-provider/openclaw -xdev -type f -exec chmod a-w {} +
+    && find /opt/agentops-provider/openclaw -xdev -type f -exec chmod a-w {} + \
+    && test -f /opt/agentops-provider/openclaw/etc/hosts \
+    && test ! -L /opt/agentops-provider/openclaw/etc/hosts \
+    && test -f /opt/agentops-provider/openclaw/etc/resolv.conf \
+    && test ! -L /opt/agentops-provider/openclaw/etc/resolv.conf \
+    && grep -Eq '^hosts:[[:space:]]+files([[:space:]]|$)' \
+      /opt/agentops-provider/openclaw/etc/nsswitch.conf
 USER node

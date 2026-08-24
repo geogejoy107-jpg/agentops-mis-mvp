@@ -4,6 +4,7 @@
 #error "openclaw-mount-bootstrap requires Linux"
 #endif
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/capability.h>
@@ -12,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <sys/mount.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
@@ -20,6 +22,10 @@
 #include <unistd.h>
 
 #define CONFIG_TARGET "/opt/agentops-provider/openclaw/run/secrets/openclaw_config"
+#define HOSTS_SOURCE "/run/agentops-openclaw-bootstrap/hosts"
+#define HOSTS_TARGET "/opt/agentops-provider/openclaw/etc/hosts"
+#define RESOLVER_SOURCE "/run/agentops-openclaw-bootstrap/resolv.conf"
+#define RESOLVER_TARGET "/opt/agentops-provider/openclaw/etc/resolv.conf"
 #define WORKSPACE_TARGET "/opt/agentops-provider/openclaw/opt/agentops-worker/workspace"
 #define NODE_PATH "/usr/local/bin/node"
 #define SUPERVISOR_PATH "/usr/local/lib/agentops/openclaw-boundary-supervisor.mjs"
@@ -40,6 +46,7 @@ static const char *const allowed_prefixed_environment[] = {
     "OPENCLAW_EXECUTOR_JOURNAL_ROOT",
     "OPENCLAW_EXECUTOR_LAUNCHER",
     "OPENCLAW_EXTERNAL_PROVIDER_EGRESS_ATTESTED",
+    "OPENCLAW_EGRESS_GATEWAY_IPV4",
     "OPENCLAW_RECEIPT_KEY_ID",
     "OPENCLAW_RECEIPT_SIGNING_KEY_PATH",
     "OPENCLAW_RUNTIME_GID",
@@ -94,10 +101,12 @@ static int validate_prefixed_environment(void) {
     size_t index;
     const char *role = getenv("AGENTOPS_OPENCLAW_BOUNDARY_ROLE");
     const char *config_path = getenv("OPENCLAW_CONFIG_PATH");
+    const char *egress_gateway_ipv4 = getenv("OPENCLAW_EGRESS_GATEWAY_IPV4");
     const char *state_directory = getenv("OPENCLAW_STATE_DIR");
     const char *workspace = getenv("OPENCLAW_WORKSPACE");
     if (role == NULL || strcmp(role, "root-executor") != 0
         || config_path == NULL || strcmp(config_path, "/run/secrets/openclaw_config") != 0
+        || egress_gateway_ipv4 == NULL || *egress_gateway_ipv4 == '\0'
         || state_directory == NULL || strcmp(state_directory, "/run/openclaw-state") != 0
         || workspace == NULL || strcmp(workspace, "/opt/agentops-worker/workspace") != 0) {
         return -1;
@@ -206,7 +215,7 @@ static int validate_self_executable(void) {
     return result;
 }
 
-static int harden_mount(const char *target, int recursive_bind) {
+static int harden_mount(const char *source, const char *target, int recursive_bind) {
     const unsigned long bind_flags = MS_BIND | (recursive_bind ? MS_REC : 0UL);
     const struct mount_attr attributes = {
         .attr_set = MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID
@@ -214,7 +223,7 @@ static int harden_mount(const char *target, int recursive_bind) {
     };
     const unsigned int recursive_flags = recursive_bind ? AT_RECURSIVE : 0U;
 
-    if (mount(target, target, NULL, bind_flags, NULL) < 0) {
+    if (mount(source, target, NULL, bind_flags, NULL) < 0) {
         return -1;
     }
     if (mount(NULL, target, NULL, MS_PRIVATE | (recursive_bind ? MS_REC : 0UL), NULL) < 0) {
@@ -230,6 +239,91 @@ static int harden_mount(const char *target, int recursive_bind) {
     ) < 0) {
         return -1;
     }
+    return 0;
+}
+
+static int private_ipv4(const char *value) {
+    struct in_addr address;
+    uint32_t host;
+    unsigned int final_octet;
+    if (value == NULL || inet_pton(AF_INET, value, &address) != 1) return 0;
+    host = ntohl(address.s_addr);
+    final_octet = host & 0xffU;
+    if (final_octet == 0U || final_octet == 1U || final_octet == 255U) return 0;
+    return (host & 0xff000000U) == 0x0a000000U
+        || (host & 0xfff00000U) == 0xac100000U
+        || (host & 0xffff0000U) == 0xc0a80000U;
+}
+
+static int write_all(int descriptor, const char *value, size_t length) {
+    size_t offset = 0U;
+    while (offset < length) {
+        ssize_t count = write(descriptor, value + offset, length - offset);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) return -1;
+        offset += (size_t)count;
+    }
+    return 0;
+}
+
+static int create_fixed_file(const char *path, const char *contents, size_t length) {
+    int descriptor = open(
+        path,
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+        0444
+    );
+    struct stat metadata;
+    int result = -1;
+    if (descriptor < 0) return -1;
+    if (fchmod(descriptor, 0444) < 0 || write_all(descriptor, contents, length) < 0
+        || fsync(descriptor) < 0 || fstat(descriptor, &metadata) < 0
+        || !S_ISREG(metadata.st_mode) || metadata.st_uid != (uid_t)0
+        || metadata.st_gid != PRIVATE_GID || metadata.st_nlink != (nlink_t)1
+        || (metadata.st_mode & 0777) != 0444 || metadata.st_size != (off_t)length) {
+        goto cleanup;
+    }
+    result = 0;
+cleanup:
+    if (close(descriptor) < 0) result = -1;
+    return result;
+}
+
+static int immutable_regular_target(const char *path) {
+    struct stat metadata;
+    return lstat(path, &metadata) == 0
+        && S_ISREG(metadata.st_mode)
+        && metadata.st_uid == (uid_t)0
+        && metadata.st_gid == (gid_t)0
+        && metadata.st_nlink == (nlink_t)1
+        && (metadata.st_mode & (S_IWGRP | S_IWOTH)) == 0;
+}
+
+static int prepare_guest_name_service(const char *gateway_ipv4) {
+    static const char resolver[] =
+        "nameserver 127.0.0.1\n"
+        "options timeout:1 attempts:1 ndots:0\n";
+    char hosts[256];
+    int hosts_length;
+    struct stat directory_metadata;
+    if (!private_ipv4(gateway_ipv4)
+        || lstat("/run/agentops-openclaw-bootstrap", &directory_metadata) < 0
+        || !S_ISDIR(directory_metadata.st_mode)
+        || directory_metadata.st_uid != (uid_t)0
+        || directory_metadata.st_gid != PRIVATE_GID
+        || (directory_metadata.st_mode & 0777) != 0700
+        || !immutable_regular_target(HOSTS_TARGET)
+        || !immutable_regular_target(RESOLVER_TARGET)) return -1;
+    hosts_length = snprintf(
+        hosts,
+        sizeof(hosts),
+        "127.0.0.1 localhost\n::1 localhost\n%s openclaw-egress-gateway\n",
+        gateway_ipv4
+    );
+    if (hosts_length <= 0 || (size_t)hosts_length >= sizeof(hosts)) return -1;
+    if (create_fixed_file(HOSTS_SOURCE, hosts, (size_t)hosts_length) < 0
+        || create_fixed_file(RESOLVER_SOURCE, resolver, sizeof(resolver) - 1U) < 0
+        || harden_mount(HOSTS_SOURCE, HOSTS_TARGET, 0) < 0
+        || harden_mount(RESOLVER_SOURCE, RESOLVER_TARGET, 0) < 0) return -1;
     return 0;
 }
 
@@ -416,6 +510,8 @@ static int verify_hardened_mounts(void) {
     size_t record_count = 0;
     size_t record_capacity = 0;
     unsigned long config_mount_id = visible_mount_id(CONFIG_TARGET, 0);
+    unsigned long hosts_mount_id = visible_mount_id(HOSTS_TARGET, 0);
+    unsigned long resolver_mount_id = visible_mount_id(RESOLVER_TARGET, 0);
     unsigned long workspace_mount_id = visible_mount_id(WORKSPACE_TARGET, 1);
     int result = -1;
 
@@ -471,10 +567,18 @@ static int verify_hardened_mounts(void) {
             line = strtok_r(NULL, "\n", &line_save_pointer);
         }
     }
-    if (config_mount_id != 0UL && workspace_mount_id != 0UL
-        && config_mount_id != workspace_mount_id) {
+    if (config_mount_id != 0UL && hosts_mount_id != 0UL
+        && resolver_mount_id != 0UL && workspace_mount_id != 0UL
+        && config_mount_id != hosts_mount_id
+        && config_mount_id != resolver_mount_id
+        && config_mount_id != workspace_mount_id
+        && hosts_mount_id != resolver_mount_id
+        && hosts_mount_id != workspace_mount_id
+        && resolver_mount_id != workspace_mount_id) {
         size_t index;
         int config_verified = 0;
+        int hosts_verified = 0;
+        int resolver_verified = 0;
         int workspace_verified = 0;
         result = 0;
         for (index = 0; index < record_count; index += 1) {
@@ -484,13 +588,25 @@ static int verify_hardened_mounts(void) {
                     || !mount_options_hardened(record->mount_options)) result = -1;
                 config_verified = 1;
             }
+            if (record->mount_id == hosts_mount_id) {
+                if (hosts_verified || strcmp(record->mount_point, HOSTS_TARGET) != 0
+                    || !mount_options_hardened(record->mount_options)) result = -1;
+                hosts_verified = 1;
+            }
+            if (record->mount_id == resolver_mount_id) {
+                if (resolver_verified || strcmp(record->mount_point, RESOLVER_TARGET) != 0
+                    || !mount_options_hardened(record->mount_options)) result = -1;
+                resolver_verified = 1;
+            }
             if (mount_descends_from(records, record_count, record, workspace_mount_id)) {
                 if (!mount_point_in_tree(record->mount_point, WORKSPACE_TARGET, 1)
                     || !mount_options_hardened(record->mount_options)) result = -1;
                 if (record->mount_id == workspace_mount_id) workspace_verified = 1;
             }
         }
-        if (!config_verified || !workspace_verified) result = -1;
+        if (!config_verified || !hosts_verified || !resolver_verified || !workspace_verified) {
+            result = -1;
+        }
     }
 
 cleanup:
@@ -615,6 +731,7 @@ int main(int argc, char **argv) {
         (char *)SUPERVISOR_PATH,
         NULL,
     };
+    const char *egress_gateway_ipv4;
 
     (void)argv;
     (void)EXECUTOR_INIT_FALSE_REQUIRED;
@@ -635,12 +752,18 @@ int main(int argc, char **argv) {
         fixed_error("mount_bootstrap_environment_forbidden");
         return 78;
     }
+    egress_gateway_ipv4 = getenv("OPENCLAW_EGRESS_GATEWAY_IPV4");
     clean_environment = build_environment();
     if (clean_environment == NULL) {
         fixed_error("mount_bootstrap_environment_build_failed");
         return 70;
     }
-    if (harden_mount(CONFIG_TARGET, 0) < 0 || harden_mount(WORKSPACE_TARGET, 1) < 0) {
+    if (prepare_guest_name_service(egress_gateway_ipv4) < 0) {
+        fixed_error("mount_bootstrap_name_service_failed");
+        return 70;
+    }
+    if (harden_mount(CONFIG_TARGET, CONFIG_TARGET, 0) < 0
+        || harden_mount(WORKSPACE_TARGET, WORKSPACE_TARGET, 1) < 0) {
         fixed_error("mount_bootstrap_mount_hardening_failed");
         return 70;
     }

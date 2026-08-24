@@ -45,6 +45,14 @@ const CREATED = "2026-08-12T00:00:00.000Z";
 const EXPIRES = "2026-08-19T00:00:00.000Z";
 const KEY_ID = "runtime-manifest-key-2026-08";
 const ISSUER = "agentops-release";
+const HOSTS_BYTES = Buffer.from(
+  "127.0.0.1 localhost\n::1 localhost\n172.31.250.3 openclaw-egress-gateway\n",
+  "utf8",
+);
+const RESOLVER_CONFIG_BYTES = Buffer.from(
+  "nameserver 127.0.0.1\noptions timeout:1 attempts:1 ndots:0\n",
+  "utf8",
+);
 const FILES = [
   "openclaw-runtime-manifest-metadata-receipt.json",
   "openclaw-runtime-manifest.json",
@@ -53,12 +61,27 @@ const FILES = [
 
 function sourceAudit() {
   const optionBlock = /const EXPECTED_OPTIONS = Object\.freeze\(\[([\s\S]*?)\]\);/.exec(releaseSource)?.[1] || "";
+  const mutableMountBlock = /mutable_mounts: \[([\s\S]*?)\n\s*\],\n\s*oci_image:/.exec(releaseSource)?.[1] || "";
+  const releaseMounts = [...mutableMountBlock.matchAll(
+    /\{ kind: "([a-z_]+)", path: "([^"]+)", read_only: (true|false)(?:, [^}]*)? \}/g,
+  )].map((match) => ({ kind: match[1], path: match[2], read_only: match[3] === "true" }));
   assert.match(optionBlock, /"--provenance"/);
   assert.doesNotMatch(optionBlock, /"--guest-root"/);
   assert.doesNotMatch(optionBlock, /"--oci"/);
   assert.match(releaseSource, /readCommittedOpenClawRuntimeOciExportReceipt\(input\.provenance\)/);
   assert.match(releaseSource, /runtime_manifest_v2_release_provenance_rootfs_mismatch/);
   assert.match(releaseSource, /oci_export_provenance/);
+  assert.deepEqual(releaseMounts, [
+    { kind: "hosts_file", path: "/etc/hosts", read_only: true },
+    { kind: "resolver_config_file", path: "/etc/resolv.conf", read_only: true },
+    { kind: "workspace_directory", path: "/opt/agentops-worker/workspace", read_only: true },
+    { kind: "state_directory", path: "/run/openclaw-state", read_only: false },
+    { kind: "config_file", path: "/run/secrets/openclaw_config", read_only: true },
+    { kind: "temp_directory", path: "/tmp", read_only: false },
+  ]);
+  assert.equal(new Set(releaseMounts.map((mount) => mount.kind)).size, 6);
+  assert.match(mutableMountBlock, /hosts_file[\s\S]*sha256: sha256\(hostsBytes\(egressGatewayIpv4\)\)/);
+  assert.match(mutableMountBlock, /resolver_config_file[\s\S]*sha256: sha256\(DEFAULT_RESOLVER_CONFIG_BYTES\)/);
   assert.match(readerSource, /runtime_release_receipt_provenance_invalid/);
   assert.match(readerSource, /runtime_release_receipt_manifest_binding_invalid/);
 }
@@ -90,6 +113,7 @@ function fixture(base) {
   const root = path.join(base, "guest-root");
   for (const directory of [
     "",
+    "etc",
     "opt/agentops/openclaw-adapter",
     "opt/agentops-worker/workspace",
     "opt/openclaw",
@@ -104,6 +128,8 @@ function fixture(base) {
     { mode: 0o555 },
   );
   writeFileSync(path.join(root, "opt/openclaw/package.json"), '{"version":"2026.5.4"}\n', { mode: 0o444 });
+  writeFileSync(path.join(root, "etc/hosts"), HOSTS_BYTES, { mode: 0o444 });
+  writeFileSync(path.join(root, "etc/resolv.conf"), RESOLVER_CONFIG_BYTES, { mode: 0o444 });
   writeFileSync(path.join(root, "usr/local/bin/node"), "node-runtime\n", { mode: 0o555 });
   writeFileSync(path.join(root, "run/secrets/openclaw_config"), "{}\n", { mode: 0o400 });
   for (const directory of [
@@ -113,6 +139,7 @@ function fixture(base) {
     "opt/agentops-worker",
     "opt/openclaw",
     "opt",
+    "etc",
     "run/openclaw-state",
     "run/secrets",
     "run",
@@ -181,6 +208,7 @@ function argumentsFor(provenance, key, trustRoot, output, overrides = {}) {
   const values = {
     "cgroup-policy-sha256": digest("b"),
     created: CREATED,
+    "egress-gateway-ipv4": "172.31.250.3",
     expires: EXPIRES,
     issuer: ISSUER,
     "key-id": KEY_ID,
@@ -278,6 +306,11 @@ try {
     file_count: provenance.rootfs.file_count,
     merkle_sha256: provenance.rootfs.merkle_sha256,
   });
+  assert.deepEqual(envelope.body.mutable_mounts.slice(0, 2), [
+    { kind: "hosts_file", path: "/etc/hosts", read_only: true, sha256: sha256(HOSTS_BYTES) },
+    { kind: "resolver_config_file", path: "/etc/resolv.conf", read_only: true, sha256: sha256(RESOLVER_CONFIG_BYTES) },
+  ]);
+  assert.equal(envelope.body.mutable_mounts.length, 6);
   assert.equal(
     provenance.rootfs.schema,
     "agentops_openclaw_runtime_rootfs_merkle_v1",
@@ -316,6 +349,25 @@ try {
     "--oci", OCI,
   ];
   assert.match(run(oldArguments, 1).stderr, /runtime_manifest_v2_release_options_invalid/);
+
+  for (const [index, invalidGatewayIpv4] of [
+    "8.8.8.8",
+    "127.0.0.1",
+    "169.254.169.254",
+    "172.31.250.1",
+    "172.31.250.3/29",
+  ].entries()) {
+    assert.match(
+      run(argumentsFor(
+        provenance.receiptPath,
+        keyPath,
+        trustPath,
+        path.join(base, `invalid-gateway-${index}`),
+        { "egress-gateway-ipv4": invalidGatewayIpv4 },
+      ), 1).stderr,
+      /runtime_manifest_v2_release_egress_gateway_ipv4_invalid/,
+    );
+  }
 
   chmodSync(provenance.receiptPath, 0o644);
   assert.match(

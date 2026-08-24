@@ -18,6 +18,8 @@ export const OPENCLAW_RUNTIME_ROOTFS_MERKLE_SCHEMA =
   "agentops_openclaw_runtime_rootfs_merkle_v1";
 
 export const OPENCLAW_RUNTIME_CANONICAL_GUEST_MOUNT_PATHS = Object.freeze([
+  "/etc/hosts",
+  "/etc/resolv.conf",
   "/opt/agentops-worker/workspace",
   "/run/openclaw-state",
   "/run/secrets/openclaw_config",
@@ -25,6 +27,8 @@ export const OPENCLAW_RUNTIME_CANONICAL_GUEST_MOUNT_PATHS = Object.freeze([
 ]);
 
 const EXPECTED_MOUNT_TYPES = new Map([
+  ["/etc/hosts", "regular"],
+  ["/etc/resolv.conf", "regular"],
   ["/opt/agentops-worker/workspace", "directory"],
   ["/run/openclaw-state", "directory"],
   ["/run/secrets/openclaw_config", "regular"],
@@ -110,7 +114,7 @@ function canonicalGuestPath(value) {
 }
 
 function validateMountPaths(values) {
-  if (!Array.isArray(values) || values.length !== 4) {
+  if (!Array.isArray(values) || values.length !== 6) {
     fail("runtime_rootfs_merkle_mount_paths_invalid");
   }
   const paths = values.map(canonicalGuestPath).sort(compareUtf8);

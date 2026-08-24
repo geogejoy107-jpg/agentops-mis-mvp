@@ -51,6 +51,8 @@ const body = {
   issuer: "agentops-release",
   key_id: "manifest-key-1",
   mutable_mounts: [
+    { kind: "hosts_file", path: "/etc/hosts", read_only: true, sha256: sha256("127.0.0.1 localhost\n::1 localhost\n172.31.250.3 openclaw-egress-gateway\n") },
+    { kind: "resolver_config_file", path: "/etc/resolv.conf", read_only: true, sha256: sha256("nameserver 127.0.0.1\noptions timeout:1 attempts:1 ndots:0\n") },
     { kind: "workspace_directory", path: "/opt/agentops-worker/workspace", read_only: true },
     { kind: "state_directory", path: "/run/openclaw-state", read_only: false },
     { kind: "config_file", path: "/run/secrets/openclaw_config", read_only: true },

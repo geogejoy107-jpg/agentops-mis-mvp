@@ -82,8 +82,20 @@ pins public DNS results into the TLS lookup,
 rejects private, link-local, metadata, reserved, redirect, arbitrary-host, and
 unsupported-route requests, and applies bounded body, response, concurrency,
 and total-deadline cancellation. This is source and loopback contract evidence.
-Guest runtime DNS handoff and real Linux A08 connection-denial attacks remain
-open, so `runtime_network_policy_verified=false`.
+The bootstrap source now mounts deterministic read-only guest `/etc/hosts` and
+`/etc/resolv.conf` files: the gateway name maps to its configured private
+`runtime-egress` address, while the default resolver points only to guest
+loopback. Manifest v2 signs the exact content hashes, and release signing takes
+the same private gateway IPv4 that bootstrap receives. Mount preflight reads the
+files through `O_NOFOLLOW` descriptors and rejects identity or digest changes.
+Compose also gives `provider-egress` the gateway's preferred default route. Real
+Linux name-resolution, direct-IP, Docker embedded-DNS, and
+connection-denial attacks remain open, so `runtime_network_policy_verified=false`.
+The strict-runner workflow uses separate runtime, gateway-fixture, and Provider
+fixture addresses plus a positive Docker-DNS canary. It can prove that the
+default guest resolver does not resolve that canary and that a nonce-bearing
+request crossed the fixture gateway. It deliberately reports both production
+gateway end-to-end execution and raw `127.0.0.11` DNS denial as false.
 
 OpenClaw 2026.5.4 still exposes the agent prompt only as CLI
 `--message <text>`; that CLI remains forbidden. A checked-in Node adapter now
@@ -313,18 +325,21 @@ or a runtime-owned `0400` secret mount; never mount that secret into Broker.
 - Broker uses `network_mode: none`. It communicates exclusively over the two
   UDS volumes and has no host port.
 - Executor/runtime joins only the internal `runtime-egress` Docker network. It
-  is configured to reach the fixed `openclaw-egress-gateway` service and has no
-  direct membership in `control_plane` or `provider-egress`.
+  receives a deterministic read-only hosts mapping for the fixed
+  `openclaw-egress-gateway` service and a loopback-only default resolver. It has
+  no direct membership in `control_plane` or `provider-egress`.
 - The trusted egress gateway is the only service that joins both
   `runtime-egress` and `provider-egress`. It validates a single operator-set
   HTTPS upstream origin, resolves only public addresses, pins the accepted DNS
   result into the TLS connection, forwards only bounded allowlisted Provider
-  routes and headers, and rejects redirects.
+  routes and headers, and rejects redirects. Its `provider-egress` attachment
+  has the higher default-gateway priority.
 - Docker network membership is only topology input, not acceptance evidence.
   The deployment still needs a default-deny host/cloud policy around
   `provider-egress`, guest-root DNS handoff, and active same-image connection
   denial tests for MIS, PostgreSQL, Docker API, metadata, host gateways, private
-  addresses, and arbitrary Internet destinations.
+  addresses, arbitrary Internet destinations, and direct queries to Docker's
+  embedded DNS listener.
 - No service mounts `/var/run/docker.sock`, the host network namespace, host PID
   namespace, or a writable host path.
 

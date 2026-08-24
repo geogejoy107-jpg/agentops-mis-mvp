@@ -46,9 +46,14 @@ const OUTPUT_FILES = Object.freeze({
 const SHA256 = /^[a-f0-9]{64}$/;
 const OCI_REFERENCE = /^([a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+)@(sha256:[a-f0-9]{64})$/;
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,255}$/;
+const DEFAULT_RESOLVER_CONFIG_BYTES = Buffer.from(
+  "nameserver 127.0.0.1\noptions timeout:1 attempts:1 ndots:0\n",
+  "utf8",
+);
 const EXPECTED_OPTIONS = Object.freeze([
   "--cgroup-policy-sha256",
   "--created",
+  "--egress-gateway-ipv4",
   "--expires",
   "--issuer",
   "--key-id",
@@ -81,6 +86,30 @@ function currentUid() {
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function privateGatewayIpv4(value) {
+  if (typeof value !== "string" || !/^(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}$/.test(value)) {
+    fail("runtime_manifest_v2_release_egress_gateway_ipv4_invalid");
+  }
+  const octets = value.split(".").map(Number);
+  if (
+    octets.some((octet) => !Number.isSafeInteger(octet) || octet < 0 || octet > 255)
+    || [0, 1, 255].includes(octets[3])
+    || !(
+      octets[0] === 10
+      || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+      || (octets[0] === 192 && octets[1] === 168)
+    )
+  ) fail("runtime_manifest_v2_release_egress_gateway_ipv4_invalid");
+  return value;
+}
+
+function hostsBytes(gatewayIpv4) {
+  return Buffer.from(
+    `127.0.0.1 localhost\n::1 localhost\n${gatewayIpv4} openclaw-egress-gateway\n`,
+    "utf8",
+  );
 }
 
 function parseTimestamp(value, label) {
@@ -285,6 +314,7 @@ function releaseBody(input, rootfs, provenance) {
   if (!SHA256.test(input["seccomp-profile-sha256"])) {
     fail("runtime_manifest_v2_release_seccomp_profile_sha256_invalid");
   }
+  const egressGatewayIpv4 = privateGatewayIpv4(input["egress-gateway-ipv4"]);
   return {
     argv: [
       { kind: "guest_path", value: "/usr/local/bin/node" },
@@ -313,6 +343,8 @@ function releaseBody(input, rootfs, provenance) {
     issuer: input.issuer,
     key_id: input["key-id"],
     mutable_mounts: [
+      { kind: "hosts_file", path: "/etc/hosts", read_only: true, sha256: sha256(hostsBytes(egressGatewayIpv4)) },
+      { kind: "resolver_config_file", path: "/etc/resolv.conf", read_only: true, sha256: sha256(DEFAULT_RESOLVER_CONFIG_BYTES) },
       { kind: "workspace_directory", path: "/opt/agentops-worker/workspace", read_only: true },
       { kind: "state_directory", path: "/run/openclaw-state", read_only: false },
       { kind: "config_file", path: "/run/secrets/openclaw_config", read_only: true },

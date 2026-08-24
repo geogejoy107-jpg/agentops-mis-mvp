@@ -300,6 +300,7 @@ jobs:
               deploy/byoc/openclaw-runtime-manifest-v2-release.mjs \
               --cgroup-policy-sha256 "${cgroup_policy_sha256}" \
               --created "${created}" \
+              --egress-gateway-ipv4 "172.31.250.3" \
               --expires "${expires}" \
               --issuer "${issuer}" \
               --key-id "${key_id}" \
@@ -404,6 +405,7 @@ jobs:
                 deploy/byoc/openclaw-runtime-manifest-v2-release.mjs \
                 --cgroup-policy-sha256 "$(printf 'a%.0s' {1..64})" \
                 --created "2026-08-12T00:00:00.000Z" \
+                --egress-gateway-ipv4 "172.31.250.3" \
                 --expires "2026-08-13T00:00:00.000Z" \
                 --issuer "agentops-a07-contract" \
                 --key-id "agentops-a07-contract-key" \
@@ -534,6 +536,9 @@ jobs:
             and .linux_runtime_executed == true
             and .bind_remount_verified == true
             and .mountinfo_flags_verified == true
+            and .guest_name_service_files_verified == true
+            and .gateway_ipv4_rejections_verified == true
+            and .bootstrap_tmpfs_verified == true
             and .capability_drop_verified == true
             and .required_launcher_capabilities_retained == true
             and .temporary_cap_setpcap_removed == true
@@ -559,15 +564,184 @@ jobs:
           work="${scratch}/work"
           merged="${scratch}/merged"
           config="${scratch}/openclaw.json"
+          network="agentops-a08-real-runner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          runner_ipv4="172.31.250.2"
+          gateway_ipv4="172.31.250.3"
+          provider_ipv4="172.31.250.4"
+          fixture_nonce="${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.${GITHUB_SHA}"
+          gateway_container="${network}-gateway"
+          provider_container="${network}-provider"
           cleanup() {
             status=$?
             trap - EXIT
+            docker rm -f "${gateway_container}" "${provider_container}" >/dev/null 2>&1 || true
+            docker network rm "${network}" >/dev/null 2>&1 || true
             sudo rm -rf "${export_parent}"
             rm -rf "${scratch}"
             exit "${status}"
           }
           trap cleanup EXIT
           mkdir -p "${upper}" "${work}" "${merged}"
+          docker network create --internal --subnet 172.31.250.0/29 "${network}" >/dev/null
+
+          cat > "${scratch}/a08-provider-fixture.mjs" <<'NODE'
+          import { writeFileSync } from "node:fs";
+          import { createServer } from "node:http";
+
+          const evidencePath = "/contract/provider-evidence.json";
+          const fixtureNonce = process.env.AGENTOPS_A08_FIXTURE_NONCE;
+          let requests = 0;
+          const responseBase = {
+            created: 0,
+            id: "chatcmpl-agentops-a08-provider-fixture",
+            model: "contract-dynamic-model",
+            object: "chat.completion",
+          };
+
+          createServer(async (request, response) => {
+            try {
+              if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
+                response.writeHead(404).end();
+                return;
+              }
+              const chunks = [];
+              let bytes = 0;
+              for await (const chunk of request) {
+                bytes += chunk.byteLength;
+                if (bytes > 1024 * 1024) throw new Error("request_too_large");
+                chunks.push(Buffer.from(chunk));
+              }
+              const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+              if (
+                body.model !== "contract-dynamic-model"
+                || request.headers.authorization !== "Bearer contract-provider-key"
+                || request.headers["x-agentops-a08-fixture"] !== fixtureNonce
+              ) {
+                response.writeHead(400).end();
+                return;
+              }
+              requests += 1;
+              writeFileSync(evidencePath, `${JSON.stringify({
+                fixture_nonce: fixtureNonce,
+                model: body.model,
+                path: request.url,
+                requests,
+                schema: "agentops_a08_provider_fixture_evidence_v1",
+              })}\n`, { encoding: "utf8", mode: 0o600 });
+              if (body.stream === true) {
+                response.writeHead(200, {
+                  "cache-control": "no-cache",
+                  "content-type": "text/event-stream",
+                });
+                response.write(`data: ${JSON.stringify({ ...responseBase, choices: [{ delta: { role: "assistant" }, finish_reason: null, index: 0 }], object: "chat.completion.chunk" })}\n\n`);
+                response.write(`data: ${JSON.stringify({ ...responseBase, choices: [{ delta: { content: "AGENTOPS_REAL_RUNNER_OK" }, finish_reason: null, index: 0 }], object: "chat.completion.chunk" })}\n\n`);
+                response.write(`data: ${JSON.stringify({ ...responseBase, choices: [{ delta: {}, finish_reason: "stop", index: 0 }], object: "chat.completion.chunk" })}\n\n`);
+                response.end("data: [DONE]\n\n");
+                return;
+              }
+              response.writeHead(200, { "content-type": "application/json" });
+              response.end(JSON.stringify({
+                ...responseBase,
+                choices: [{ finish_reason: "stop", index: 0, message: { content: "AGENTOPS_REAL_RUNNER_OK", role: "assistant" } }],
+                usage: { completion_tokens: 4, prompt_tokens: 12, total_tokens: 16 },
+              }));
+            } catch {
+              if (!response.headersSent) response.writeHead(500);
+              response.end();
+            }
+          }).listen(18081, "0.0.0.0", () => {
+            writeFileSync("/contract/provider-ready", "ready\n", { encoding: "utf8", mode: 0o600 });
+          });
+          NODE
+
+          cat > "${scratch}/a08-gateway-fixture.mjs" <<'NODE'
+          import { writeFileSync } from "node:fs";
+          import { createServer, request as httpRequest } from "node:http";
+
+          const fixtureNonce = process.env.AGENTOPS_A08_FIXTURE_NONCE;
+          const upstreamIpv4 = "172.31.250.4";
+          let requests = 0;
+
+          createServer(async (request, response) => {
+            try {
+              if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
+                response.writeHead(404).end();
+                return;
+              }
+              const chunks = [];
+              let bytes = 0;
+              for await (const chunk of request) {
+                bytes += chunk.byteLength;
+                if (bytes > 1024 * 1024) throw new Error("request_too_large");
+                chunks.push(Buffer.from(chunk));
+              }
+              const body = Buffer.concat(chunks);
+              const upstream = httpRequest({
+                headers: {
+                  authorization: request.headers.authorization,
+                  "content-length": String(body.byteLength),
+                  "content-type": request.headers["content-type"] || "application/json",
+                  "x-agentops-a08-fixture": fixtureNonce,
+                },
+                host: upstreamIpv4,
+                method: "POST",
+                path: request.url,
+                port: 18081,
+              }, (upstreamResponse) => {
+                requests += 1;
+                writeFileSync("/contract/gateway-evidence.json", `${JSON.stringify({
+                  fixture_nonce: fixtureNonce,
+                  requests,
+                  schema: "agentops_a08_fixture_gateway_evidence_v1",
+                  upstream_ipv4: upstreamIpv4,
+                  upstream_port: 18081,
+                })}\n`, { encoding: "utf8", mode: 0o600 });
+                response.writeHead(upstreamResponse.statusCode || 502, upstreamResponse.headers);
+                upstreamResponse.pipe(response);
+              });
+              upstream.once("error", () => {
+                if (!response.headersSent) response.writeHead(502);
+                response.end();
+              });
+              upstream.end(body);
+            } catch {
+              if (!response.headersSent) response.writeHead(500);
+              response.end();
+            }
+          }).listen(18080, "0.0.0.0", () => {
+            writeFileSync("/contract/gateway-ready", "ready\n", { encoding: "utf8", mode: 0o600 });
+          });
+          NODE
+
+          docker run --detach --name "${provider_container}" \
+            --network "${network}" --ip "${provider_ipv4}" \
+            --network-alias agentops-a08-default-dns-canary \
+            --user "$(id -u):$(id -g)" \
+            --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --env "AGENTOPS_A08_FIXTURE_NONCE=${fixture_nonce}" \
+            --volume "${scratch}:/contract:rw" \
+            --entrypoint node "${launcher_image}" \
+            /contract/a08-provider-fixture.mjs >/dev/null
+          docker run --detach --name "${gateway_container}" \
+            --network "${network}" --ip "${gateway_ipv4}" \
+            --network-alias openclaw-egress-gateway \
+            --user "$(id -u):$(id -g)" \
+            --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --env "AGENTOPS_A08_FIXTURE_NONCE=${fixture_nonce}" \
+            --volume "${scratch}:/contract:rw" \
+            --entrypoint node "${launcher_image}" \
+            /contract/a08-gateway-fixture.mjs >/dev/null
+          for attempt in $(seq 1 50); do
+            test -f "${scratch}/provider-ready" && test -f "${scratch}/gateway-ready" && break
+            test "${attempt}" -lt 50
+            sleep 0.2
+          done
+          docker run --rm --network "${network}" --entrypoint node "${launcher_image}" \
+            --input-type=module --eval '
+              import { lookup } from "node:dns/promises";
+              const addresses = await lookup("agentops-a08-default-dns-canary", { all: true, verbatim: true });
+              if (addresses.length !== 1 || addresses[0].address !== "172.31.250.4" || addresses[0].family !== 4) process.exit(1);
+            '
 
           sudo --preserve-env=PATH "$(command -v node)" \
             --input-type=module - \
@@ -699,7 +873,7 @@ jobs:
                 "contract": {
                   "api": "openai-completions",
                   "apiKey": "contract-provider-key",
-                  "baseUrl": "http://127.0.0.1:18081/v1",
+                  "baseUrl": "http://openclaw-egress-gateway:18080/v1",
                   "models": [{
                     "contextWindow": 8192,
                     "cost": { "cacheRead": 0, "cacheWrite": 0, "input": 0, "output": 0 },
@@ -715,7 +889,11 @@ jobs:
           }
           JSON
           chmod 0444 "${config}"
-          docker run --rm --privileged --cgroupns private --network host \
+          docker run --rm --privileged --cgroupns private \
+            --network "${network}" --ip "${runner_ipv4}" \
+            --env "AGENTOPS_REAL_RUNNER_FIXTURE_NONCE=${fixture_nonce}" \
+            --env AGENTOPS_REAL_RUNNER_GATEWAY_EVIDENCE=/contract/gateway-evidence.json \
+            --env AGENTOPS_REAL_RUNNER_PROVIDER_EVIDENCE=/contract/provider-evidence.json \
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777 \
             --volume "${GITHUB_WORKSPACE}:/workspace:ro" \
             --volume "${guest_root}:/exported-rootfs:ro" \
@@ -744,6 +922,16 @@ jobs:
               chmod 0444 /contract/merged/opt/agentops-worker/workspace/contract-marker
               mount -t tmpfs -o uid=1200,gid=1200,mode=0700,nosuid,nodev,noexec,size=64m tmpfs /contract/merged/run/openclaw-state
               mount -t tmpfs -o uid=1200,gid=1200,mode=1777,nosuid,nodev,noexec,size=64m tmpfs /contract/merged/tmp
+              mkdir -p /run/agentops-a08-name-service
+              mount -t tmpfs -o uid=0,gid=2200,mode=0700,nosuid,nodev,noexec,size=1m tmpfs /run/agentops-a08-name-service
+              printf "127.0.0.1 localhost\n::1 localhost\n172.31.250.3 openclaw-egress-gateway\n" > /run/agentops-a08-name-service/hosts
+              printf "nameserver 127.0.0.1\noptions timeout:1 attempts:1 ndots:0\n" > /run/agentops-a08-name-service/resolv.conf
+              chown 0:2200 /run/agentops-a08-name-service/hosts /run/agentops-a08-name-service/resolv.conf
+              chmod 0444 /run/agentops-a08-name-service/hosts /run/agentops-a08-name-service/resolv.conf
+              mount --bind /run/agentops-a08-name-service/hosts /contract/merged/etc/hosts
+              mount -o remount,bind,ro,nosuid,nodev,noexec /contract/merged/etc/hosts
+              mount --bind /run/agentops-a08-name-service/resolv.conf /contract/merged/etc/resolv.conf
+              mount -o remount,bind,ro,nosuid,nodev,noexec /contract/merged/etc/resolv.conf
               mount --bind /contract/openclaw.json /contract/merged/run/secrets/openclaw_config
               mount -o remount,bind,ro,nosuid,nodev,noexec /contract/merged/run/secrets/openclaw_config
               stage=cgroup_delegation
@@ -783,6 +971,12 @@ jobs:
             and .status_handshake_r_verified == true
             and .fake_handles_injected == false
             and .fixed_launcher_environment_verified == true
+            and .guest_gateway_name_resolution_verified == true
+            and .guest_default_dns_positive_canary_lookup_denied == true
+            and .fixture_gateway_forward_observed == true
+            and .provider_fixture_call_observed == true
+            and .raw_docker_dns_127_0_0_11_denied == false
+            and .production_gateway_end_to_end_verified == false
             and .instrumentation_overlay == true
             and .provider_call_observed == true
             and .runtime_path_toctou_closed == false
@@ -852,6 +1046,8 @@ jobs:
               const measurement = computeOpenClawRuntimeRootfsMerkle(
                 "/opt/agentops-provider/openclaw",
                 [
+                  "/etc/hosts",
+                  "/etc/resolv.conf",
                   "/opt/agentops-worker/workspace",
                   "/run/openclaw-state",
                   "/run/secrets/openclaw_config",

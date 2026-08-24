@@ -19,7 +19,7 @@ four-service candidate, but its real network policy gate remains false.
 | PATH-02 | P1 | Preflight opens the guest root with `O_DIRECTORY | O_NOFOLLOW`, opens the signed runtime executable with `O_NOFOLLOW`, checks path/fd identity around a second rootfs measurement, and retains both `rootFd` and `execFd` for dispatch. | Prove descriptor identity, lifetime, and cleanup in the exact-head root Linux run. |
 | PATH-03 | P1 | The default runner passes retained root, executable, and cgroup descriptors to the native launcher. The launcher source owns the `fchdir`/`chroot` and `execveat(..., AT_EMPTY_PATH)` path rather than projecting the entrypoint into the Executor root. | Re-run the strict default open/spawn contract on the exact image and record non-synthetic evidence. |
 | PATH-04 | P1 | `openclaw-runtime-real-runner-contract.mjs` has a source-audit mode that deliberately reports `strict_linux_execution_performed=false`. Its strict mode requires root Linux, a real guest root, launcher, cgroup v2, and default runner dependencies. | Do not treat source-audit output as strict-mode evidence. The current exact-head strict result is pending. |
-| PATH-05 | P1 | The A08 candidate wires `worker`, `broker`, `executor`, and `egress-gateway`; the runtime-facing network is internal and only the gateway also joins the provider-egress network. OpenClaw config requires replacement mode and is restricted to one fixed internal gateway base URL plus three supported provider API modes. | Prove DNS, routing, direct-egress denial, gateway-only provider access, redirect/rebinding denial, and fail-closed startup on real Linux. `runtime_network_policy_verified` remains false. |
+| PATH-05 | P1 | The A08 candidate wires `worker`, `broker`, `executor`, and `egress-gateway`; the runtime-facing network is internal and only the gateway also joins the provider-egress network. OpenClaw config requires replacement mode and is restricted to one fixed internal gateway base URL plus three supported provider API modes. Bootstrap now supplies deterministic read-only hosts and loopback-only resolver files. | Prove name resolution, route selection, raw Docker-DNS denial, direct-egress denial, gateway-only provider access, redirect/rebinding denial, and fail-closed startup on real Linux. `runtime_network_policy_verified` remains false. |
 | PATH-06 | P1 | The repository can build, export, measure, and sign an ephemeral digest-pinned guest-root candidate, but this A08 candidate has no recorded exact-head remote Linux result and no same-head real-provider receipt. | Run the exact-head Linux gates on a Docker-capable Linux host, then record real provider evidence against that exact candidate. |
 
 These findings are release blockers, not evidence of a completed hostile-runtime
@@ -91,9 +91,17 @@ The A08 code changes the candidate topology to four services:
 | `egress-gateway` | internal `runtime-egress` plus external `provider-egress` | The sole source-wired bridge from runtime traffic to one operator-approved HTTPS provider origin. |
 
 `runtime-egress` is declared with `internal: true`. The gateway is addressed by
-the fixed service alias `openclaw-egress-gateway` and runs as uid/gid 1300 with a
-read-only root, all capabilities dropped, `no-new-privileges`, bounded pids, and
-a bounded tmpfs.
+the fixed service alias `openclaw-egress-gateway` and a configurable private
+IPv4 address. Bootstrap mounts a root-owned, mode `0444` hosts file mapping that
+name and a mode `0444` resolver file that points default lookups only to guest
+loopback. Both are signed mutable-mount kinds excluded from the immutable rootfs
+Merkle; their exact SHA-256 values are bound into manifest v2 and verified from
+`O_NOFOLLOW` descriptors on independent hardened tmpfs bind mounts. Runtime
+release signing requires the same private gateway IPv4 that Compose passes to
+bootstrap, so a mismatched topology fails preflight. The gateway runs
+as uid/gid 1300 with a read-only root, all capabilities dropped,
+`no-new-privileges`, bounded pids, and a bounded tmpfs. Its `provider-egress`
+network has higher default-gateway priority than `runtime-egress`.
 
 Executor preflight securely reads the OpenClaw configuration from the
 manifest-declared guest path `/run/secrets/openclaw_config` and invokes the A08
@@ -112,14 +120,25 @@ redacts upstream failures.
 
 These are source and configuration gates only. The current candidate has not yet
 proved on real Linux that the guest can resolve and reach the gateway while all
-direct provider, metadata, private-address, alternate-DNS, redirect, and DNS
-rebinding paths fail. Therefore:
+direct provider, metadata, private-address, alternate-DNS, raw Docker embedded
+DNS, redirect, and DNS rebinding paths fail. Therefore:
+
+The strict-runner workflow now reserves separate runtime, fixture-gateway, and
+Provider addresses. A per-run nonce must traverse the fixture gateway before
+the Provider records the call, and a Docker-DNS positive canary must resolve
+outside the guest before the guest's loopback-only default resolver rejects it.
+That contract does not execute the production gateway and does not attempt a
+raw query to `127.0.0.11`; both claims remain explicitly false.
 
 ```text
 internal_runtime_egress_network_wired = true
 provider_egress_config_gate_wired     = true
 trusted_provider_egress_gateway_wired = true
+deterministic_guest_gateway_name_wired = true
+guest_default_dns_resolution_disabled_by_source = true
 runtime_network_policy_verified       = false
+production_gateway_end_to_end_verified = false
+raw_docker_dns_127_0_0_11_denied      = false
 ```
 
 The existing operator egress attestation remains a required input. It must not

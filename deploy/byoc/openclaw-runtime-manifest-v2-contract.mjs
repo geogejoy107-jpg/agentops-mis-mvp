@@ -45,6 +45,8 @@ function fixture(overrides = {}) {
     issuer: "agentops-release",
     key_id: "runtime-manifest-key-2026-08",
     mutable_mounts: [
+      { kind: "hosts_file", path: "/etc/hosts", read_only: true, sha256: digest("e") },
+      { kind: "resolver_config_file", path: "/etc/resolv.conf", read_only: true, sha256: digest("f") },
       { kind: "workspace_directory", path: "/opt/agentops-worker/workspace", read_only: true },
       { kind: "state_directory", path: "/run/openclaw-state", read_only: false },
       { kind: "config_file", path: "/run/secrets/openclaw_config", read_only: true },
@@ -119,6 +121,18 @@ const verified = verifyCanonicalRuntimeManifestV2(
 assert.ok(Object.isFrozen(verified));
 assert.ok(Object.isFrozen(verified.argv));
 assert.equal(verified.path_model, "guest_root_absolute_v1");
+assert.deepEqual(verified.mutable_mounts.map(({ kind, path }) => ({ kind, path })), [
+  { kind: "hosts_file", path: "/etc/hosts" },
+  { kind: "resolver_config_file", path: "/etc/resolv.conf" },
+  { kind: "workspace_directory", path: "/opt/agentops-worker/workspace" },
+  { kind: "state_directory", path: "/run/openclaw-state" },
+  { kind: "config_file", path: "/run/secrets/openclaw_config" },
+  { kind: "temp_directory", path: "/tmp" },
+]);
+assert.deepEqual(verified.mutable_mounts.slice(0, 2).map(({ kind, sha256 }) => ({ kind, sha256 })), [
+  { kind: "hosts_file", sha256: digest("e") },
+  { kind: "resolver_config_file", sha256: digest("f") },
+]);
 assert.deepEqual(Object.values(verified.claims), [false, false, false, false, false]);
 
 for (const [body, pattern] of [
@@ -135,7 +149,16 @@ for (const [body, pattern] of [
   [fixture({ entrypoint: "/opt/agentops/openclaw-adapter/../escape.mjs" }), /runtime_manifest_v2_entrypoint_invalid/],
   [fixture({ entrypoint: "/opt/agentops/\ud800/escape.mjs" }), /runtime_manifest_v2_entrypoint_invalid/],
   [fixture({ environment_name_allowlist: ["LANG", "LANG", "OPENCLAW_STATE_DIR", "OPENCLAW_WORKSPACE", "PATH"] }), /runtime_manifest_v2_environment_name_allowlist_invalid/],
-  [fixture({ mutable_mounts: [fixture().mutable_mounts[0], fixture().mutable_mounts[0], fixture().mutable_mounts[2], fixture().mutable_mounts[3]] }), /runtime_manifest_v2_mutable_mount_kind_duplicate|runtime_manifest_v2_mutable_mounts_order_invalid/],
+  [fixture({ mutable_mounts: [fixture().mutable_mounts[0], fixture().mutable_mounts[0], ...fixture().mutable_mounts.slice(2)] }), /runtime_manifest_v2_mutable_mount_kind_duplicate|runtime_manifest_v2_mutable_mounts_order_invalid/],
+  [fixture({ mutable_mounts: fixture().mutable_mounts.slice(1) }), /runtime_manifest_v2_mutable_mounts_invalid/],
+  [fixture({ mutable_mounts: [...fixture().mutable_mounts, { kind: "extra_file", path: "/var/extra", read_only: true }] }), /runtime_manifest_v2_mutable_mounts_invalid/],
+  [fixture({ mutable_mounts: fixture().mutable_mounts.map((mount) => mount.kind === "hosts_file" ? { ...mount, path: "/etc/hostname" } : mount) }), /runtime_manifest_v2_mutable_mount_path_mismatch/],
+  [fixture({ mutable_mounts: fixture().mutable_mounts.map((mount) => mount.kind === "resolver_config_file" ? { ...mount, path: "/etc/resolver.conf" } : mount) }), /runtime_manifest_v2_mutable_mount_path_mismatch/],
+  [fixture({ mutable_mounts: [fixture().mutable_mounts[1], fixture().mutable_mounts[0], ...fixture().mutable_mounts.slice(2)] }), /runtime_manifest_v2_mutable_mounts_order_invalid/],
+  [fixture({ mutable_mounts: fixture().mutable_mounts.map((mount) => mount.kind === "resolver_config_file" ? { ...mount, read_only: false } : mount) }), /runtime_manifest_v2_mutable_mount_read_only_invalid/],
+  [fixture({ mutable_mounts: fixture().mutable_mounts.map((mount) => mount.kind === "hosts_file" ? { kind: mount.kind, path: mount.path, read_only: mount.read_only } : mount) }), /runtime_manifest_v2_mutable_mount_fields_invalid/],
+  [fixture({ mutable_mounts: fixture().mutable_mounts.map((mount) => mount.kind === "resolver_config_file" ? { ...mount, sha256: "A".repeat(64) } : mount) }), /runtime_manifest_v2_mutable_mount_sha256_invalid/],
+  [fixture({ mutable_mounts: fixture().mutable_mounts.map((mount) => mount.kind === "workspace_directory" ? { ...mount, sha256: digest("9") } : mount) }), /runtime_manifest_v2_mutable_mount_fields_invalid/],
   [fixture({ mutable_mounts: fixture().mutable_mounts.map((mount) => mount.kind === "config_file" ? { ...mount, read_only: false } : mount) }), /runtime_manifest_v2_mutable_mount_read_only_invalid/],
   [fixture({ argv: [{ kind: "guest_path", value: "/usr/local/bin/node" }, { kind: "guest_path", value: "/opt/agentops/openclaw-adapter/other.mjs" }] }), /runtime_manifest_v2_argv_runtime_binding_invalid/],
   [fixture({ argv: [...fixture().argv, { kind: "opaque", value: "../escape" }] }), /runtime_manifest_v2_argv_opaque_invalid/],
@@ -146,12 +169,14 @@ for (const [body, pattern] of [
 
 rejectsBody(fixture({
   mutable_mounts: [
-    { kind: "config_file", path: "/run", read_only: true },
+    { kind: "hosts_file", path: "/etc", read_only: true, sha256: digest("e") },
+    { kind: "resolver_config_file", path: "/etc/resolv.conf", read_only: true, sha256: digest("f") },
     { kind: "workspace_directory", path: "/run-escape", read_only: true },
     { kind: "state_directory", path: "/run/state", read_only: false },
+    { kind: "config_file", path: "/run/secrets/openclaw_config", read_only: true },
     { kind: "temp_directory", path: "/tmp", read_only: false },
   ],
-}), /runtime_manifest_v2_mutable_mounts_overlap_invalid/);
+}), /runtime_manifest_v2_mutable_mount_path_mismatch|runtime_manifest_v2_mutable_mounts_overlap_invalid/);
 
 const duplicateRoot = fixture({ immutable_code_roots: ["/opt/agentops/openclaw-adapter", "/opt/openclaw", "/opt/openclaw", "/usr/local"] });
 rejectsBody(duplicateRoot, /runtime_manifest_v2_immutable_code_roots_order_invalid/);

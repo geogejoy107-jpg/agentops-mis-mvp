@@ -25,6 +25,7 @@ function fixture() {
   const root = mkdtempSync(path.join(tmpdir(), "agentops-rootfs-merkle-"));
   for (const directory of [
     "bin",
+    "etc",
     "lib",
     "opt/agentops-worker/workspace",
     "run/openclaw-state",
@@ -34,12 +35,13 @@ function fixture() {
   ]) mkdirSync(path.join(root, directory), { recursive: true, mode: 0o755 });
   writeFileSync(path.join(root, "bin/runtime"), "runtime-v1\n", { mode: 0o555 });
   writeFileSync(path.join(root, "lib/module.js"), "export const value = 1;\n", { mode: 0o444 });
+  writeFileSync(path.join(root, "etc/hosts"), "127.0.0.1 localhost\n::1 localhost\n172.31.250.3 openclaw-egress-gateway\n", { mode: 0o444 });
+  writeFileSync(path.join(root, "etc/resolv.conf"), "nameserver 127.0.0.1\noptions timeout:1 attempts:1 ndots:0\n", { mode: 0o444 });
   writeFileSync(path.join(root, "run/secrets/openclaw_config"), "mutable-config-v1\n", { mode: 0o600 });
   writeFileSync(path.join(root, "opt/agentops-worker/workspace/input.txt"), "mutable-workspace-v1\n", { mode: 0o600 });
   writeFileSync(path.join(root, "run/openclaw-state/state.json"), "mutable-state-v1\n", { mode: 0o600 });
   writeFileSync(path.join(root, "tmp/scratch"), "mutable-temp-v1\n", { mode: 0o600 });
   symlinkSync("../../../bin/runtime", path.join(root, "usr/local/bin/node"));
-  mkdirSync(path.join(root, "etc"), { mode: 0o755 });
   symlinkSync("/proc/mounts", path.join(root, "etc/mtab"));
   return root;
 }
@@ -96,6 +98,12 @@ withFixture((root) => {
   writeFileSync(path.join(root, "opt/agentops-worker/workspace/new.txt"), "new\n", { mode: 0o666 });
   writeFileSync(path.join(root, "run/openclaw-state/state.json"), "mutable-state-v2\n", { mode: 0o600 });
   writeFileSync(path.join(root, "tmp/another"), "another\n", { mode: 0o666 });
+  chmodSync(path.join(root, "etc/hosts"), 0o644);
+  writeFileSync(path.join(root, "etc/hosts"), "127.0.0.1 changed-host\n", { mode: 0o444 });
+  chmodSync(path.join(root, "etc/hosts"), 0o444);
+  chmodSync(path.join(root, "etc/resolv.conf"), 0o644);
+  writeFileSync(path.join(root, "etc/resolv.conf"), "nameserver 127.0.0.53\n", { mode: 0o444 });
+  chmodSync(path.join(root, "etc/resolv.conf"), 0o444);
   assert.deepEqual(scan(root), baseline);
 });
 
@@ -158,8 +166,29 @@ withFixture((root) => {
 });
 
 withFixture((root) => {
+  unlinkSync(path.join(root, "etc/hosts"));
+  assert.throws(() => scan(root), /runtime_rootfs_merkle_mount_path_missing/);
+});
+
+withFixture((root) => {
+  unlinkSync(path.join(root, "etc/resolv.conf"));
+  mkdirSync(path.join(root, "etc/resolv.conf"), { mode: 0o555 });
+  assert.throws(() => scan(root), /runtime_rootfs_merkle_mount_path_type_invalid/);
+});
+
+withFixture((root) => {
+  symlinkSync("/etc/hosts", path.join(root, "lib/hosts-input"));
+  assert.throws(
+    () => scan(root),
+    /runtime_rootfs_merkle_symlink_mutable_mount_target_rejected/,
+  );
+});
+
+withFixture((root) => {
   assert.throws(
     () => computeOpenClawRuntimeRootfsMerkle(root, [
+      "/etc/hosts",
+      "/etc/resolv.conf",
       "/opt/agentops-worker/workspace",
       "/run/openclaw-state",
       "/run/secrets/openclaw_config",

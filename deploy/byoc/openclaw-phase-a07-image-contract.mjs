@@ -14,6 +14,7 @@ const artifactDockerfile = read("openclaw-runtime-artifact/Dockerfile");
 const a07Workflow = read("../../.github/workflows/openclaw-phase-a07-foundation.yml");
 const egressConfigSource = read("openclaw-egress-config.mjs");
 const egressGatewaySource = read("openclaw-egress-gateway.mjs");
+const mountBootstrapSource = read("openclaw-mount-bootstrap.c");
 const realRunner = read("openclaw-runtime-real-runner-contract.mjs");
 const compose = read("compose.openclaw-phase-a07.yaml");
 const defaultCompose = read("compose.openclaw-phase-a04-a05.yaml");
@@ -129,6 +130,9 @@ assert.match(
 assert.match(a07Dockerfile, /install -d -o 1200 -g 1200 -m 0700 \/run\/openclaw-state/);
 assert.match(a07Dockerfile, /\/opt\/agentops-worker\/workspace/);
 assert.match(a07Dockerfile, /\/run\/secrets\/openclaw_config/);
+assert.match(a07Dockerfile, /test -f \/opt\/agentops-provider\/openclaw\/etc\/hosts/);
+assert.match(a07Dockerfile, /test ! -L \/opt\/agentops-provider\/openclaw\/etc\/resolv\.conf/);
+assert.match(a07Dockerfile, /\^hosts:\[\[:space:\]\]\+files/);
 assert.doesNotMatch(dockerfile, /openclaw-guest-root|COMMERCIAL_BASE_IMAGE|TARGETPLATFORM/);
 for (const moduleName of [
   "openclaw-cgroup-v2.mjs",
@@ -192,6 +196,7 @@ assert.match(executor, /AGENTOPS_OPENCLAW_BOUNDARY_ROLE: root-executor/);
 assert.match(executor, /OPENCLAW_EXECUTOR_IMAGE_REFERENCE: \$\{AGENTOPS_A07_IMAGE:/);
 assert.doesNotMatch(executor, /AGENTOPS_A07_IMAGE_DIGEST/);
 assert.match(executor, /agentops-openclaw-provider-backend:rw,noexec,nosuid,nodev,size=2m,mode=0700,uid=0,gid=2200/);
+assert.match(executor, /agentops-openclaw-bootstrap:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=0,gid=2200/);
 assert.match(executor, /AGENTOPS_A07_REPLAY_JOURNAL_PATH:[^\n]*pre-provisioned root:2200 mode 0700 directory/);
 assert.match(executor, /target: \/var\/lib\/agentops-openclaw\/replay\s*\n\s*read_only: false\s*\n\s*bind:\s*\n\s*create_host_path: false/);
 assert.match(executor, /source: \/sys\/fs\/cgroup\/agentops-openclaw-executor\s*\n\s*target: \/sys\/fs\/cgroup\/agentops-openclaw-executor\s*\n\s*read_only: false/);
@@ -228,6 +233,7 @@ assert.match(compose, /o: uid=0,gid=2200,mode=0750,nosuid,nodev,noexec,size=1m/)
 assert.match(compose, /runtime-egress:\s*\n\s+driver: bridge\s*\n\s+internal: true/);
 assert.match(executor, /OPENCLAW_EXTERNAL_PROVIDER_EGRESS_ATTESTED: \$\{AGENTOPS_A07_EXTERNAL_PROVIDER_EGRESS_ATTESTED:/);
 assert.match(executor, /OPENCLAW_CONFIG_PATH: \/run\/secrets\/openclaw_config/);
+assert.match(executor, /OPENCLAW_EGRESS_GATEWAY_IPV4: \$\{AGENTOPS_A08_RUNTIME_GATEWAY_IPV4:-172\.31\.250\.3\}/);
 assert.match(egressGateway, /user: "1300:1300"/);
 assert.match(egressGateway, /read_only: true/);
 assert.match(egressGateway, /cap_drop: \[ALL\]/);
@@ -235,7 +241,7 @@ assert.match(egressGateway, /no-new-privileges:true/);
 assert.match(egressGateway, /entrypoint: \[node, \/usr\/local\/lib\/agentops\/openclaw-egress-gateway\.mjs\]/);
 assert.match(egressGateway, /OPENCLAW_EGRESS_GATEWAY_UPSTREAM_ORIGIN: \$\{AGENTOPS_A08_PROVIDER_ORIGIN:/);
 assert.match(egressGateway, /--healthcheck/);
-assert.match(egressGateway, /runtime-egress:[\s\S]*openclaw-egress-gateway[\s\S]*provider-egress: \{\}/);
+assert.match(egressGateway, /runtime-egress:[\s\S]*openclaw-egress-gateway[\s\S]*gw_priority: 0[\s\S]*ipv4_address: \$\{AGENTOPS_A08_RUNTIME_GATEWAY_IPV4:-172\.31\.250\.3\}[\s\S]*provider-egress:[\s\S]*gw_priority: 1/);
 assert.doesNotMatch(egressGateway, /control-plane|agent_token|signing_key|receipt_trust_root|docker\.sock/);
 for (const source of [egressConfigSource, egressGatewaySource]) {
   assert.match(source, /http:\/\/openclaw-egress-gateway:18080\/v1/);
@@ -247,6 +253,22 @@ for (const providerApi of ["anthropic-messages", "openai-completions", "openai-r
   assert.match(egressConfigSource, new RegExp(providerApi));
 }
 assert.match(egressConfigSource, /models\.mode !== "replace"/);
+assert.match(compose, /runtime-egress:\s*\n\s+driver: bridge\s*\n\s+internal: true\s*\n\s+ipam:[\s\S]*subnet: \$\{AGENTOPS_A08_RUNTIME_SUBNET:-172\.31\.250\.0\/29\}/);
+assert.match(mountBootstrapSource, /nameserver 127\.0\.0\.1\\n/);
+assert.match(mountBootstrapSource, /openclaw-egress-gateway\\n/);
+assert.match(mountBootstrapSource, /harden_mount\(HOSTS_SOURCE, HOSTS_TARGET, 0\)/);
+assert.match(mountBootstrapSource, /harden_mount\(RESOLVER_SOURCE, RESOLVER_TARGET, 0\)/);
+for (const guestMountPath of ["/etc/hosts", "/etc/resolv.conf"]) {
+  assert.match(a07Workflow, new RegExp(guestMountPath.replaceAll("/", "\\/")));
+}
+assert.match(realRunner, /GATEWAY_HOSTNAME = "openclaw-egress-gateway"/);
+assert.match(realRunner, /guest_gateway_name_resolution_verified: true/);
+assert.match(realRunner, /guest_default_dns_positive_canary_lookup_denied: true/);
+assert.match(realRunner, /raw_docker_dns_127_0_0_11_denied: false/);
+assert.match(realRunner, /production_gateway_end_to_end_verified: false/);
+assert.match(a07Workflow, /docker network create --internal --subnet 172\.31\.250\.0\/29/);
+assert.match(a07Workflow, /"baseUrl": "http:\/\/openclaw-egress-gateway:18080\/v1"/);
+assert.match(a07Workflow, /--egress-gateway-ipv4 "172\.31\.250\.3"/);
 assert.doesNotMatch(executor, /OPENCLAW_RUNTIME_RECEIPT_VERIFIED/);
 assert.doesNotMatch(executor, /OPENCLAW_HOSTILE_RUNTIME_ISOLATION_VERIFIED/);
 assert.doesNotMatch(compose, /\/var\/run\/docker\.sock|network_mode:\s*host|pid:\s*host|privileged:\s*true/);
@@ -286,6 +308,10 @@ process.stdout.write(`${JSON.stringify({
   runtime_path_toctou_closed: false,
   external_provider_egress_operator_attestation_required: true,
   internal_runtime_egress_network_wired: true,
+  deterministic_guest_gateway_name_wired: true,
+  guest_default_dns_resolution_disabled_by_source: true,
+  signed_guest_name_service_content_bound: true,
+  provider_egress_default_route_priority_wired: true,
   provider_egress_config_gate_wired: true,
   provider_catalog_replace_mode_required: true,
   runtime_network_policy_verified: false,

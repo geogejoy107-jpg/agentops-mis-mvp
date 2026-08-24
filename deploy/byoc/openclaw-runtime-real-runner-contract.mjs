@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, randomUUID } from "node:crypto";
+import { lookup as dnsLookup } from "node:dns/promises";
 import {
   chmodSync,
   closeSync,
@@ -18,7 +19,6 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -32,12 +32,21 @@ const SOURCE_ROOT = path.dirname(CONTRACT_PATH);
 const RUNNER_PATH = path.join(SOURCE_ROOT, "openclaw-executor-runner.mjs");
 const IMAGE_DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const MAX_STDIN_BYTES = 1024 * 1024;
+const GATEWAY_HOSTNAME = "openclaw-egress-gateway";
+const GATEWAY_IPV4 = "172.31.250.3";
+const DNS_CANARY_HOSTNAME = "agentops-a08-default-dns-canary";
+const DNS_CANARY_IPV4 = "172.31.250.4";
+const PROVIDER_PORT = 18080;
+const EXPECTED_HOSTS = `127.0.0.1 localhost\n::1 localhost\n${GATEWAY_IPV4} ${GATEWAY_HOSTNAME}\n`;
+const EXPECTED_RESOLVER = "nameserver 127.0.0.1\noptions timeout:1 attempts:1 ndots:0\n";
 const GUEST = Object.freeze({
   adapter: "/opt/agentops/openclaw-adapter/openclaw-stdin-provider.mjs",
   config: "/run/secrets/openclaw_config",
   evidence: "/tmp/agentops-real-runner-evidence.json",
   hostCanary: "/agentops-host-only-canary",
+  hosts: "/etc/hosts",
   openClawRuntime: "/opt/openclaw/node_modules/openclaw/dist/plugin-sdk/agent-runtime.js",
+  resolver: "/etc/resolv.conf",
   state: "/run/openclaw-state",
   tmp: "/tmp",
   workspace: "/opt/agentops-worker/workspace",
@@ -164,6 +173,32 @@ async function runGuestWrapper() {
   if (existsSync(GUEST.hostCanary)) fail("real_runner_guest_host_canary_visible");
   for (const target of GUEST_FORBIDDEN_PATHS) assertGuestPathOpenDenied(target);
   if (!regularReadableFile(GUEST.config)) fail("real_runner_guest_config_unavailable");
+  for (const [target, expected] of [
+    [GUEST.hosts, EXPECTED_HOSTS],
+    [GUEST.resolver, EXPECTED_RESOLVER],
+  ]) {
+    const metadata = lstatSync(target);
+    if (
+      !metadata.isFile()
+      || metadata.isSymbolicLink()
+      || metadata.uid !== 0
+      || metadata.gid !== 2200
+      || (metadata.mode & 0o7777) !== 0o444
+      || readFileSync(target, "utf8") !== expected
+    ) fail("real_runner_guest_name_service_file_invalid");
+  }
+  const gatewayAddresses = await dnsLookup(GATEWAY_HOSTNAME, { all: true, verbatim: true });
+  if (
+    gatewayAddresses.length !== 1
+    || gatewayAddresses[0].address !== GATEWAY_IPV4
+    || gatewayAddresses[0].family !== 4
+  ) fail("real_runner_guest_gateway_resolution_invalid");
+  const dockerDnsCanaryDenied = await dnsLookup(DNS_CANARY_HOSTNAME, { all: true, verbatim: true })
+    .then(
+      () => false,
+      (error) => ["EAI_AGAIN", "ECONNREFUSED", "ENOTFOUND"].includes(error?.code),
+    );
+  if (!dockerDnsCanaryDenied) fail("real_runner_guest_default_dns_canary_resolved");
   const guestConfig = JSON.parse(readFileSync(GUEST.config, "utf8"));
   if (
     guestConfig?.agents?.defaults?.model?.primary !== "contract/contract-dynamic-model"
@@ -186,7 +221,9 @@ async function runGuestWrapper() {
     adapter_core_called: false,
     config_visible: true,
     cwd: "/",
+    docker_default_dns_positive_canary_lookup_denied: true,
     fixed_environment_verified: true,
+    gateway_name_resolved_from_guest_hosts: true,
     host_canary_visible: false,
     sensitive_path_open_denials_verified: true,
     sensitive_path_probe_count: GUEST_FORBIDDEN_PATHS.length,
@@ -250,37 +287,18 @@ async function sourceAudit() {
     contract: CONTRACT_SCHEMA,
     fake_handles_forbidden: true,
     instrumentation_overlay: false,
+    guest_default_dns_positive_canary_lookup_denied: false,
+    guest_gateway_name_resolution_verified: false,
     ok: true,
     production_export: PRODUCTION_EXPORT,
     production_export_present: true,
+    production_gateway_end_to_end_verified: false,
+    raw_docker_dns_127_0_0_11_denied: false,
     real_default_open_spawn_executed: false,
     runtime_sensitive_path_open_denials_verified: false,
     runtime_path_toctou_closed: false,
     strict_linux_execution_performed: false,
   });
-}
-
-function serveOpenAiResponse(response, body) {
-  const base = {
-    created: Math.floor(Date.now() / 1000),
-    id: "chatcmpl-agentops-real-runner",
-    model: "contract-dynamic-model",
-    object: "chat.completion",
-  };
-  if (body.stream === true) {
-    response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-    response.write(`data: ${JSON.stringify({ ...base, choices: [{ delta: { role: "assistant" }, finish_reason: null, index: 0 }], object: "chat.completion.chunk" })}\n\n`);
-    response.write(`data: ${JSON.stringify({ ...base, choices: [{ delta: { content: "AGENTOPS_REAL_RUNNER_OK" }, finish_reason: null, index: 0 }], object: "chat.completion.chunk" })}\n\n`);
-    response.write(`data: ${JSON.stringify({ ...base, choices: [{ delta: {}, finish_reason: "stop", index: 0 }], object: "chat.completion.chunk" })}\n\n`);
-    response.end("data: [DONE]\n\n");
-    return;
-  }
-  response.writeHead(200, { "content-type": "application/json" });
-  response.end(JSON.stringify({
-    ...base,
-    choices: [{ finish_reason: "stop", index: 0, message: { content: "AGENTOPS_REAL_RUNNER_OK", role: "assistant" } }],
-    usage: { completion_tokens: 4, prompt_tokens: 12, total_tokens: 16 },
-  }));
 }
 
 function ioDevice() {
@@ -314,13 +332,23 @@ async function runStrictContract() {
   const guestConfigPath = requiredAbsoluteFile("AGENTOPS_REAL_RUNNER_GUEST_CONFIG");
   const runtimeImageDigest = String(process.env.AGENTOPS_REAL_RUNNER_IMAGE_DIGEST || "");
   if (!IMAGE_DIGEST.test(runtimeImageDigest)) fail("real_runner_image_digest_required");
+  const fixtureNonce = String(process.env.AGENTOPS_REAL_RUNNER_FIXTURE_NONCE || "");
+  if (!/^[A-Za-z0-9._-]{1,128}$/u.test(fixtureNonce)) fail("real_runner_fixture_nonce_required");
+  const gatewayEvidencePath = String(process.env.AGENTOPS_REAL_RUNNER_GATEWAY_EVIDENCE || "");
+  const providerEvidencePath = String(process.env.AGENTOPS_REAL_RUNNER_PROVIDER_EVIDENCE || "");
+  for (const evidencePath of [gatewayEvidencePath, providerEvidencePath]) {
+    if (!path.isAbsolute(evidencePath) || path.resolve(evidencePath) !== evidencePath) {
+      fail("real_runner_fixture_evidence_path_invalid");
+    }
+    if (existsSync(evidencePath)) fail("real_runner_fixture_evidence_not_fresh");
+  }
   const providerKey = "contract-provider-key";
-  const providerPort = 18081;
+  const providerPort = PROVIDER_PORT;
   const guestConfigBytes = readFileSync(guestConfigPath);
   const guestConfig = JSON.parse(guestConfigBytes.toString("utf8"));
   if (
     guestConfig?.models?.providers?.contract?.apiKey !== providerKey
-    || guestConfig?.models?.providers?.contract?.baseUrl !== `http://127.0.0.1:${providerPort}/v1`
+    || guestConfig?.models?.providers?.contract?.baseUrl !== `http://${GATEWAY_HOSTNAME}:${providerPort}/v1`
   ) fail("real_runner_host_config_invalid");
 
   const executablePath = path.join(runtimeRoot, "usr/local/bin/node");
@@ -335,37 +363,7 @@ async function runStrictContract() {
 
   let rootFd;
   let execFd;
-  let providerListening = false;
-  let providerCalls = 0;
   let finalReceipt;
-  const providerServer = createServer(async (request, response) => {
-    try {
-      if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
-        response.writeHead(404).end();
-        return;
-      }
-      const chunks = [];
-      let bytes = 0;
-      for await (const chunk of request) {
-        bytes += chunk.byteLength;
-        if (bytes > MAX_STDIN_BYTES) fail("real_runner_provider_request_too_large");
-        chunks.push(Buffer.from(chunk));
-      }
-      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      if (
-        body.model !== "contract-dynamic-model"
-        || request.headers.authorization !== `Bearer ${providerKey}`
-      ) {
-        response.writeHead(400).end();
-        return;
-      }
-      providerCalls += 1;
-      serveOpenAiResponse(response, body);
-    } catch {
-      if (!response.headersSent) response.writeHead(500);
-      response.end();
-    }
-  });
 
   try {
     rootFd = openSync(
@@ -425,13 +423,6 @@ async function runStrictContract() {
       workspace_id_hash: digest("real-runner-workspace"),
     }, { bootClock: clock, isolationPolicySha256: policySha256, runtimeManifestSha256: manifestSha256 });
 
-    await new Promise((resolve, reject) => {
-      providerServer.once("error", reject);
-      providerServer.listen(providerPort, "127.0.0.1", () => {
-        providerListening = true;
-        resolve();
-      });
-    });
     const result = await runExecutorDispatch(
       protocol.canonicalExecutorProtocolBytes(dispatch),
       Object.freeze({
@@ -451,12 +442,35 @@ async function runStrictContract() {
     assert.equal(privateResponse.receipt.body.launcher.invoked, true);
     assert.equal(privateResponse.receipt.body.process.spawned, true);
     assert.equal(privateResponse.receipt.body.descendants_cleanup_verified, true);
-    assert.equal(providerCalls, 1);
+    const gatewayEvidence = JSON.parse(readFileSync(
+      requiredAbsoluteFile("AGENTOPS_REAL_RUNNER_GATEWAY_EVIDENCE"),
+      "utf8",
+    ));
+    const providerEvidence = JSON.parse(readFileSync(
+      requiredAbsoluteFile("AGENTOPS_REAL_RUNNER_PROVIDER_EVIDENCE"),
+      "utf8",
+    ));
+    assert.deepEqual(gatewayEvidence, {
+      fixture_nonce: fixtureNonce,
+      requests: 1,
+      schema: "agentops_a08_fixture_gateway_evidence_v1",
+      upstream_ipv4: DNS_CANARY_IPV4,
+      upstream_port: 18081,
+    });
+    assert.deepEqual(providerEvidence, {
+      fixture_nonce: fixtureNonce,
+      model: "contract-dynamic-model",
+      path: "/v1/chat/completions",
+      requests: 1,
+      schema: "agentops_a08_provider_fixture_evidence_v1",
+    });
     assert.deepEqual(evidence, {
       adapter_core_called: true,
       config_visible: true,
       cwd: "/",
+      docker_default_dns_positive_canary_lookup_denied: true,
       fixed_environment_verified: true,
+      gateway_name_resolved_from_guest_hosts: true,
       host_canary_visible: false,
       sensitive_path_open_denials_verified: true,
       sensitive_path_probe_count: GUEST_FORBIDDEN_PATHS.length,
@@ -481,13 +495,19 @@ async function runStrictContract() {
       digest_pinned_guest_root_base_executed: true,
       dynamic_node_openclaw_entrypoint_executed: true,
       fake_handles_injected: false,
+      fixture_gateway_forward_observed: true,
       fixed_launcher_environment_verified: true,
+      guest_default_dns_positive_canary_lookup_denied: true,
+      guest_gateway_name_resolution_verified: true,
       guest_config_state_workspace_tmp_visible: true,
       host_path_invisible: true,
       instrumentation_overlay: true,
       ok: true,
       production_export: PRODUCTION_EXPORT,
+      production_gateway_end_to_end_verified: false,
       provider_call_observed: true,
+      provider_fixture_call_observed: true,
+      raw_docker_dns_127_0_0_11_denied: false,
       real_default_open_spawn_executed: true,
       runtime_sensitive_path_open_denials_verified: true,
       runtime_path_toctou_closed: false,
@@ -496,7 +516,6 @@ async function runStrictContract() {
       strict_linux_execution_performed: true,
     };
   } finally {
-    if (providerListening) await new Promise((resolve) => providerServer.close(resolve));
     if (Number.isSafeInteger(execFd)) closeSync(execFd);
     if (Number.isSafeInteger(rootFd)) closeSync(rootFd);
     rmSync(scratch, { force: true, recursive: true });
