@@ -1,7 +1,7 @@
 name: agentops-openclaw-phase-a07
 
-# Source-only candidate. Provider egress still requires an external default-deny
-# firewall or proxy allowlist before this topology can carry production traffic.
+# Source-only candidate. The runtime reaches only an internal fixed-upstream
+# gateway; real Linux A08 attack acceptance is still required before promotion.
 services:
   worker:
     image: ${AGENTOPS_A07_IMAGE:?set AGENTOPS_A07_IMAGE to an immutable name@sha256:digest reference}
@@ -202,7 +202,38 @@ services:
       retries: 30
       start_period: 2s
     networks:
-      - provider-egress
+      - runtime-egress
+    depends_on:
+      egress-gateway:
+        condition: service_healthy
+
+  egress-gateway:
+    image: ${AGENTOPS_A07_IMAGE:?set AGENTOPS_A07_IMAGE to an immutable name@sha256:digest reference}
+    init: true
+    restart: "no"
+    user: "1300:1300"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=1300,gid=1300
+    entrypoint: [node, /usr/local/lib/agentops/openclaw-egress-gateway.mjs]
+    environment:
+      NODE_ENV: production
+      OPENCLAW_EGRESS_GATEWAY_UPSTREAM_ORIGIN: ${AGENTOPS_A08_PROVIDER_ORIGIN:?set one approved HTTPS Provider origin}
+    healthcheck:
+      test: [CMD, node, /usr/local/lib/agentops/openclaw-egress-gateway.mjs, --healthcheck]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+    networks:
+      runtime-egress:
+        aliases:
+          - openclaw-egress-gateway
+      provider-egress: {}
 
 volumes:
   phase_a07_public_socket:
@@ -221,6 +252,9 @@ networks:
   control-plane:
     driver: bridge
     internal: false
+  runtime-egress:
+    driver: bridge
+    internal: true
   provider-egress:
     driver: bridge
     internal: false

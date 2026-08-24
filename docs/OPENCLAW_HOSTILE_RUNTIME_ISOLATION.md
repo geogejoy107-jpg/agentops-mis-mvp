@@ -18,7 +18,7 @@ descriptor sampling with monotonic `/v1/execute` request counters. This keeps
 the wrong-uid gate fail-closed while preventing the operational healthcheck's
 legitimate backend connection from being misclassified as an attack bypass.
 
-## A07 Foundation Status (2026-08-12)
+## A07 Foundation Status (2026-08-24)
 
 The commercial runtime remains Next.js/TypeScript/PostgreSQL; Python remains
 outside this commercial execution path. At exact source commit
@@ -32,9 +32,9 @@ policy, a native launcher that requires a real cgroup v2 file descriptor before
 uid/gid drop, root-Executor Supervisor/service preflight, a stdin-only runner,
 and a canonical Ed25519 Executor receipt verified by the Broker across a running
 HTTP-over-UDS integration. The service execute route is wired to the runner with
-bounded input and single-flight execution. Its contracts use injected runtime,
-cgroup, and child-process dependencies, so they do not prove a real OpenClaw
-process or Provider call.
+bounded input and single-flight execution. A separate strict runner contract uses
+the production open/spawn path against an exported guest root on Linux; source
+and injected contracts remain supplemental rather than real-runtime evidence.
 
 The native launcher now receives a dedicated status pipe. It writes exactly
 `R` only after cgroup entry, identity drop, `no_new_privs`, capability clearing,
@@ -51,11 +51,12 @@ contract requires a root-owned inherited directory fd and independently checks
 `RESOLVE_IN_ROOT` and `RESOLVE_BENEATH` identity while denying symlinks, magic
 links, and mount crossings. That standalone diagnostic still closes its resolved
 fds and reports no handoff claim. The launcher now embeds the same guarded
-lookup and compares it to the inherited executable fd, but the signed manifest
-v2 is not yet consumed by the service, so `runtime_path_toctou_closed=false`
-remains mandatory. The production Executor service now performs preflight
-internally; caller-supplied preflight and owner/cgroup inspection dependencies
-are rejected.
+lookup and compares it to the inherited executable fd. The production service
+now consumes signed manifest v2, double-measures the rootfs and mount policy,
+retains the root/executable fds, and hands both to the launcher. Exact-head Linux
+attack acceptance and durable release provenance are still required, so
+`runtime_path_toctou_closed=false` remains mandatory. Caller-supplied preflight
+and owner/cgroup inspection dependencies are rejected.
 Client disconnect and shutdown propagate cancellation to the runner. Timeout,
 cancellation, and output overflow return control before pipe EOF so cgroup-wide
 cleanup cannot be held hostage by a detached descendant retaining a pipe.
@@ -69,9 +70,20 @@ and ambient capability vectors, and calling `execveat`.
 The A07 Compose candidate grants only the additional `SYS_CHROOT` capability to
 the root Executor; it is cleared before runtime execution. A strict privileged
 Linux contract covers the positive handoff plus outside-executable, traversal,
-and invalid-root attacks. Until that exact-head job passes and the signed
-manifest v2 is consumed by the production service, handoff and TOCTOU claims
-remain false.
+and invalid-root attacks. Until the current exact head passes those attacks with
+the durable production release input, handoff and TOCTOU claims remain false.
+
+The A08 source candidate adds a fourth trusted service: a fixed-upstream Node
+egress gateway. Executor/runtime joins only an internal Docker network; the
+gateway alone joins that network and the Provider-egress network. Executor
+preflight requires replacement-mode model catalogs and rejects OpenClaw configs
+whose Provider API or `baseUrl` can bypass the internal gateway. The gateway
+pins public DNS results into the TLS lookup,
+rejects private, link-local, metadata, reserved, redirect, arbitrary-host, and
+unsupported-route requests, and applies bounded body, response, concurrency,
+and total-deadline cancellation. This is source and loopback contract evidence.
+Guest runtime DNS handoff and real Linux A08 connection-denial attacks remain
+open, so `runtime_network_policy_verified=false`.
 
 OpenClaw 2026.5.4 still exposes the agent prompt only as CLI
 `--message <text>`; that CLI remains forbidden. A checked-in Node adapter now
@@ -99,26 +111,32 @@ arm64/v8 OCI child digests. Runtime manifest v2 binds the platform, OCI digest,
 rootfs Merkle identity, typed guest argv, immutable code roots, read-only
 workspace/config mounts, writable state mount, uid/gid 1200, and policy hashes
 inside a canonical Ed25519 envelope. The exact-head Linux workflow builds and
-imports an ephemeral amd64 image under a read-only root filesystem, but this is
-CI input validation rather than a published or signed release artifact. All
-artifact, handoff, receipt, Provider, and hostile-runtime claims remain false.
+imports an ephemeral amd64 image, exports and measures its rootfs, signs the
+ephemeral manifest, and feeds that exact input to the strict runner under a
+read-only root filesystem. This remains per-run CI evidence rather than a
+published, digest-addressed, durably signed customer release artifact. All
+current-head artifact, handoff, receipt, Provider, network-policy, and
+hostile-runtime claims therefore remain false until the corresponding gates
+pass on the same image and source commit.
 
-The exact A07 foundation image and native launcher contract have passed Linux
-CI, but the signed runtime path audit in
+Earlier A07 foundation images and native launcher contracts passed Linux CI,
+and the current service now consumes manifest v2 and retains root/executable
+file descriptors through the launcher handoff. The signed runtime path audit in
 `docs/OPENCLAW_A07_SIGNED_RUNTIME_PATH_AUDIT.md` identifies unresolved
-request-time path binding and host-bind TOCTOU gaps. The CLI
-`--message <prompt>` path remains forbidden. The checked-in stdin adapter is not
-yet published in a signed Linux runtime root or handed to the launcher through
-an opened guest-root fd, so the claim-bearing A07 topology still has no accepted
-production runtime to dispatch. The egress flag remains operator attestation
-only, and A01-A19 have not passed for the A07 topology. The default release
-therefore remains A01/A02, and the A07 candidate must continue to report:
+durable release provenance and same-image acceptance gaps. The CLI
+`--message <prompt>` path remains forbidden. The checked-in stdin adapter is
+packaged in the ephemeral CI guest root and handed to the launcher through an
+opened guest-root fd, but the current exact head has not passed every required
+Linux attack, A08 network-policy, receipt, and real Provider gate on one durable
+release image. A01-A19 have not passed for this topology. The default release
+therefore remains A01/A02, and the A07/A08 candidate must continue to report:
 
 ```text
 real_runtime_process_spawned=false
 runtime_receipt_verified=false
 hostile_runtime_isolation_verified=false
 provider_call_verified=false
+runtime_network_policy_verified=false
 ```
 
 ## 1. Security Claims At The Current Baseline
@@ -294,12 +312,19 @@ or a runtime-owned `0400` secret mount; never mount that secret into Broker.
   MIS HTTPS origin and required DNS/CA endpoints. It has no Provider egress.
 - Broker uses `network_mode: none`. It communicates exclusively over the two
   UDS volumes and has no host port.
-- Executor/runtime joins only `openclaw_provider_egress`; it has no route or DNS
-  resolution to `control_plane`, PostgreSQL, MIS, Docker API, cloud metadata, or
-  host gateway addresses.
-- Provider egress is enforced by an external firewall or egress proxy allowlist,
-  not by a Docker network name alone. The allowlist is versioned deployment
-  input and defaults to deny.
+- Executor/runtime joins only the internal `runtime-egress` Docker network. It
+  is configured to reach the fixed `openclaw-egress-gateway` service and has no
+  direct membership in `control_plane` or `provider-egress`.
+- The trusted egress gateway is the only service that joins both
+  `runtime-egress` and `provider-egress`. It validates a single operator-set
+  HTTPS upstream origin, resolves only public addresses, pins the accepted DNS
+  result into the TLS connection, forwards only bounded allowlisted Provider
+  routes and headers, and rejects redirects.
+- Docker network membership is only topology input, not acceptance evidence.
+  The deployment still needs a default-deny host/cloud policy around
+  `provider-egress`, guest-root DNS handoff, and active same-image connection
+  denial tests for MIS, PostgreSQL, Docker API, metadata, host gateways, private
+  addresses, and arbitrary Internet destinations.
 - No service mounts `/var/run/docker.sock`, the host network namespace, host PID
   namespace, or a writable host path.
 

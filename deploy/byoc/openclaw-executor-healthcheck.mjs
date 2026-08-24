@@ -127,6 +127,7 @@ const check = request({
         || payload.manifest_tree_verified_at_startup !== true
         || payload.cgroup_delegation_verified_at_startup !== true
         || payload.replay_recovery_completed !== true
+        || payload.provider_egress_config_verified_at_startup !== true
         || payload.runtime_receipt_verified !== false
         || payload.hostile_runtime_isolation_verified !== false
       ) fail();

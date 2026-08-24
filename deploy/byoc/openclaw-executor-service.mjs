@@ -16,6 +16,7 @@ import { createServer } from "node:http";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { inspectDelegatedCgroupRoot, validateOpenClawCgroupPolicy } from "./openclaw-cgroup-v2.mjs";
+import { validateOpenClawEgressConfiguration } from "./openclaw-egress-config.mjs";
 import { readLinuxBootClock } from "./openclaw-executor-protocol.mjs";
 import { ExecutorReplayJournal } from "./openclaw-executor-request.mjs";
 import { runExecutorDispatch } from "./openclaw-executor-runner.mjs";
@@ -66,6 +67,11 @@ export function loadExecutorConfiguration(environment = process.env) {
   const imageReference = String(environment.OPENCLAW_EXECUTOR_IMAGE_REFERENCE || "");
   const imageReferenceMatch = IMAGE_REFERENCE.exec(imageReference);
   if (!imageReferenceMatch) fail("executor_image_reference_invalid");
+  const runtimeRoot = absolute(environment.OPENCLAW_RUNTIME_ROOT, "executor_runtime_root");
+  const runtimeConfigGuestPath = String(environment.OPENCLAW_CONFIG_PATH || "");
+  if (runtimeConfigGuestPath !== "/run/secrets/openclaw_config") {
+    fail("executor_runtime_config_guest_path_invalid");
+  }
   return Object.freeze({
     socketPath: absolute(environment.OPENCLAW_EXECUTOR_SOCKET, "executor_socket"),
     socketGid: fixedInteger(environment.OPENCLAW_EXECUTOR_SOCKET_GID, 2200, "executor_socket_gid"),
@@ -101,7 +107,9 @@ export function loadExecutorConfiguration(environment = process.env) {
       if (value.length > 255 || !OCI_IMAGE_NAME.test(value)) fail("executor_runtime_image_name_invalid");
       return value;
     })(),
-    runtimeRoot: absolute(environment.OPENCLAW_RUNTIME_ROOT, "executor_runtime_root"),
+    runtimeRoot,
+    runtimeConfigGuestPath,
+    runtimeConfigPath: resolve(runtimeRoot, runtimeConfigGuestPath.slice(1)),
     runtimeUid: fixedInteger(environment.OPENCLAW_RUNTIME_UID, 1200, "executor_runtime_uid"),
     runtimeGid: fixedInteger(environment.OPENCLAW_RUNTIME_GID, 1200, "executor_runtime_gid"),
     providerEgressOperatorAttested: (() => {
@@ -293,11 +301,15 @@ export async function preflightExecutor(configuration) {
     constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_CLOEXEC,
   );
   let execFd;
+  let egressConfig;
   let manifestBody;
   let manifestBytes;
   let mountEvidence;
   let rootfs;
   try {
+    egressConfig = validateOpenClawEgressConfiguration(
+      readSecureFile(configuration.runtimeConfigPath),
+    );
     const rootBeforeMetadata = fstatSync(rootFd, { bigint: true });
     if (
       !rootBeforeMetadata.isDirectory()
@@ -417,6 +429,7 @@ export async function preflightExecutor(configuration) {
     return Object.freeze({
       clock,
       delegation,
+      egressConfig,
       journal,
       manifest: runnerManifest,
       manifestBody,
@@ -550,6 +563,9 @@ async function startExecutorServiceWithDependencies(configuration, preflight, de
         cgroup_delegation_verified_at_startup: true,
         replay_recovery_completed: true,
         provider_egress_operator_attested: configuration.providerEgressOperatorAttested,
+        provider_egress_config_verified_at_startup:
+          preflight.egressConfig?.gateway_base_url_verified === true
+          && preflight.egressConfig?.provider_catalog_replace_mode_verified === true,
         runtime_process_spawned: state.runtimeProcessSpawned,
         runtime_receipt_verified: false,
         hostile_runtime_isolation_verified: false,

@@ -51,6 +51,7 @@ const environment = {
   OPENCLAW_RUNTIME_IMAGE_DIGEST: `sha256:${digest("2")}`,
   OPENCLAW_RUNTIME_IMAGE_NAME: "registry.invalid/openclaw-runtime",
   OPENCLAW_RUNTIME_ROOT: "/opt/openclaw",
+  OPENCLAW_CONFIG_PATH: "/run/secrets/openclaw_config",
   OPENCLAW_RUNTIME_UID: "1200",
   OPENCLAW_RUNTIME_GID: "1200",
   OPENCLAW_EXTERNAL_PROVIDER_EGRESS_ATTESTED: "true",
@@ -59,6 +60,8 @@ const configuration = loadExecutorConfiguration(environment);
 assert.equal(configuration.runtimeUid, 1200);
 assert.equal(configuration.runtimeGid, 1200);
 assert.equal(configuration.providerEgressOperatorAttested, true);
+assert.equal(configuration.runtimeConfigGuestPath, "/run/secrets/openclaw_config");
+assert.equal(configuration.runtimeConfigPath, "/opt/openclaw/run/secrets/openclaw_config");
 assert.equal(configuration.executorImageDigest, `sha256:${digest("1")}`);
 const manifestKeyId = "manifest-key-contract";
 const manifestKeys = generateKeyPairSync("ed25519");
@@ -81,6 +84,7 @@ for (const [name, value] of [
   ["OPENCLAW_EXECUTOR_SOCKET_GID", "0"],
   ["OPENCLAW_EXECUTOR_IMAGE_REFERENCE", `registry.invalid/agentops/a07:mutable@sha256:${digest("1")}`],
   ["OPENCLAW_EXECUTOR_SOCKET", "relative.sock"],
+  ["OPENCLAW_CONFIG_PATH", "/run/secrets/other"],
   ["OPENCLAW_EXTERNAL_PROVIDER_EGRESS_ATTESTED", "false"],
 ]) {
   assert.throws(() => loadExecutorConfiguration({ ...environment, [name]: value }), /executor_/);
@@ -149,6 +153,8 @@ const source = readFileSync(fileURLToPath(new URL("./openclaw-executor-service.m
 assert.match(source, /verifyCanonicalRuntimeManifestV2/);
 assert.match(source, /verifyOpenClawRuntimeMountPolicy/);
 assert.match(source, /computeOpenClawRuntimeRootfsMerkle/);
+assert.match(source, /validateOpenClawEgressConfiguration/);
+assert.match(source, /readSecureFile\(configuration\.runtimeConfigPath\)/);
 assert.match(source, /readCommittedOpenClawRuntimeRelease/);
 assert.match(source, /sameRootfsMeasurement\(initialRootfs, verifiedRootfs\)/);
 assert.match(source, /sameMountEvidence\(initialMountEvidence, verifiedMountEvidence\)/);
@@ -171,7 +177,13 @@ assert.match(source, /runtime_receipt_verified: false/);
 assert.doesNotMatch(source, /runtime_receipt_verified: true/);
 assert.doesNotMatch(source, /runtime_path_toctou_closed: true/);
 
-const fakePreflight = Object.freeze({ contract: true });
+const fakePreflight = Object.freeze({
+  contract: true,
+  egressConfig: Object.freeze({
+    gateway_base_url_verified: true,
+    provider_catalog_replace_mode_verified: true,
+  }),
+});
 const fakeExpectedOwner = Object.freeze({ expectedOwner: { uid: process.getuid(), gid: process.getgid() } });
 const fakeInspectCgroup = Object.freeze({ inspectCgroup: () => ({ contract: true }) });
 for (const injected of [fakePreflight, fakeExpectedOwner, fakeInspectCgroup]) {
@@ -266,7 +278,7 @@ try {
   await assert.rejects(
     () => startExecutorServiceForTest(
       { ...configuration, socketPath, socketGid: gid },
-      Object.freeze({ contract: true }),
+      fakePreflight,
       { runDispatch, socketOwner: { uid, gid } },
     ),
     /executor_test_dependencies_forbidden/,
@@ -275,7 +287,7 @@ try {
   process.env.NODE_ENV = "test";
   service = await startExecutorServiceForTest(
     { ...configuration, socketPath, socketGid: gid },
-    Object.freeze({ contract: true }),
+    fakePreflight,
     { runDispatch, socketOwner: { uid, gid } },
   );
   if (previousNodeEnvironment === undefined) delete process.env.NODE_ENV;
@@ -290,6 +302,7 @@ try {
   assert.equal(health.status, 200);
   assert.equal(health.body.ready, true);
   assert.equal(health.body.busy, false);
+  assert.equal(health.body.provider_egress_config_verified_at_startup, true);
   assert.equal(health.body.runtime_process_spawned, false);
   assert.equal(health.body.runtime_receipt_verified, false);
 
@@ -368,6 +381,7 @@ console.log(JSON.stringify({
   socket_shutdown_cleanup_verified: true,
   startup_socket_failure_cleanup_present: true,
   health_ready: true,
+  provider_egress_config_verified_at_startup: true,
   injected_runner_success_state_transition_verified: true,
   real_runtime_process_spawned: false,
   runtime_receipt_verified: false,

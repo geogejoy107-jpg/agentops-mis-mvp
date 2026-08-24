@@ -79,6 +79,10 @@ COPY --chmod=0555 \
     deploy/byoc/openclaw-boundary-supervisor-contract.mjs \
     deploy/byoc/openclaw-cgroup-v2.mjs \
     deploy/byoc/openclaw-cgroup-v2-contract.mjs \
+    deploy/byoc/openclaw-egress-config.mjs \
+    deploy/byoc/openclaw-egress-config-contract.mjs \
+    deploy/byoc/openclaw-egress-gateway.mjs \
+    deploy/byoc/openclaw-egress-gateway-contract.mjs \
     deploy/byoc/openclaw-executor-request.mjs \
     deploy/byoc/openclaw-executor-request-contract.mjs \
     deploy/byoc/openclaw-executor-protocol.mjs \

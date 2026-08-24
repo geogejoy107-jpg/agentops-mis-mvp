@@ -66,6 +66,8 @@ jobs:
           node deploy/byoc/openclaw-runtime-release-contract.mjs
           node deploy/byoc/openclaw-runtime-artifact/contract.mjs
           node deploy/byoc/openclaw-cgroup-v2-contract.mjs
+          node deploy/byoc/openclaw-egress-config-contract.mjs
+          node deploy/byoc/openclaw-egress-gateway-contract.mjs
           node deploy/byoc/openclaw-executor-protocol-contract.mjs
           node deploy/byoc/openclaw-executor-receipt-contract.mjs
           node deploy/byoc/openclaw-executor-runner-contract.mjs

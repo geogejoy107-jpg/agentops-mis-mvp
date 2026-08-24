@@ -12,6 +12,8 @@ const dockerfile = read("Dockerfile");
 const a07Dockerfile = read("openclaw-phase-a07.Dockerfile");
 const artifactDockerfile = read("openclaw-runtime-artifact/Dockerfile");
 const a07Workflow = read("../../.github/workflows/openclaw-phase-a07-foundation.yml");
+const egressConfigSource = read("openclaw-egress-config.mjs");
+const egressGatewaySource = read("openclaw-egress-gateway.mjs");
 const realRunner = read("openclaw-runtime-real-runner-contract.mjs");
 const compose = read("compose.openclaw-phase-a07.yaml");
 const defaultCompose = read("compose.openclaw-phase-a04-a05.yaml");
@@ -130,6 +132,8 @@ assert.match(a07Dockerfile, /\/run\/secrets\/openclaw_config/);
 assert.doesNotMatch(dockerfile, /openclaw-guest-root|COMMERCIAL_BASE_IMAGE|TARGETPLATFORM/);
 for (const moduleName of [
   "openclaw-cgroup-v2.mjs",
+  "openclaw-egress-config.mjs",
+  "openclaw-egress-gateway.mjs",
   "openclaw-executor-request.mjs",
   "openclaw-executor-protocol.mjs",
   "openclaw-executor-receipt.mjs",
@@ -151,8 +155,9 @@ assert.doesNotMatch(runtimeStage, /apt-get[^\n]*(?:gcc|libc6-dev)|(?:^|\s)(?:cc|
 
 const worker = compose.match(/  worker:\n([\s\S]*?)(?=\n  broker:)/)?.[1] || "";
 const broker = compose.match(/  broker:\n([\s\S]*?)(?=\n  executor:)/)?.[1] || "";
-const executor = compose.match(/  executor:\n([\s\S]*?)(?=\nvolumes:)/)?.[1] || "";
-assert.ok(worker && broker && executor, "a07_three_service_candidate_required");
+const executor = compose.match(/  executor:\n([\s\S]*?)(?=\n  egress-gateway:)/)?.[1] || "";
+const egressGateway = compose.match(/  egress-gateway:\n([\s\S]*?)(?=\nvolumes:)/)?.[1] || "";
+assert.ok(worker && broker && executor && egressGateway, "a07_four_service_candidate_required");
 
 assert.match(worker, /user: "1000:1000"/);
 assert.match(worker, /entrypoint: \[node, \/usr\/local\/lib\/agentops\/worker-entrypoint\.mjs\]/);
@@ -193,9 +198,11 @@ assert.match(executor, /source: \/sys\/fs\/cgroup\/agentops-openclaw-executor\s*
 assert.match(executor, /\/opt\/agentops-provider\/openclaw\/run\/openclaw-state:rw,noexec,nosuid,nodev,size=32m,mode=0700,uid=1200,gid=1200/);
 assert.match(executor, /\/opt\/agentops-provider\/openclaw\/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777,uid=1200,gid=1200/);
 assert.match(executor, /phase_a07_private_socket:\/run\/agentops-openclaw-private:rw/);
-assert.match(executor, /networks:\s*\n\s+- provider-egress/);
+assert.match(executor, /networks:\s*\n\s+- runtime-egress/);
+assert.match(executor, /depends_on:\s*\n\s+egress-gateway:\s*\n\s+condition: service_healthy/);
 assert.equal((executor.match(/create_host_path: false/g) || []).length, 9);
 assert.doesNotMatch(executor, /control-plane|agentops-openclaw-public/);
+assert.doesNotMatch(executor, /provider-egress/);
 assert.doesNotMatch(executor, /AGENTOPS_A07_RUNTIME_PATH/);
 assert.doesNotMatch(
   executor,
@@ -218,8 +225,28 @@ for (const target of [
 
 assert.match(compose, /o: uid=1100,gid=2100,mode=0750,nosuid,nodev,noexec,size=1m/);
 assert.match(compose, /o: uid=0,gid=2200,mode=0750,nosuid,nodev,noexec,size=1m/);
-assert.match(compose, /external default-deny\s*\n# firewall or proxy allowlist/);
+assert.match(compose, /runtime-egress:\s*\n\s+driver: bridge\s*\n\s+internal: true/);
 assert.match(executor, /OPENCLAW_EXTERNAL_PROVIDER_EGRESS_ATTESTED: \$\{AGENTOPS_A07_EXTERNAL_PROVIDER_EGRESS_ATTESTED:/);
+assert.match(executor, /OPENCLAW_CONFIG_PATH: \/run\/secrets\/openclaw_config/);
+assert.match(egressGateway, /user: "1300:1300"/);
+assert.match(egressGateway, /read_only: true/);
+assert.match(egressGateway, /cap_drop: \[ALL\]/);
+assert.match(egressGateway, /no-new-privileges:true/);
+assert.match(egressGateway, /entrypoint: \[node, \/usr\/local\/lib\/agentops\/openclaw-egress-gateway\.mjs\]/);
+assert.match(egressGateway, /OPENCLAW_EGRESS_GATEWAY_UPSTREAM_ORIGIN: \$\{AGENTOPS_A08_PROVIDER_ORIGIN:/);
+assert.match(egressGateway, /--healthcheck/);
+assert.match(egressGateway, /runtime-egress:[\s\S]*openclaw-egress-gateway[\s\S]*provider-egress: \{\}/);
+assert.doesNotMatch(egressGateway, /control-plane|agent_token|signing_key|receipt_trust_root|docker\.sock/);
+for (const source of [egressConfigSource, egressGatewaySource]) {
+  assert.match(source, /http:\/\/openclaw-egress-gateway:18080\/v1/);
+}
+for (const route of ["/v1/chat/completions", "/v1/messages", "/v1/responses"]) {
+  assert.match(egressGatewaySource, new RegExp(route.replaceAll("/", "\\/")));
+}
+for (const providerApi of ["anthropic-messages", "openai-completions", "openai-responses"]) {
+  assert.match(egressConfigSource, new RegExp(providerApi));
+}
+assert.match(egressConfigSource, /models\.mode !== "replace"/);
 assert.doesNotMatch(executor, /OPENCLAW_RUNTIME_RECEIPT_VERIFIED/);
 assert.doesNotMatch(executor, /OPENCLAW_HOSTILE_RUNTIME_ISOLATION_VERIFIED/);
 assert.doesNotMatch(compose, /\/var\/run\/docker\.sock|network_mode:\s*host|pid:\s*host|privileged:\s*true/);
@@ -258,6 +285,11 @@ process.stdout.write(`${JSON.stringify({
   resolved_fd_handoff_verified: false,
   runtime_path_toctou_closed: false,
   external_provider_egress_operator_attestation_required: true,
+  internal_runtime_egress_network_wired: true,
+  provider_egress_config_gate_wired: true,
+  provider_catalog_replace_mode_required: true,
+  runtime_network_policy_verified: false,
+  trusted_provider_egress_gateway_wired: true,
   real_typescript_worker_entrypoint_configured: true,
   runtime_sensitive_path_open_denial_contract_wired: true,
   candidate_source_only: true,
