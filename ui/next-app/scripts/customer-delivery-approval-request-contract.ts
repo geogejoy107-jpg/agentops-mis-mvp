@@ -439,6 +439,7 @@ async function main() {
   await sourceContract();
   const baseDsn = String(process.env.AGENTOPS_POSTGRES_DSN || "").trim();
   require(baseDsn, "AGENTOPS_POSTGRES_DSN is required for the contract");
+  const originalPostgresSchema = process.env.AGENTOPS_POSTGRES_SCHEMA;
   const schema = `customer_delivery_contract_${randomUUID().replaceAll("-", "")}`;
   const admin = new Client({ connectionString: baseDsn });
   await admin.connect();
@@ -453,6 +454,7 @@ async function main() {
     const scopedDsn = new URL(baseDsn);
     scopedDsn.searchParams.set("options", `-csearch_path=${schema}`);
     process.env.AGENTOPS_POSTGRES_DSN = scopedDsn.toString();
+    process.env.AGENTOPS_POSTGRES_SCHEMA = schema;
     process.env.AGENTOPS_POSTGRES_POOL_MAX = "12";
 
     const body = {
@@ -553,6 +555,11 @@ async function main() {
     }, null, 2));
   } finally {
     await closeControlPlanePoolForTests();
+    if (originalPostgresSchema === undefined) {
+      delete process.env.AGENTOPS_POSTGRES_SCHEMA;
+    } else {
+      process.env.AGENTOPS_POSTGRES_SCHEMA = originalPostgresSchema;
+    }
     await admin.query("RESET search_path").catch(() => undefined);
     await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`).catch(() => undefined);
     await admin.end();
